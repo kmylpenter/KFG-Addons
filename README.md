@@ -20,7 +20,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 .\install-addons.ps1 -List
 
 # Instaluj konkretny
-.\install-addons.ps1 -Addon migrate
+.\install-addons.ps1 -Addon migrateconvo
 
 # Instaluj wszystkie
 .\install-addons.ps1 -All
@@ -30,7 +30,8 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 
 | Addon | Opis | Komenda |
 |-------|------|---------|
-| **migrate** | Migracja historii Claude miedzy urzadzeniami | `/migrate` |
+| **eos** | End of Session - git commit + push | `/eos [summary]` |
+| **migrateconvo** | Migracja historii Claude miedzy urzadzeniami | `/migrateconvo` |
 
 ## Tworzenie Dodatkow
 

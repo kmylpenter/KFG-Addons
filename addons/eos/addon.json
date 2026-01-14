@@ -1,0 +1,13 @@
+{
+  "name": "eos",
+  "displayName": "End of Session",
+  "description": "Zakonczenie sesji: eksport stats + git commit + push",
+  "version": "1.0.0",
+  "author": "kmylpenter",
+  "dependencies": {},
+  "targets": {
+    "files/skills/eos/": "~/.claude/skills/eos/"
+  },
+  "postInstall": null,
+  "notes": "Uzycie: /eos [summary]. Wymaga git w PATH."
+}

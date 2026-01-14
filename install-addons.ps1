@@ -27,10 +27,10 @@ $addonsDir = Join-Path $scriptDir "addons"
 
 function Write-Banner {
     Write-Host ""
-    Write-Host "  ╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║           KFG Addons Installer v$Version                     ║" -ForegroundColor Cyan
-    Write-Host "  ║           Modular Add-ons for Claude Code                 ║" -ForegroundColor Cyan
-    Write-Host "  ╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
+    Write-Host "  |           KFG Addons Installer v$Version                     |" -ForegroundColor Cyan
+    Write-Host "  |           Modular Add-ons for Claude Code                 |" -ForegroundColor Cyan
+    Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -122,7 +122,7 @@ function Install-Addon {
 
     Write-Host ""
     Write-Host "  Installing: $($Addon.DisplayName) v$($Addon.Version)" -ForegroundColor Yellow
-    Write-Host "  ─────────────────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "  -------------------------------------------------------------" -ForegroundColor DarkGray
 
     # Check dependencies
     if ($Addon.Dependencies) {
@@ -286,7 +286,7 @@ if ($choice -match "^[Aa]") {
 }
 
 Write-Host ""
-Write-Host "  ╔═══════════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "  ║           Instalacja zakonczona!                          ║" -ForegroundColor Green
-Write-Host "  ╚═══════════════════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
+Write-Host "  |           Instalacja zakonczona!                          |" -ForegroundColor Green
+Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
 Write-Host ""
