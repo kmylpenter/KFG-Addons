@@ -1,15 +1,15 @@
 ---
 name: eos
-description: End of Session - eksport stats + git commit + push. Triggers: eos, koniec sesji, zakoncz
+description: End of Session - handoff + git commit + push. Triggers: eos, koniec sesji, zakoncz
 ---
 
 # End of Session (EOS)
 
-Workflow zamykajacy sesje pracy. Bezpieczne zakonczenie z zapisem stanu.
+Workflow zamykajacy sesje pracy. **Wszystkie kroki sa MANDATORY.**
 
 ## Workflow
 
-### KROK 1: Eksport stats (opcjonalny)
+### KROK 1: Eksport stats
 
 Sprawdz czy istnieje skrypt eksportu:
 ```powershell
@@ -19,12 +19,12 @@ if (Test-Path $statsScript) {
 }
 ```
 
-Jesli skrypt nie istnieje - pomin ten krok (to OK).
+Jesli skrypt nie istnieje - przejdz dalej (to OK).
 
 ### KROK 2: Git status + auto-summary
 
 1. Uruchom `git status --short` aby zobaczyc zmiany
-2. Jesli brak zmian - poinformuj i zakoncz
+2. Jesli brak zmian - poinformuj i zakoncz (STOP)
 3. Wygeneruj summary automatycznie na podstawie zmian:
 
 **Reguly generowania summary:**
@@ -35,30 +35,45 @@ Jesli skrypt nie istnieje - pomin ten krok (to OK).
 - Grupuj podobne: "add foo, bar, baz" zamiast 3 osobnych
 - Max 60 znakow - skracaj jesli trzeba
 
-**Przyklady auto-summary:**
-- `A  src/auth.py` + `M  README.md` → "add auth.py, update README"
-- `R  old.js -> new.js` → "rename old.js to new.js"
-- `M  file1.py` + `M  file2.py` + `M  file3.py` → "update file1, file2, file3"
+Jesli ARGUMENTS podane - uzyj ich zamiast auto-summary.
 
-### KROK 3: Git commit + push
+### KROK 3: Create handoff (MANDATORY)
+
+Wywolaj skill `/create_handoff` z wygenerowanym summary:
+
+```
+Skill(skill="create_handoff", args="[summary z kroku 2]")
+```
+
+LUB jesli Skill tool nie dziala, wykonaj logike recznie:
+1. Utworz plik `thoughts/shared/handoffs/[timestamp]-eos.yaml`
+2. Zapisz YAML z:
+   - `summary`: [auto-summary]
+   - `changes`: [lista zmian z git status]
+   - `next_steps`: [jesli znane]
+   - `timestamp`: [ISO timestamp]
+
+**NIE POMIJAJ TEGO KROKU** - handoff jest wymagany do resume na innym urzadzeniu.
+
+### KROK 4: Git commit + push (MANDATORY)
 
 ```bash
 git add .
-git commit -m "eos: [auto-generated summary]"
+git commit -m "eos: [summary z kroku 2]"
 git push
 ```
 
-**NIE pytaj usera o summary** - generuj automatycznie.
+**NIE pytaj usera** - wykonaj automatycznie.
 
-Jesli ARGUMENTS podane - uzyj ich zamiast auto-summary.
+Jesli push sie nie uda - poinformuj o bledzie ale NIE przerywaj (handoff juz utworzony).
 
-### KROK 4: Potwierdzenie
+### KROK 5: Potwierdzenie
 
-Po ukonczeniu wyswietl:
+Wyswietl:
 ```
 Sesja zakonczona.
 Commit: [hash]
-  - [summary]
+Handoff: [sciezka do YAML]
 
 Aby wznowic na innym urzadzeniu:
   git pull && claude && /resume_handoff
@@ -70,29 +85,21 @@ Aby wznowic na innym urzadzeniu:
 /eos
 ```
 
-Wykona:
+Wykona kolejno:
 1. Eksport stats (jesli skrypt istnieje)
-2. `git status` → auto-summary
-3. `git add . && git commit -m "eos: [auto]" && git push`
-4. Komunikat o zakonczeniu
+2. `git status` → auto-summary: "update eos addon"
+3. `/create_handoff update eos addon` → YAML handoff
+4. `git add . && git commit && git push`
+5. Komunikat z instrukcja resume
 
-## Przed EOS (zalecane)
+## Pelny workflow cross-device
 
-Jesli chcesz zapisac stan do wznowienia:
+**Urzadzenie A (koniec pracy):**
 ```
-/create_handoff [opis stanu]
-```
-
-Tworzy YAML handoff z kontekstem sesji.
-
-## Pelny workflow konca dnia
-
-```
-/create_handoff auth done, next: frontend tests
 /eos
 ```
 
-Na innym urzadzeniu:
+**Urzadzenie B (wznowienie):**
 ```
 git pull
 claude
