@@ -1,0 +1,20 @@
+{
+  "name": "migrate",
+  "displayName": "Migrate Claude History",
+  "description": "Migracja historii konwersacji Claude miedzy urzadzeniami (GUI + CLI)",
+  "version": "1.0.0",
+  "author": "kmylpenter",
+  "dependencies": {
+    "python": {
+      "required": true,
+      "minVersion": "3.8",
+      "packages": []
+    }
+  },
+  "targets": {
+    "files/skills/migrate/": "~/.claude/skills/migrate/",
+    "files/templates/scripts/": "~/.templates/scripts/"
+  },
+  "postInstall": null,
+  "notes": "Wymaga Python z tkinter (standardowa biblioteka). Uzycie: /migrate w Claude Code."
+}
