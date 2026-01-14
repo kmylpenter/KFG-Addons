@@ -2,7 +2,7 @@
   "name": "eos",
   "displayName": "End of Session",
   "description": "Zakonczenie sesji: eksport stats + git commit + push",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {
