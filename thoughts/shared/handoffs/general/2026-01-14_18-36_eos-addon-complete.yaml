@@ -1,0 +1,55 @@
+---
+session: kfg-addons-eos
+date: 2026-01-14
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Create eos addon with mandatory handoff step
+now: Create claude-history-sync addon for cross-device session sync
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Renamed migrate addon to migrateconvo (avoid /migrate conflict with CC v3)
+    files: [addons/migrateconvo/addon.json, addons/migrateconvo/files/skills/migrateconvo/SKILL.md]
+  - task: Created eos addon v1.2.0 with mandatory handoff step
+    files: [addons/eos/addon.json, addons/eos/files/skills/eos/SKILL.md]
+  - task: Fixed Unicode box-drawing chars in install-addons.ps1
+    files: [install-addons.ps1]
+  - task: Pushed session history to claude-history repo
+    files: []
+
+blockers: []
+
+questions: []
+
+decisions:
+  - eos_mandatory_handoff: Skills can call other skills via Skill tool, so eos calls /create_handoff
+  - auto_summary: EOS generates commit message from git status, no user input needed
+
+findings:
+  - skill_chaining: Skills can invoke other skills using Skill(skill="name", args="...")
+  - unicode_powershell: Box-drawing chars (╔═║) cause parser errors in PowerShell, use ASCII instead
+
+worked:
+  - Auto-generating commit summary from git status --short
+  - Skill tool for invoking /create_handoff from /eos
+
+failed: []
+
+next:
+  - Create claude-history-sync addon (symlinks ~/.claude/projects/ to repo)
+  - Test /eos workflow end-to-end on another device
+  - Consider adding /resume_handoff addon
+
+files:
+  created:
+    - addons/eos/addon.json
+    - addons/eos/files/skills/eos/SKILL.md
+    - thoughts/shared/handoffs/general/2026-01-14_18-36_eos-addon-complete.yaml
+  modified:
+    - addons/migrateconvo/addon.json
+    - addons/migrateconvo/files/skills/migrateconvo/SKILL.md
+    - install-addons.ps1
+    - README.md
