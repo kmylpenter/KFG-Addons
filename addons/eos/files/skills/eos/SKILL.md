@@ -1,15 +1,27 @@
 ---
 name: eos
-description: End of Session - handoff + git commit + push. Triggers: eos, koniec sesji, zakoncz
+description: End of Session - handoff + eksport stats + git commit + push. Triggers: eos, koniec sesji, zakoncz
 ---
 
 # End of Session (EOS)
 
-Workflow zamykajacy sesje pracy. **Wszystkie kroki sa MANDATORY.**
+Workflow zamykajacy sesje pracy. Bezpieczne zakonczenie z zapisem stanu.
 
 ## Workflow
 
-### KROK 1: Eksport stats
+### KROK 0: Handoff (KRYTYCZNY)
+
+**ZAWSZE** zapytaj usera przed zamknieciem:
+```
+Utworzyc handoff przed zamknieciem sesji? (t/n)
+```
+
+Jesli tak → uzyj `/create_handoff` z podsumowaniem sesji.
+Jesli nie → kontynuuj do kroku 1.
+
+**UWAGA:** Handoff jest krytyczny - zachowuje kontekst pracy dla przyszlych sesji.
+
+### KROK 1: Eksport stats (KRYTYCZNY jesli skrypt istnieje)
 
 Sprawdz czy istnieje skrypt eksportu:
 ```powershell
@@ -19,62 +31,31 @@ if (Test-Path $statsScript) {
 }
 ```
 
-Jesli skrypt nie istnieje - przejdz dalej (to OK).
+**Sciezka skryptu:** `~/.claude/scripts/export-device-stats.ps1`
 
-### KROK 2: Git status + auto-summary
+Jesli skrypt istnieje - MUSISZ go wykonac.
+Jesli nie istnieje - pomin (ale poinformuj usera).
 
-1. Uruchom `git status --short` aby zobaczyc zmiany
-2. Jesli brak zmian - poinformuj i zakoncz (STOP)
-3. Wygeneruj summary automatycznie na podstawie zmian:
+### KROK 2: Git commit + push (KRYTYCZNY)
 
-**Reguly generowania summary:**
-- Nowe pliki (A): "add [nazwa]"
-- Zmodyfikowane (M): "update [nazwa]"
-- Usuniete (D): "remove [nazwa]"
-- Renamed (R): "rename [stara] to [nowa]"
-- Grupuj podobne: "add foo, bar, baz" zamiast 3 osobnych
-- Max 60 znakow - skracaj jesli trzeba
-
-Jesli ARGUMENTS podane - uzyj ich zamiast auto-summary.
-
-### KROK 3: Create handoff (MANDATORY)
-
-Wywolaj skill `/create_handoff` z wygenerowanym summary:
-
-```
-Skill(skill="create_handoff", args="[summary z kroku 2]")
-```
-
-LUB jesli Skill tool nie dziala, wykonaj logike recznie:
-1. Utworz plik `thoughts/shared/handoffs/[timestamp]-eos.yaml`
-2. Zapisz YAML z:
-   - `summary`: [auto-summary]
-   - `changes`: [lista zmian z git status]
-   - `next_steps`: [jesli znane]
-   - `timestamp`: [ISO timestamp]
-
-**NIE POMIJAJ TEGO KROKU** - handoff jest wymagany do resume na innym urzadzeniu.
-
-### KROK 4: Git commit + push (MANDATORY)
+Pobierz summary z argumentow (ARGUMENTS). Jesli brak - zapytaj usera.
 
 ```bash
 git add .
-git commit -m "eos: [summary z kroku 2]"
+git commit -m "eos: [ARGUMENTS lub summary od usera]"
 git push
 ```
 
-**NIE pytaj usera** - wykonaj automatycznie.
+**WAZNE:**
+- Przed git commit pokaz `git status` userowi
+- Jesli brak zmian - poinformuj i zakoncz
+- Jesli push sie nie uda - poinformuj o bledzie
 
-Jesli push sie nie uda - poinformuj o bledzie ale NIE przerywaj (handoff juz utworzony).
+### KROK 3: Potwierdzenie (KRYTYCZNY)
 
-### KROK 5: Potwierdzenie
-
-Wyswietl:
+Po ukonczeniu wyswietl:
 ```
 Sesja zakonczona.
-Commit: [hash]
-Handoff: [sciezka do YAML]
-
 Aby wznowic na innym urzadzeniu:
   git pull && claude && /resume_handoff
 ```
@@ -82,24 +63,27 @@ Aby wznowic na innym urzadzeniu:
 ## Przyklad uzycia
 
 ```
-/eos
+/eos auth implementation done
 ```
 
-Wykona kolejno:
-1. Eksport stats (jesli skrypt istnieje)
-2. `git status` → auto-summary: "update eos addon"
-3. `/create_handoff update eos addon` → YAML handoff
-4. `git add . && git commit && git push`
-5. Komunikat z instrukcja resume
+Wykona:
+1. Zapyta o handoff
+2. Eksport stats (jesli skrypt istnieje)
+3. `git add . && git commit -m "eos: auth implementation done" && git push`
+4. Komunikat o zakonczeniu
 
-## Pelny workflow cross-device
+## Pelny workflow konca dnia
 
-**Urzadzenie A (koniec pracy):**
 ```
-/eos
+/eos implementacja auth
+> Utworzyc handoff? (t)
+> [tworzy handoff]
+> [eksportuje stats]
+> [git commit + push]
+> Sesja zakonczona.
 ```
 
-**Urzadzenie B (wznowienie):**
+Na innym urzadzeniu:
 ```
 git pull
 claude

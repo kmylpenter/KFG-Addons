@@ -1,0 +1,67 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Fix Windows console window + update EOS to v1.3.0
+now: Commit changes and test /eos with new handoff step
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Diagnosed empty Python console window on Windows (TLDR daemon)
+    files: [C:\Users\DELL\AppData\Roaming\uv\tools\llm-tldr\Lib\site-packages\tldr\daemon\startup.py]
+  - task: Fixed TLDR daemon to use pythonw.exe instead of python.exe
+    files: [startup.py:316-329]
+  - task: Added windowsHide:true to Claude hooks (11 files)
+    files: [~/.claude/hooks/src/daemon-client.ts, skill-activation-prompt.ts, session-end-cleanup.ts]
+  - task: Created windows-console-fix addon
+    files: [addons/windows-console-fix/addon.json, addons/windows-console-fix/patch-all.ps1]
+  - task: Updated EOS skill to v1.3.0 with mandatory handoff step
+    files: [addons/eos/addon.json, addons/eos/files/skills/eos/SKILL.md, ~/.claude/skills/eos/SKILL.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - pythonw_over_flags: Used pythonw.exe (GUI Python) instead of subprocess flags because flags alone didn't prevent window on Windows
+  - handoff_step_0: Made handoff KROK 0 (critical) in EOS - user always asked before closing
+
+findings:
+  - tldr_daemon_window_cause: startup.py:317 used sys.executable (python.exe) which opens console window
+  - pythonw_location: C:\Users\DELL\AppData\Roaming\uv\tools\llm-tldr\Scripts\pythonw.exe
+  - idle_timeout: TLDR daemon auto-shuts down after 30 min (IDLE_TIMEOUT in core.py:47)
+  - stats_script_path: ~/.claude/scripts/export-device-stats.ps1
+
+worked:
+  - pythonw.exe replacement for python.exe in subprocess.Popen
+  - windowsHide:true in Node.js spawnSync/spawn options
+  - Interactive pythonw check in addon installer
+
+failed:
+  - subprocess flags alone (STARTF_USESHOWWINDOW, CREATE_NO_WINDOW) - not sufficient on Windows
+
+next:
+  - Create claude-history-sync addon (from previous handoff)
+  - Create export-device-stats addon for EOS step 1
+  - Test full /eos workflow with new handoff step
+
+files:
+  created:
+    - addons/windows-console-fix/addon.json
+    - addons/windows-console-fix/patch-all.ps1
+    - thoughts/shared/handoffs/general/2026-01-15_12-45_windows-console-fix-eos-update.yaml
+  modified:
+    - README.md
+    - addons/eos/addon.json
+    - addons/eos/files/skills/eos/SKILL.md
+    - ~/.claude/skills/eos/SKILL.md
+    - ~/.claude/hooks/src/daemon-client.ts
+    - ~/.claude/hooks/src/skill-activation-prompt.ts
+    - ~/.claude/hooks/src/session-end-cleanup.ts
+    - ~/.claude/hooks/src/pre-tool-use-broadcast.ts
+    - ~/.claude/hooks/src/shared/learning-extractor.ts
+    - C:\Users\DELL\AppData\Roaming\uv\tools\llm-tldr\Lib\site-packages\tldr\daemon\startup.py
