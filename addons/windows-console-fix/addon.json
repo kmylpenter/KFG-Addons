@@ -1,0 +1,10 @@
+{
+  "name": "windows-console-fix",
+  "version": "1.0.0",
+  "description": "Fix: ukrywa okna konsoli Python/UV na Windows (hooki + TLDR daemon)",
+  "author": "KFG",
+  "scripts": {
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-all.ps1\""
+  },
+  "files": []
+}
