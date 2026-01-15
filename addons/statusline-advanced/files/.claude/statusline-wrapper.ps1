@@ -1,4 +1,5 @@
-# KFG Statusline Wrapper v5.1
+# KFG Statusline Wrapper v5.2
+# Fix: ctx% używa 160k (usableTokens) zamiast 200k - 100% = compact
 # Format 4x3 z poziomym parowaniem SESJA/TOTAL
 #
 # Rzad 1: Model/Device | ctx%/compacts
@@ -233,9 +234,8 @@ if (-not $deviceName) { $deviceName = "LOCAL" }
 # === CONTEXT, TURNS, SESSION DURATION z transcript ===
 $transcriptPath = $data.transcript_path
 $transcriptData = Get-ContextFromTranscript -TranscriptPath $transcriptPath
-
 $contextLength = $transcriptData.contextLength
-$contextLimit = 200000  # Default limit dla Opus/Sonnet
+$contextLimit = 160000  # Usable tokens - 100% = compact threshold (nie maxTokens 200k)
 $contextPct = 0.0
 
 if ($contextLimit -gt 0 -and $contextLength -gt 0) {
