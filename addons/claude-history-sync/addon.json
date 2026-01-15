@@ -1,0 +1,17 @@
+{
+  "name": "claude-history-sync",
+  "displayName": "Claude History Sync",
+  "description": "Synchronizacja historii Claude miedzy urzadzeniami (git clone + junction)",
+  "version": "1.0.0",
+  "author": "kmylpenter",
+  "dependencies": {
+    "git": {
+      "required": true
+    }
+  },
+  "targets": {},
+  "scripts": {
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\setup-history-sync.ps1\""
+  },
+  "notes": "Klonuje claude-history repo do ~/.claude-history i tworzy junction z ~/.claude/projects"
+}

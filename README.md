@@ -30,6 +30,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 
 | Addon | Opis | Komenda |
 |-------|------|---------|
+| **claude-history-sync** | Sync historii Claude miedzy urzadzeniami (git) | setup-only |
 | **eos** | End of Session - git commit + push | `/eos [summary]` |
 | **migrateconvo** | Migracja historii Claude miedzy urzadzeniami | `/migrateconvo` |
 | **resume_handoff** | Fix: .md → .yaml w /resume_handoff | `/resume_handoff` |
