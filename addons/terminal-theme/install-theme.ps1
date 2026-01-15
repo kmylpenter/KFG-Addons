@@ -54,8 +54,8 @@ $kmylpenterSchemeJson = @"
     "brightYellow": "#FFFFA5",
     "brightBlue": "$($brand.BlueLight)",
     "brightPurple": "#D6ACFF",
-    "brightCyan": "#5FCCCC",
-    "brightWhite": "#FFFFFF"
+    "brightCyan": "$($brand.BlueDeep)",
+    "brightWhite": "$($brand.BlueDeep)"
 }
 "@
 
@@ -175,15 +175,12 @@ foreach ($vscPath in $vscodeSettingsPaths) {
             $colorCustom = $settings."workbench.colorCustomizations"
             $hasKmylpenter = $colorCustom."terminal.background" -eq $brand.Charcoal
 
-            if ($hasKmylpenter) {
-                Write-Warn "Kolory KMYLPENTER juz istnieja"
-            } else {
-                foreach ($key in $vscodeColors.Keys) {
-                    $colorCustom | Add-Member -NotePropertyName $key -NotePropertyValue $vscodeColors[$key] -Force
-                }
-                $settings."workbench.colorCustomizations" = $colorCustom
-                Write-OK "Dodano kolory terminala KMYLPENTER"
+            # Always update colors (force overwrite)
+            foreach ($key in $vscodeColors.Keys) {
+                $colorCustom | Add-Member -NotePropertyName $key -NotePropertyValue $vscodeColors[$key] -Force
             }
+            $settings."workbench.colorCustomizations" = $colorCustom
+            Write-OK "Zaktualizowano kolory terminala KMYLPENTER"
 
             # Add terminal settings (drawBoldTextInBrightColors)
             foreach ($key in $vscodeTerminalSettings.Keys) {
