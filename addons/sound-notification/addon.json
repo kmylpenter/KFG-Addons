@@ -1,0 +1,14 @@
+{
+  "name": "sound-notification",
+  "displayName": "Sound Notification",
+  "version": "1.0.0",
+  "description": "Dzwiek powiadomienia gdy Claude skonczy prace lub pyta o permissions",
+  "author": "KFG",
+  "targets": {
+    "files/hooks/notification/": "~/.claude/hooks/notification/"
+  },
+  "scripts": {
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-settings.ps1\""
+  },
+  "notes": "Wymaga Windows Media (notify.wav). Hooki: Stop + Notification(permission_prompt)"
+}

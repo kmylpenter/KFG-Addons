@@ -1,0 +1,61 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Add sound-notification addon + improve resume_handoff + postinstall support
+now: Commit and push changes to KFG-Addons repo
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Modified resume_handoff to auto-open most recent handoff (no more listing)
+    files: [addons/resume_handoff/files/skills/resume_handoff/SKILL.md, ~/.claude/skills/resume_handoff/SKILL.md]
+  - task: Created sound-notification addon (notify.wav on Stop + permission_prompt)
+    files: [addons/sound-notification/addon.json, addons/sound-notification/files/hooks/notification/play-sound.ps1, addons/sound-notification/patch-settings.ps1]
+  - task: Added postinstall script support to installer
+    files: [install-addons.ps1]
+  - task: Fixed corrupted settings.json after bad regex patch
+    files: [~/.claude/settings.json]
+  - task: Updated README with sound-notification addon
+    files: [README.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - auto_open_latest: User preferred auto-opening most recent handoff vs listing all and asking
+  - net_json_parser: Used System.Web.Extensions for PS 5.x compatible JSON parsing (regex was too fragile)
+  - notify_wav: Kept C:\Windows\Media\notify.wav as notification sound
+
+findings:
+  - ps5_no_ashashtable: PowerShell 5.x doesn't support ConvertFrom-Json -AsHashtable (PS7+ only)
+  - regex_json_fragile: Regex-based JSON modification easily corrupts structure
+  - sound_hooks_in_kfg: Original sound hooks were in KFG project settings.json, not global
+
+worked:
+  - System.Web.Script.Serialization.JavaScriptSerializer for PS 5.x JSON parsing
+  - ConvertTo-Json -Depth 10 for proper nested object serialization
+  - Simple play-sound.ps1 with Media.SoundPlayer
+
+failed:
+  - Regex replacement for JSON modification (corrupted settings.json with extra brackets)
+  - ConvertFrom-Json -AsHashtable (PS 5.x incompatible)
+
+next:
+  - Commit all changes to KFG-Addons
+  - Consider creating claude-history-sync addon (from previous handoff)
+  - Test sound notification in fresh Claude session
+
+files:
+  created:
+    - addons/sound-notification/addon.json
+    - addons/sound-notification/files/hooks/notification/play-sound.ps1
+    - addons/sound-notification/patch-settings.ps1
+  modified:
+    - addons/resume_handoff/files/skills/resume_handoff/SKILL.md
+    - install-addons.ps1
+    - README.md
