@@ -1,0 +1,51 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Add resume_handoff addon to fix .md → .yaml extension issue
+now: Create claude-history-sync addon for cross-device session sync
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Created resume_handoff addon (fix .md → .yaml in /resume_handoff skill)
+    files: [addons/resume_handoff/addon.json, addons/resume_handoff/files/skills/resume_handoff/SKILL.md]
+  - task: Fixed CRLF line endings after sed replace
+    files: [addons/resume_handoff/files/skills/resume_handoff/SKILL.md]
+  - task: Updated README with new addon
+    files: [README.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - simple_sed_replace: Used sed to replace .md→.yaml instead of rewriting skill (minimal change)
+  - preserve_crlf: Converted back to CRLF for Windows compatibility
+
+findings:
+  - create_handoff_yaml: /create_handoff always creates .yaml files
+  - resume_handoff_md_examples: /resume_handoff had .md in examples causing Claude to search only .md
+  - sed_strips_crlf: sed on Windows/Git Bash strips CR from CRLF, need unix2dos after
+
+worked:
+  - sed 's/\.md/\.yaml/g' for simple extension replacement
+  - unix2dos to restore Windows line endings
+
+failed: []
+
+next:
+  - Create claude-history-sync addon (symlinks ~/.claude/projects/ to git repo)
+  - Test /resume_handoff with .yaml handoffs on fresh session
+  - Consider auto-discovery in /resume_handoff when no args provided
+
+files:
+  created:
+    - addons/resume_handoff/addon.json
+    - addons/resume_handoff/files/skills/resume_handoff/SKILL.md
+    - thoughts/shared/handoffs/general/2026-01-15_06-59_resume-handoff-addon.yaml
+  modified:
+    - README.md

@@ -1,0 +1,13 @@
+{
+  "name": "resume_handoff",
+  "displayName": "Resume Handoff YAML Fix",
+  "description": "Fix: zmienia rozszerzenie handoffow z .md na .yaml",
+  "version": "1.0.0",
+  "author": "kmylpenter",
+  "dependencies": {},
+  "targets": {
+    "files/skills/resume_handoff/": "~/.claude/skills/resume_handoff/"
+  },
+  "postInstall": null,
+  "notes": "Nadpisuje domyslny /resume_handoff skill. Uzycie: /resume_handoff"
+}

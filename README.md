@@ -32,6 +32,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 |-------|------|---------|
 | **eos** | End of Session - git commit + push | `/eos [summary]` |
 | **migrateconvo** | Migracja historii Claude miedzy urzadzeniami | `/migrateconvo` |
+| **resume_handoff** | Fix: .md → .yaml w /resume_handoff | `/resume_handoff` |
 
 ## Tworzenie Dodatkow
 
