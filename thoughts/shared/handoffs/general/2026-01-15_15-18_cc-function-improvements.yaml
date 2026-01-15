@@ -1,0 +1,46 @@
+---
+session: cc-launcher-improvements
+date: 2026-01-15
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Poprawki funkcji cc w PowerShell profile - smart git pull + uncommitted changes handling + KFG-Addons
+now: Przetestuj cc w nowym terminalu, potem zrob z tego addon
+
+done_this_session:
+  - task: Pull tylko gdy remote ma nowsze commity (git fetch + rev-list check)
+    files: [C:\Users\DELL\Documents\WindowsPowerShell\profile.ps1]
+  - task: Obsluga niescommitowanych zmian z lista plikow i opcjami [C]ommit/[S]tash/[K]ontynuuj + opisy konsekwencji
+    files: [C:\Users\DELL\Documents\WindowsPowerShell\profile.ps1]
+  - task: Zamiana KFG na KFG-Addons - sprawdzanie repo, pull + uruchomienie instalatora
+    files: [C:\Users\DELL\Documents\WindowsPowerShell\profile.ps1]
+
+blockers: []
+
+questions:
+  - Czy zrobic z tego osobny addon w KFG-Addons repo?
+
+decisions:
+  - git_fetch_before_pull: Najpierw fetch, potem sprawdz behind count - pytanie tylko gdy > 0
+  - uncommitted_options: Trzy opcje C/S/K z opisami konsekwencji kazdej
+  - kfg_addons_paths: Szuka repo w kilku lokalizacjach (projekty, D:\Projekty DELL KG, WorkDrive)
+
+findings:
+  - cc_function_location: C:\Users\DELL\Documents\WindowsPowerShell\profile.ps1 (linie 119-290)
+  - profile_sourced_from: $PROFILE wskazuje na WindowsPowerShell\Microsoft.PowerShell_profile.ps1 ktory source'uje profile.ps1
+
+worked:
+  - git rev-list HEAD..origin/main --count do sprawdzenia ile commitow za origin
+  - Fallback na origin/master jesli main nie istnieje
+
+failed: []
+
+next:
+  - Przetestowac cc w nowym terminalu
+  - Utworzyc addon "cc-launcher" w KFG-Addons z tym kodem
+  - Dodac do instalatora patch ktory wstawia funkcje cc do profilu
+
+files:
+  created: []
+  modified: [C:\Users\DELL\Documents\WindowsPowerShell\profile.ps1]
