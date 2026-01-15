@@ -35,6 +35,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 | **migrateconvo** | Migracja historii Claude miedzy urzadzeniami | `/migrateconvo` |
 | **resume_handoff** | Fix: .md → .yaml w /resume_handoff | `/resume_handoff` |
 | **sound-notification** | Dzwiek powiadomienia (Stop + permission_prompt) | auto-hook |
+| **statusline-advanced** | StatusLine z cross-device totals + export stats | setup-only |
 | **windows-console-fix** | Fix: ukrywa okna konsoli Python/UV na Windows | auto-patch |
 
 ## Tworzenie Dodatkow

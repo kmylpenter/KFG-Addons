@@ -1,0 +1,57 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Created claude-history-sync and statusline-advanced addons
+now: Test full installation on fresh system, commit statusline-advanced
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Created claude-history-sync addon
+    files: [addons/claude-history-sync/addon.json, addons/claude-history-sync/setup-history-sync.ps1]
+  - task: Created statusline-advanced addon with all components
+    files: [addons/statusline-advanced/addon.json, addons/statusline-advanced/files/]
+  - task: Committed and pushed claude-history-sync
+    files: []
+
+blockers: []
+
+questions: []
+
+decisions:
+  - safe_migration_order: Clone repo first, then migrate conversations, then create junction (prevents data loss)
+  - all_in_one_addon: statusline-advanced includes wrapper + analyze-history + export-device-stats (dependencies)
+
+findings:
+  - history_structure: ~/.claude-history (git repo) + ~/.claude/projects (junction) = cross-device sync
+  - stats_flow: analyze-history.ps1 -> export-device-stats.ps1 -> device-{HOSTNAME}.json
+  - wrapper_version: statusline-wrapper.ps1 v4.0 with dynamic ctx% colors and 2-line display
+
+worked:
+  - Fetching raw files from KFG-CCv2-Installer-Stable via curl
+  - Junction creation via cmd /c mklink /J
+
+failed: []
+
+next:
+  - Commit statusline-advanced addon
+  - Test full /eos workflow with new export-device-stats.ps1 path
+  - Document statusLine.command setting requirement in addon notes
+
+files:
+  created:
+    - addons/claude-history-sync/addon.json
+    - addons/claude-history-sync/setup-history-sync.ps1
+    - addons/statusline-advanced/addon.json
+    - addons/statusline-advanced/files/.config/ccstatusline/settings.json
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.sh
+    - addons/statusline-advanced/files/.claude/analyze-history.ps1
+    - addons/statusline-advanced/files/.claude/export-device-stats.ps1
+    - addons/statusline-advanced/files/.claude/scripts/export-device-stats.ps1
+  modified:
+    - README.md

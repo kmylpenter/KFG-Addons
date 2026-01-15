@@ -1,0 +1,70 @@
+{
+  "version": 3,
+  "lines": [
+    [],
+    [
+      {
+        "id": "model-widget",
+        "type": "model",
+        "color": "ansi256:196",
+        "rawValue": true
+      },
+      {
+        "id": "sep1",
+        "type": "separator"
+      },
+      {
+        "id": "ctx-widget",
+        "type": "context-percentage-usable",
+        "color": "ansi256:46",
+        "rawValue": true
+      },
+      {
+        "id": "sep2",
+        "type": "separator"
+      },
+      {
+        "id": "time-widget",
+        "type": "session-clock",
+        "color": "ansi256:226",
+        "rawValue": true
+      },
+      {
+        "id": "sep3",
+        "type": "separator"
+      },
+      {
+        "id": "tokens-widget",
+        "type": "context-length",
+        "color": "ansi256:46",
+        "rawValue": true
+      },
+      {
+        "id": "sep4",
+        "type": "separator"
+      },
+      {
+        "id": "cost-widget",
+        "type": "session-cost",
+        "color": "ansi256:171",
+        "rawValue": true
+      }
+    ],
+    []
+  ],
+  "flexMode": "full-until-compact",
+  "compactThreshold": 60,
+  "colorLevel": 2,
+  "defaultPadding": " ",
+  "inheritSeparatorColors": false,
+  "globalBold": false,
+  "powerline": {
+    "enabled": false,
+    "separators": [""],
+    "separatorInvertBackground": [false],
+    "startCaps": [],
+    "endCaps": [],
+    "theme": "nord-aurora",
+    "autoAlign": false
+  }
+}
