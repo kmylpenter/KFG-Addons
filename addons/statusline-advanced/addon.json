@@ -1,25 +1,17 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced",
-  "description": "Zaawansowana linia statusu z cross-device totals i eksportem statystyk",
-  "version": "1.0.0",
+  "displayName": "StatusLine Advanced v5",
+  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i cross-device stats",
+  "version": "5.1.0",
   "author": "kmylpenter",
-  "dependencies": {
-    "node": {
-      "required": true,
-      "minVersion": "18"
-    }
-  },
+  "dependencies": {},
   "targets": {
-    "files/.config/ccstatusline/": "~/.config/ccstatusline/",
     "files/.claude/statusline-wrapper.ps1": "~/.claude/",
     "files/.claude/statusline-wrapper.sh": "~/.claude/",
     "files/.claude/analyze-history.ps1": "~/.claude/",
     "files/.claude/export-device-stats.ps1": "~/.claude/",
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
-  "scripts": {
-    "postinstall": "powershell -Command \"npm install -g ccstatusline@latest; Write-Host '[OK] ccstatusline zainstalowany globalnie' -ForegroundColor Green\""
-  },
-  "notes": "Wymaga ustawienia statusLine.command w ~/.claude/settings.json na 'powershell -File ~/.claude/statusline-wrapper.ps1'"
+  "scripts": {},
+  "notes": "v5.1: Fix ctx%/turns/sessionDuration - parsowanie z transcript jak ccstatusline. Format 4x3, nie wymaga ccstatusline."
 }
