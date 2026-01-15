@@ -1,0 +1,13 @@
+{
+  "name": "np-v2",
+  "displayName": "New Project (CCv3)",
+  "description": "Komenda /np - tworzy nowy projekt CCv3-compatible z git i thoughts/shared",
+  "version": "2.0.0",
+  "author": "kmylpenter",
+  "dependencies": {},
+  "targets": {
+    "files/.claude/skills/np/": "~/.claude/skills/"
+  },
+  "scripts": {},
+  "notes": "Zastępuje stary /np. Użycie: /np nazwaprojektu [--with-opc] [--github]"
+}
