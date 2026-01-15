@@ -55,6 +55,7 @@ function Get-Addons {
                     Version = $json.version
                     Dependencies = $json.dependencies
                     Targets = $json.targets
+                    Scripts = $json.scripts
                     Path = $folder.FullName
                     Notes = $json.notes
                 }
@@ -188,6 +189,18 @@ function Install-Addon {
             Write-OK "Skopiowano: $($target.Name) -> $targetPath"
         } else {
             Write-Warn "Brak zrodla: $sourcePath"
+        }
+    }
+
+    # Run postinstall script if defined
+    if ($Addon.Scripts -and $Addon.Scripts.postinstall) {
+        Write-Info "Uruchamiam postinstall script..."
+        $postinstallCmd = $Addon.Scripts.postinstall -replace "%ADDON_DIR%", $Addon.Path
+        try {
+            Invoke-Expression $postinstallCmd
+            Write-OK "Postinstall wykonany"
+        } catch {
+            Write-Warn "Blad postinstall: $_"
         }
     }
 

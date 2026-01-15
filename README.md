@@ -33,6 +33,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 | **eos** | End of Session - git commit + push | `/eos [summary]` |
 | **migrateconvo** | Migracja historii Claude miedzy urzadzeniami | `/migrateconvo` |
 | **resume_handoff** | Fix: .md → .yaml w /resume_handoff | `/resume_handoff` |
+| **sound-notification** | Dzwiek powiadomienia (Stop + permission_prompt) | auto-hook |
 | **windows-console-fix** | Fix: ukrywa okna konsoli Python/UV na Windows | auto-patch |
 
 ## Tworzenie Dodatkow

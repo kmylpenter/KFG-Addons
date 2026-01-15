@@ -1,6 +1,6 @@
 ---
 name: eos
-description: End of Session - handoff + eksport stats + git commit + push. Triggers: eos, koniec sesji, zakoncz
+description: End of Session - handoff + stats + project push + history push. Triggers: eos, koniec sesji, zakoncz
 ---
 
 # End of Session (EOS)
@@ -36,7 +36,7 @@ if (Test-Path $statsScript) {
 Jesli skrypt istnieje - MUSISZ go wykonac.
 Jesli nie istnieje - pomin (ale poinformuj usera).
 
-### KROK 2: Git commit + push (KRYTYCZNY)
+### KROK 2: Git commit + push PROJEKT (KRYTYCZNY)
 
 Pobierz summary z argumentow (ARGUMENTS). Jesli brak - zapytaj usera.
 
@@ -48,14 +48,38 @@ git push
 
 **WAZNE:**
 - Przed git commit pokaz `git status` userowi
-- Jesli brak zmian - poinformuj i zakoncz
+- Jesli brak zmian - poinformuj i kontynuuj do kroku 3
 - Jesli push sie nie uda - poinformuj o bledzie
 
-### KROK 3: Potwierdzenie (KRYTYCZNY)
+### KROK 3: Push Claude History (KRYTYCZNY jesli skonfigurowane)
+
+Sprawdz czy `~/.claude/projects` jest git repo z remote:
+```bash
+cd ~/.claude/projects && git remote -v 2>/dev/null
+```
+
+**Jesli jest skonfigurowane** (ma remote origin):
+```bash
+cd ~/.claude/projects
+git add .
+git commit -m "eos: [ARGUMENTS lub summary]"
+git push
+```
+
+**Jesli NIE jest skonfigurowane** (brak .git lub brak remote):
+- Wyswietl: `[SKIP] Claude History nie skonfigurowane`
+- Kontynuuj do kroku 4
+
+**Sciezka:** `~/.claude/projects/`
+
+### KROK 4: Potwierdzenie (KRYTYCZNY)
 
 Po ukonczeniu wyswietl:
 ```
 Sesja zakonczona.
+- Projekt: [pushed/no changes]
+- Claude History: [pushed/not configured]
+
 Aby wznowic na innym urzadzeniu:
   git pull && claude && /resume_handoff
 ```
@@ -69,8 +93,9 @@ Aby wznowic na innym urzadzeniu:
 Wykona:
 1. Zapyta o handoff
 2. Eksport stats (jesli skrypt istnieje)
-3. `git add . && git commit -m "eos: auth implementation done" && git push`
-4. Komunikat o zakonczeniu
+3. Projekt: `git add . && git commit -m "eos: auth implementation done" && git push`
+4. Claude History: `cd ~/.claude/projects && git add . && git commit && git push`
+5. Komunikat o zakonczeniu
 
 ## Pelny workflow konca dnia
 
@@ -79,13 +104,15 @@ Wykona:
 > Utworzyc handoff? (t)
 > [tworzy handoff]
 > [eksportuje stats]
-> [git commit + push]
+> [git push projekt]
+> [git push claude history]
 > Sesja zakonczona.
 ```
 
 Na innym urzadzeniu:
 ```
 git pull
+cd ~/.claude/projects && git pull
 claude
 /resume_handoff
 ```

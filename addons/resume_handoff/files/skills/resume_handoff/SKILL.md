@@ -28,18 +28,14 @@ When this command is invoked:
    - Begin the analysis process by ingesting relevant context from the handoff document, reading additional files it mentions
    - Then propose a course of action to the user and confirm, or ask for clarification on direction.
 
-3. **If no parameters provided**, respond with:
-```
-I'll help you resume work from a handoff document. Let me find the available handoffs.
-
-Which handoff would you like to resume from?
-
-Tip: You can invoke this command directly with a handoff path: `/resume_handoff `thoughts/shared/handoffs/ENG-XXXX/YYYY-MM-DD_HH-MM-SS_ENG-XXXX_description.yaml`
-
-or using a ticket number to resume from the most recent handoff for that ticket: `/resume_handoff ENG-XXXX`
-```
-
-Then wait for the user's input.
+3. **If no parameters provided** - auto-open the most recent handoff:
+   - Search for all `.yaml` files in `thoughts/shared/handoffs/` recursively
+   - Sort by filename (format `YYYY-MM-DD_HH-MM-SS_*`) to find the most recent
+   - **If no handoffs found**: tell the user "No handoff files found in thoughts/shared/handoffs/"
+   - **If handoffs exist**: automatically proceed with the most recent one
+   - Show brief message: "Auto-resuming from most recent handoff: [filename]"
+   - Immediately read the handoff document FULLY
+   - Begin the analysis process as in case 1 and 2 above
 
 ## Process Steps
 

@@ -1,0 +1,55 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: EOS v1.4.0 - added Claude History push as step 3
+now: Test full /eos workflow, create claude-history-sync addon
+
+test: powershell -File install-addons.ps1 -List
+
+done_this_session:
+  - task: Fixed Windows console window (pythonw.exe + windowsHide)
+    files: [addons/windows-console-fix/addon.json, addons/windows-console-fix/patch-all.ps1]
+  - task: EOS v1.3.0 - mandatory handoff step 0
+    files: [addons/eos/addon.json, addons/eos/files/skills/eos/SKILL.md]
+  - task: EOS v1.4.0 - added Claude History push step 3
+    files: [addons/eos/addon.json, addons/eos/files/skills/eos/SKILL.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - history_push_conditional: Push Claude History only if ~/.claude/projects has git remote configured
+  - eos_5_steps: KROK 0-4 (handoff, stats, project, history, confirm)
+
+findings:
+  - claude_history_location: ~/.claude/projects/ is git repo with remote origin
+  - history_remote: https://github.com/kmylpenter/claude-history.git
+  - stats_script_path: ~/.claude/scripts/export-device-stats.ps1 (not yet created)
+
+worked:
+  - Checking git remote -v to detect if history sync configured
+  - pythonw.exe for windowless Python on Windows
+
+failed: []
+
+next:
+  - Create claude-history-sync addon (sets up symlink + git init for ~/.claude/projects)
+  - Create export-device-stats addon (stats script for EOS step 1)
+  - Test full /eos workflow on fresh install
+
+files:
+  created:
+    - addons/windows-console-fix/addon.json
+    - addons/windows-console-fix/patch-all.ps1
+    - thoughts/shared/handoffs/general/2026-01-15_12-45_windows-console-fix-eos-update.yaml
+    - thoughts/shared/handoffs/general/2026-01-15_13-15_eos-v1.4-history-push.yaml
+  modified:
+    - README.md
+    - addons/eos/addon.json (v1.2.0 → v1.4.0)
+    - addons/eos/files/skills/eos/SKILL.md
+    - ~/.claude/skills/eos/SKILL.md
