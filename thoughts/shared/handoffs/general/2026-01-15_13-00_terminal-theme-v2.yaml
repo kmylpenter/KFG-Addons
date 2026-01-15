@@ -1,0 +1,25 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Terminal theme v2 + vivid colors + statusline fix
+now: Test statusline w nowej sesji Claude
+
+done_this_session:
+  - task: resume_handoff auto-open najnowszy
+  - task: sound-notification addon
+  - task: terminal-theme v2 (WT + VSCode + Win11 accent)
+  - task: Vivid colors (red/green/yellow/purple)
+  - task: statusline fix (type: command)
+  - task: install-addons pause na końcu
+
+decisions:
+  - vivid_colors: "#FF6B6B, #50FA7B, #F1FA8C, #BD93F9"
+  - brand_unchanged: cyan=#3A90C8, blue=#076AAC
+
+next:
+  - Test statusline w nowej sesji
+  - Test vivid colors w WT

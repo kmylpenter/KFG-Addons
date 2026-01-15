@@ -1,0 +1,74 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Rozbudowa KFG-Addons - terminal-theme v2 z vivid colors + fixes
+now: Test statusline w nowej sesji Claude + commit wszystkich zmian
+
+test: powershell -File "$env:USERPROFILE\.claude\test-colors.ps1"
+
+done_this_session:
+  - task: resume_handoff - auto-open most recent handoff (bez listowania)
+    files: [addons/resume_handoff/files/skills/resume_handoff/SKILL.md]
+  - task: sound-notification addon - dzwiek przy Stop i permission_prompt
+    files: [addons/sound-notification/addon.json, addons/sound-notification/patch-settings.ps1]
+  - task: terminal-theme v2.0 - full color scheme
+    files: [addons/terminal-theme/addon.json, addons/terminal-theme/install-theme.ps1]
+  - task: Vivid colors dla red/green/yellow/purple
+    files: [addons/terminal-theme/install-theme.ps1, WT settings.json]
+  - task: statusline-advanced fix - npm install -g ccstatusline
+    files: [addons/statusline-advanced/addon.json]
+  - task: install-addons.ps1 - postinstall support + pause na koniec
+    files: [install-addons.ps1]
+  - task: Fix statusLine w settings.json (dodano type: command)
+    files: [~/.claude/settings.json]
+  - task: Fix WT settings.json - schemes jako array nie object
+    files: [WT LocalState/settings.json]
+
+blockers: []
+
+questions:
+  - Czy statusline-wrapper dziala po ustawieniu type:command?
+
+decisions:
+  - vivid_colors: Uzytkownik chcial zywsze kolory - uzyto palety podobnej do Dracula
+  - brand_untouched: Cyan (#3A90C8) i Blue (#076AAC) bez zmian - to brand colors
+  - auto_default_scheme: Instalator automatycznie ustawia KMYLPENTER jako default
+  - vscode_terminal_only: VS Code colors tylko dla terminala (nie caly editor)
+
+findings:
+  - statusline_needs_type: Claude settings.json wymaga "type": "command" w statusLine
+  - wt_schemes_is_array: Windows Terminal schemes musi byc array [], nie object {}
+  - ps5_json_corrupts_arrays: PowerShell 5.x ConvertTo-Json moze zepsuc strukture tablic
+  - ansi_colors_limited: Terminal ANSI to tylko 16 slotow - foreground nie uzywa cyan
+
+worked:
+  - String manipulation zamiast JSON parsing dla WT settings
+  - Vivid colors: #FF6B6B (red), #50FA7B (green), #F1FA8C (yellow), #BD93F9 (purple)
+  - test-colors.ps1 do weryfikacji schematu
+
+failed:
+  - JavaScriptSerializer psuł schemes array w WT
+  - Regex JSON manipulation (poprzednia sesja) - zbyt kruche
+
+next:
+  - Test statusline w nowej sesji Claude (po ustawieniu type:command)
+  - Test vivid colors w nowym oknie WT
+  - Commit wszystkich zmian do KFG-Addons
+  - Rozwazyc VS Code full theme (osobny projekt)
+
+files:
+  created:
+    - addons/sound-notification/*
+    - addons/terminal-theme/*
+    - ~/.claude/test-colors.ps1
+  modified:
+    - addons/resume_handoff/files/skills/resume_handoff/SKILL.md
+    - addons/statusline-advanced/addon.json
+    - install-addons.ps1
+    - README.md
+    - ~/.claude/settings.json
+    - WT LocalState/settings.json

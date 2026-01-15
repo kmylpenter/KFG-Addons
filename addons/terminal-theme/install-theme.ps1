@@ -139,7 +139,7 @@ $vscodeColors = @{
     "terminal.ansiRed" = "#FF6B6B"
     "terminal.ansiGreen" = "#50FA7B"
     "terminal.ansiYellow" = "#F1FA8C"
-    "terminal.ansiBlue" = $brand.BlueDeep
+    "terminal.ansiBlue" = $brand.BlueLight          # Links
     "terminal.ansiMagenta" = "#BD93F9"
     "terminal.ansiCyan" = $brand.BlueLight
     "terminal.ansiWhite" = $brand.OffWhite
@@ -149,8 +149,13 @@ $vscodeColors = @{
     "terminal.ansiBrightYellow" = "#FFFFA5"
     "terminal.ansiBrightBlue" = $brand.BlueLight
     "terminal.ansiBrightMagenta" = "#D6ACFF"
-    "terminal.ansiBrightCyan" = "#5FCCCC"
-    "terminal.ansiBrightWhite" = "#FFFFFF"
+    "terminal.ansiBrightCyan" = $brand.BlueDeep     # Inline code (brand deep)
+    "terminal.ansiBrightWhite" = $brand.BlueDeep    # Bold text (brand deep)
+}
+
+# Additional VS Code terminal settings
+$vscodeTerminalSettings = @{
+    "terminal.integrated.drawBoldTextInBrightColors" = $true
 }
 
 $vscodeInstalled = $false
@@ -177,11 +182,17 @@ foreach ($vscPath in $vscodeSettingsPaths) {
                     $colorCustom | Add-Member -NotePropertyName $key -NotePropertyValue $vscodeColors[$key] -Force
                 }
                 $settings."workbench.colorCustomizations" = $colorCustom
-
-                $json = $settings | ConvertTo-Json -Depth 10
-                [System.IO.File]::WriteAllText($vscPath, $json, [System.Text.UTF8Encoding]::new($false))
                 Write-OK "Dodano kolory terminala KMYLPENTER"
             }
+
+            # Add terminal settings (drawBoldTextInBrightColors)
+            foreach ($key in $vscodeTerminalSettings.Keys) {
+                $settings | Add-Member -NotePropertyName $key -NotePropertyValue $vscodeTerminalSettings[$key] -Force
+            }
+
+            $json = $settings | ConvertTo-Json -Depth 10
+            [System.IO.File]::WriteAllText($vscPath, $json, [System.Text.UTF8Encoding]::new($false))
+            Write-OK "Ustawiono terminal.integrated.drawBoldTextInBrightColors"
             $vscodeInstalled = $true
         } catch {
             Write-Warn "Blad: $_"
