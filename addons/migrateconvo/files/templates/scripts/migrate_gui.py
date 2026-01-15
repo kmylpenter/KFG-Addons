@@ -100,6 +100,7 @@ class MigrationGUI:
         self.by_project = {}
         self.current_computer = None
         self.current_project = None
+        self.recent_convs = []
 
         self.setup_ui()
         self.load_data()
@@ -137,6 +138,17 @@ class MigrationGUI:
         self.project_listbox = tk.Listbox(proj_frame, height=5, exportselection=False)
         self.project_listbox.pack(fill=tk.BOTH, expand=True)
         self.project_listbox.bind('<<ListboxSelect>>', self.on_project_select)
+
+        # === Filtr: Recent ===
+        filter_frame = ttk.Frame(main)
+        filter_frame.pack(fill=tk.X, pady=(0, 5))
+
+        self.show_recent = tk.BooleanVar(value=False)
+        self.recent_check = ttk.Checkbutton(
+            filter_frame, text="Show recent (7 days)",
+            variable=self.show_recent, command=self.on_recent_toggle
+        )
+        self.recent_check.pack(side=tk.LEFT)
 
         # === Wiersz 2: Konwersacje i Podglad ===
         middle_frame = ttk.Frame(main)
@@ -269,31 +281,58 @@ class MigrationGUI:
             count = len(self.by_project[proj])
             self.project_listbox.insert(tk.END, f"{proj} ({count})")
 
-    def on_project_select(self, event):
-        """Obsluga wyboru projektu."""
-        sel = self.project_listbox.curselection()
-        if not sel:
-            return
+    def on_recent_toggle(self):
+        """Obsluga checkboxa 'Show recent'."""
+        self.conv_listbox.delete(0, tk.END)
+        self.recent_convs = []
 
-        # Pobierz nazwe projektu (bez licznika)
-        proj_text = self.project_listbox.get(sel[0])
-        proj_name = proj_text.rsplit(" (", 1)[0]
-        self.current_project = proj_name
+        if self.show_recent.get():
+            # Filtruj konwersacje z ostatnich 7 dni
+            from datetime import datetime, timedelta
+            cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
 
-        # Wypelnij liste konwersacji
+            recent = []
+            for conv in self.conversations:
+                if conv.get("last_date") and conv["last_date"] >= cutoff:
+                    recent.append(conv)
+
+            # Sortuj po dacie (najnowsze pierwsze)
+            recent.sort(key=lambda x: x["last_date"] or "", reverse=True)
+            self.recent_convs = recent
+
+            for conv in recent:
+                date = conv["last_date"] or "brak-daty"
+                proj = conv.get("project", "?")[:20]
+                msgs = conv.get("messages", 0)
+
+                title = conv["title"]
+                if len(title) == 36 and title.count("-") == 4:
+                    if conv.get("first_message"):
+                        title = conv["first_message"][:40]
+                    else:
+                        title = f"(pusty - {msgs} msg)"
+                else:
+                    title = title[:40]
+
+                mark = "*" if conv.get("needs_migration") else " "
+                self.conv_listbox.insert(tk.END, f"{mark}[{date}] {proj}: {title}")
+        else:
+            # Wroc do normalnego widoku
+            if self.current_project:
+                self.display_project_convs(self.current_project)
+
+    def display_project_convs(self, proj_name):
+        """Wyswietla konwersacje dla wybranego projektu."""
         self.conv_listbox.delete(0, tk.END)
 
         convs = self.by_project.get(proj_name, [])
-        # Sortuj po dacie
         convs.sort(key=lambda x: x["last_date"] or "", reverse=True)
 
         for conv in convs:
             date = conv["last_date"] or "brak-daty"
             msgs = conv.get("messages", 0)
 
-            # Lepsze wyswietlanie tytulu
             title = conv["title"]
-            # Jesli title to UUID (36 znakow z myslnikami), pokaz first_message lub "(pusty)"
             if len(title) == 36 and title.count("-") == 4:
                 if conv.get("first_message"):
                     title = conv["first_message"][:50]
@@ -305,18 +344,37 @@ class MigrationGUI:
             mark = "*" if conv.get("needs_migration") else " "
             self.conv_listbox.insert(tk.END, f"{mark}[{date}] {title}")
 
+    def on_project_select(self, event):
+        """Obsluga wyboru projektu."""
+        # Wylacz recent mode
+        self.show_recent.set(False)
+        self.recent_convs = []
+
+        sel = self.project_listbox.curselection()
+        if not sel:
+            return
+
+        # Pobierz nazwe projektu (bez licznika)
+        proj_text = self.project_listbox.get(sel[0])
+        proj_name = proj_text.rsplit(" (", 1)[0]
+        self.current_project = proj_name
+
+        self.display_project_convs(proj_name)
+
     def on_conv_select(self, event):
         """Obsluga wyboru konwersacji - pokaz podglad."""
         sel = self.conv_listbox.curselection()
         if not sel:
             return
 
-        # Pobierz pierwsza zaznaczona konwersacje
-        proj_name = self.current_project
-        convs = self.by_project.get(proj_name, [])
-        convs.sort(key=lambda x: x["last_date"] or "", reverse=True)
-
-        conv = convs[sel[0]]
+        # Pobierz konwersacje - z recent lub z projektu
+        if self.show_recent.get() and hasattr(self, 'recent_convs') and self.recent_convs:
+            conv = self.recent_convs[sel[0]]
+        else:
+            proj_name = self.current_project
+            convs = self.by_project.get(proj_name, [])
+            convs.sort(key=lambda x: x["last_date"] or "", reverse=True)
+            conv = convs[sel[0]]
         self.current_preview_conv = conv
         self.load_preview(conv)
 
@@ -465,12 +523,14 @@ class MigrationGUI:
             messagebox.showwarning("Uwaga", "Wybierz co najmniej jedna konwersacje.")
             return
 
-        # Pobierz wybrane konwersacje
-        proj_name = self.current_project
-        convs = self.by_project.get(proj_name, [])
-        convs.sort(key=lambda x: x["last_date"] or "", reverse=True)
-
-        to_migrate = [convs[i] for i in sel]
+        # Pobierz wybrane konwersacje - z recent lub z projektu
+        if self.show_recent.get() and hasattr(self, 'recent_convs') and self.recent_convs:
+            to_migrate = [self.recent_convs[i] for i in sel]
+        else:
+            proj_name = self.current_project
+            convs = self.by_project.get(proj_name, [])
+            convs.sort(key=lambda x: x["last_date"] or "", reverse=True)
+            to_migrate = [convs[i] for i in sel]
 
         # Jesli nie ma target_dir, uzyj zapisanego folderu glownego lub zapytaj
         if not self.target_dir:
