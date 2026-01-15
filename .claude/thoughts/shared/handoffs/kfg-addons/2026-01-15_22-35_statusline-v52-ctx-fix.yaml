@@ -1,0 +1,53 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Statusline v5.2 - fix ctx% limit (160k zamiast 200k)
+now: Brak - wszystko naprawione i spushowane
+test: Sprawdz czy ctx% pokazuje ~50% po kompakcji (nie ~40%)
+
+done_this_session:
+  - task: Debug ctx% - analiza parsowania transcript
+    files:
+      - C:/Users/kamil/.claude/statusline-wrapper.ps1
+  - task: Odkrycie ze ccstatusline uzywa usableTokens (160k) nie maxTokens (200k)
+    files: []
+  - task: Fix ctx% limit - zmiana 200000 na 160000
+    files:
+      - C:/Users/kamil/.claude/statusline-wrapper.ps1
+      - D:/Projekty StriX/KFG-Addons/addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+  - task: Update addon.json v5.2.0
+    files:
+      - D:/Projekty StriX/KFG-Addons/addons/statusline-advanced/addon.json
+
+blockers: []
+
+questions: []
+
+decisions:
+  - ctx_limit_160k: "100% ctx = compact threshold (160k), nie pelne okno (200k)"
+
+findings:
+  - ccstatusline_config: "maxTokens: 200000, usableTokens: 160000"
+  - ctx_display_types: "Ctx% (vs maxTokens) i Ctx(u)% (vs usableTokens)"
+  - rounding_difference: "71.5% vs 72% to roznica display (1 decimal) vs cache (int) - nie bug"
+
+worked:
+  - Debug logging do statusline-wrapper.ps1 pomoglo zweryfikowac parsowanie
+  - Porownanie z ccstatusline source code
+
+failed: []
+
+next:
+  - Testuj ctx% na kilku sesjach - powinno byc ~50% po kompakcji
+
+files:
+  created:
+    - D:/Projekty StriX/.claude/thoughts/shared/handoffs/kfg-addons/2026-01-15_22-35_statusline-v52-ctx-fix.yaml
+  modified:
+    - C:/Users/kamil/.claude/statusline-wrapper.ps1
+    - D:/Projekty StriX/KFG-Addons/addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+    - D:/Projekty StriX/KFG-Addons/addons/statusline-advanced/addon.json
