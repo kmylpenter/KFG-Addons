@@ -1,0 +1,50 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Add terminal-theme addon with KMYLPENTER brand colors
+now: Test theme in Windows Terminal, consider more brand integrations
+
+test: powershell -File install-addons.ps1 -Addon terminal-theme
+
+done_this_session:
+  - task: Created terminal-theme addon with KMYLPENTER brand colors
+    files: [addons/terminal-theme/addon.json, addons/terminal-theme/install-theme.ps1]
+  - task: Installed theme to Windows Terminal
+    files: [~/.../WindowsTerminal/settings.json]
+  - task: Updated README with terminal-theme addon
+    files: [README.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - brand_colors_only_for_accent: Used brand blue (#3A90C8, #076AAC) for cyan/blue only, kept functional colors (red/green/yellow) standard
+  - charcoal_background: Used --charcoal (#0d1117) as background for dark premium feel
+  - manual_activation: User must manually set color scheme in WT settings (no auto-default)
+
+findings:
+  - wt_settings_has_comments: Windows Terminal settings.json supports // comments, need to strip before parsing
+  - schemes_array: Color schemes go in "schemes" array in WT settings
+
+worked:
+  - JavaScriptSerializer for PS 5.x JSON parsing
+  - Stripping comments before JSON parse
+
+failed: []
+
+next:
+  - Test terminal-theme visually
+  - Consider hook output formatting with brand colors
+  - Commit and push changes
+
+files:
+  created:
+    - addons/terminal-theme/addon.json
+    - addons/terminal-theme/install-theme.ps1
+  modified:
+    - README.md

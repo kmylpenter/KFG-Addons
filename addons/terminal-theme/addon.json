@@ -1,0 +1,12 @@
+{
+  "name": "terminal-theme",
+  "displayName": "KMYLPENTER Terminal Theme",
+  "version": "1.0.0",
+  "description": "Windows Terminal theme z kolorami KMYLPENTER brand (#3A90C8, #076AAC)",
+  "author": "KFG",
+  "targets": {},
+  "scripts": {
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\install-theme.ps1\""
+  },
+  "notes": "Instaluje schemat kolorow do Windows Terminal. Wymaga recznie ustawic profil na 'KMYLPENTER'."
+}

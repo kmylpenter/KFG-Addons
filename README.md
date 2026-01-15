@@ -36,6 +36,7 @@ powershell -ExecutionPolicy Bypass -File install-addons.ps1
 | **resume_handoff** | Fix: .md → .yaml w /resume_handoff | `/resume_handoff` |
 | **sound-notification** | Dzwiek powiadomienia (Stop + permission_prompt) | auto-hook |
 | **statusline-advanced** | StatusLine z cross-device totals + export stats | setup-only |
+| **terminal-theme** | Windows Terminal theme KMYLPENTER (#3A90C8, #076AAC) | manual-set |
 | **windows-console-fix** | Fix: ukrywa okna konsoli Python/UV na Windows | auto-patch |
 
 ## Tworzenie Dodatkow
