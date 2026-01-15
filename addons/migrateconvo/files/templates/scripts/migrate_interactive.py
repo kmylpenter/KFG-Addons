@@ -480,10 +480,27 @@ def find_foreign_conversations(include_current: bool = False) -> list[dict]:
                 project_name = project_name[1:]
             project_name = project_name.replace("-", " ") if project_name else "Glowny"
         else:
-            # Format: D--Projekty-StriX-ProjectName -> ostatni segment
-            parts = folder.name.split("-")
-            # Znajdz ostatni niepusty segment
-            project_name = parts[-1] if parts[-1] else parts[-2] if len(parts) > 1 else folder.name
+            # Format: D--Projekty-<komputer>-[prefix]-ProjectName
+            # np. D--Projekty-DELL-KG-Terminator-Umowy -> "Terminator Umowy"
+            # np. D--Projekty-StriX-KFG-Addons -> "KFG Addons"
+            if username:
+                # Weź wszystko po username
+                parts_after_user = folder.name.split(f"-{username}-")[-1].split("-")
+                # Pomiń krótkie skróty na początku (KG, etc.)
+                project_parts = []
+                skipping = True
+                for part in parts_after_user:
+                    if skipping and len(part) <= 3 and part.isupper():
+                        continue  # Pomiń skróty jak "KG"
+                    skipping = False
+                    project_parts.append(part)
+                project_name = " ".join(project_parts) if project_parts else folder.name.split("-")[-1]
+            else:
+                parts = folder.name.split("-")
+                project_name = parts[-1] if parts[-1] else parts[-2] if len(parts) > 1 else folder.name
+
+        # Normalizuj nazwe projektu (usun podwojne spacje i trailing)
+        project_name = re.sub(r'\s+', ' ', project_name).strip()
 
         # Znajdz konwersacje (filtruj niepotrzebne)
         for jsonl_file in folder.glob("*.jsonl"):
