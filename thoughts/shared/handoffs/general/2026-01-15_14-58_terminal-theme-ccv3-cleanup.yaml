@@ -1,0 +1,68 @@
+---
+session: kfg-addons
+date: 2026-01-15
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: terminal-theme v2.2 vivid colors + CCv3 installer cleanup functions
+now: Test terminal-theme installer on fresh system or verify colors in new terminal
+
+test: powershell -File "$env:USERPROFILE\.claude\test-colors.ps1"
+
+done_this_session:
+  - task: Resume from previous handoff (terminal-theme v2 vivid colors)
+    files: [thoughts/shared/handoffs/general/2026-01-15_13-44_terminal-theme-vivid-colors.yaml]
+  - task: Update VS Code terminal colors to vivid (sync with WT)
+    files: [C:/Users/DELL/AppData/Roaming/Code/User/settings.json]
+  - task: Add ansiBrightCyan/ansiBrightWhite = #076AAC for inline code branding
+    files: [addons/terminal-theme/install-theme.ps1]
+  - task: terminal-theme v2.2 - force update VS Code colors (no skip if exists)
+    files: [addons/terminal-theme/addon.json, addons/terminal-theme/install-theme.ps1]
+  - task: Clean CLAUDE.md from CCv2/KFG remnants (328 -> 62 lines)
+    files: [C:/Users/DELL/.claude/CLAUDE.md]
+  - task: Add Clean-GlobalClaudeMd() to CCv3 installer
+    files: [D:/Projekty DELL KG/KFG-CCv3-Installer/install-ccv3.ps1]
+  - task: Add Remove-LegacyRules() to CCv3 installer (later fixed - CCv3 rules are valid)
+    files: [D:/Projekty DELL KG/KFG-CCv3-Installer/install-ccv3.ps1]
+  - task: Verify rules are CCv3 (not CCv2) using 3 agents
+    files: []
+
+blockers: []
+
+questions:
+  - Czy vivid colors w VS Code wyglądają dobrze po restarcie terminala?
+
+decisions:
+  - ccv3_rules_valid: cross-terminal-db, dynamic-recall, agent-memory-recall, proactive-memory-disclosure SA czescia CCv3, nie usuwac
+  - claude_md_cleanup: Sekcje KFG (AUTO-RESUME, Komendy KFG, Praca Autonomiczna) to CCv2 remnants - bezpiecznie usunac
+  - force_color_update: VS Code installer zawsze nadpisuje kolory (nie skipuje gdy "juz istnieja")
+
+findings:
+  - claude_code_no_ansi_markdown: Claude Code nie wysyla ANSI color codes dla bold/headers/links - tylko atrybuty tekstu
+  - ansiBrightCyan_for_inline_code: Inline code (`backticks`) uzywa ansiBrightCyan - mozna brandowac
+  - wizard_merges_not_replaces: CCv3 wizard dodaje nowe rzeczy ale NIE usuwa starych sekcji z CLAUDE.md
+
+worked:
+  - 3 agenty scout do weryfikacji czy rules sa CCv3 vs CCv2
+  - Vivid colors z palety Dracula (#FF6B6B red, #50FA7B green, #F1FA8C yellow, #BD93F9 purple)
+  - drawBoldTextInBrightColors = true dla bold text w bright colors
+
+failed:
+  - Proba kolorowania markdown bold/headers w Claude Code - nie da sie (brak ANSI codes)
+  - Archiwizacja rules ktore okazaly sie byc CCv3 (naprawione)
+
+next:
+  - Test terminal-theme installer na swiezym systemie
+  - Rozwazyc VS Code full theme (osobny addon/projekt)
+  - Sprawdzic czy device stats eksportuje poprawnie przy EOS
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-15_14-58_terminal-theme-ccv3-cleanup.yaml
+  modified:
+    - addons/terminal-theme/addon.json
+    - addons/terminal-theme/install-theme.ps1
+    - C:/Users/DELL/.claude/CLAUDE.md
+    - C:/Users/DELL/.claude/rules/proactive-delegation.md
+    - D:/Projekty DELL KG/KFG-CCv3-Installer/install-ccv3.ps1
