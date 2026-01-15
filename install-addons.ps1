@@ -1,23 +1,30 @@
 # ============================================================
-# KFG Addons Installer v1.0
+# KFG Addons Installer v2.0
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
+#
+# v2.0: Inteligentne wykrywanie duplikatow i lokalizacji
+#       - Sprawdza czy skill/target juz istnieje (globalnie/projektowo)
+#       - Porownuje daty plikow - instaluje tylko jesli nowszy
+#       - Instaluje do wlasciwej lokalizacji (projekt > global)
 #
 # Uzycie:
 #   powershell -ExecutionPolicy Bypass -File install-addons.ps1
 #   powershell -ExecutionPolicy Bypass -File install-addons.ps1 -Addon migrate
 #   powershell -ExecutionPolicy Bypass -File install-addons.ps1 -All
+#   powershell -ExecutionPolicy Bypass -File install-addons.ps1 -All -Force
 # ============================================================
 
 param(
     [string]$Addon,           # Instaluj konkretny addon
     [switch]$All,             # Instaluj wszystkie
     [switch]$List,            # Tylko lista dostepnych
+    [switch]$Force,           # Wymusz nadpisanie nawet jesli starszy
     [string]$TargetBase = $env:USERPROFILE
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "1.0.0"
+$Version = "2.0.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -30,6 +37,7 @@ function Write-Banner {
     Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host "  |           KFG Addons Installer v$Version                     |" -ForegroundColor Cyan
     Write-Host "  |           Modular Add-ons for Claude Code                 |" -ForegroundColor Cyan
+    Write-Host "  |           Smart duplicate detection enabled               |" -ForegroundColor DarkCyan
     Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -38,6 +46,135 @@ function Write-OK { param([string]$Msg) Write-Host "    [OK] $Msg" -ForegroundCo
 function Write-Warn { param([string]$Msg) Write-Host "    [!] $Msg" -ForegroundColor Yellow }
 function Write-Err { param([string]$Msg) Write-Host "    [X] $Msg" -ForegroundColor Red }
 function Write-Info { param([string]$Msg) Write-Host "    --> $Msg" -ForegroundColor Cyan }
+function Write-Skip { param([string]$Msg) Write-Host "    [~] $Msg" -ForegroundColor DarkGray }
+
+# ============================================================
+# DUPLICATE DETECTION FUNCTIONS (v2.0)
+# ============================================================
+
+function Find-ProjectClaudeDir {
+    <#
+    .SYNOPSIS
+    Szuka projektowego .claude/ katalogu w parent directories
+    #>
+    $searchPaths = @(
+        "D:\Projekty StriX\.claude",
+        "C:\Projekty\.claude",
+        "$env:USERPROFILE\Projects\.claude"
+    )
+
+    # Sprawdz znane lokalizacje
+    foreach ($path in $searchPaths) {
+        if (Test-Path $path) {
+            return $path
+        }
+    }
+
+    # Fallback: szukaj od CWD w gore
+    $current = Get-Location
+    while ($current) {
+        $claudeDir = Join-Path $current ".claude"
+        if ((Test-Path $claudeDir) -and ($claudeDir -ne (Join-Path $env:USERPROFILE ".claude"))) {
+            return $claudeDir
+        }
+        $parent = Split-Path $current -Parent
+        if ($parent -eq $current) { break }
+        $current = $parent
+    }
+
+    return $null
+}
+
+function Find-ExistingTarget {
+    <#
+    .SYNOPSIS
+    Szuka czy target (np. skills/eos/) juz istnieje gdzies
+
+    .RETURNS
+    Hashtable z: Found, Location (project/global/none), Path
+    #>
+    param(
+        [string]$TargetRelative  # np. "skills/eos/" lub "commands/yt.md"
+    )
+
+    $globalPath = Join-Path $TargetBase ".claude" | Join-Path -ChildPath $TargetRelative
+    $projectClaudeDir = Find-ProjectClaudeDir
+
+    # Sprawdz projektowy najpierw (priorytet)
+    if ($projectClaudeDir) {
+        $projectPath = Join-Path $projectClaudeDir $TargetRelative
+        if (Test-Path $projectPath) {
+            return @{
+                Found = $true
+                Location = "project"
+                Path = $projectPath
+                ProjectClaudeDir = $projectClaudeDir
+            }
+        }
+    }
+
+    # Sprawdz globalny
+    if (Test-Path $globalPath) {
+        return @{
+            Found = $true
+            Location = "global"
+            Path = $globalPath
+            ProjectClaudeDir = $projectClaudeDir
+        }
+    }
+
+    return @{
+        Found = $false
+        Location = "none"
+        Path = $null
+        ProjectClaudeDir = $projectClaudeDir
+    }
+}
+
+function Test-SourceNewer {
+    <#
+    .SYNOPSIS
+    Porownuje daty plikow zrodla i celu
+
+    .RETURNS
+    $true jesli zrodlo jest nowsze, $false jesli cel jest nowszy lub rowny
+    #>
+    param(
+        [string]$SourceDir,
+        [string]$TargetDir
+    )
+
+    # Znajdz najnowszy plik w zrodle
+    $sourceFiles = Get-ChildItem -Path $SourceDir -Recurse -File -ErrorAction SilentlyContinue
+    if (-not $sourceFiles) { return $true }  # Brak plikow = instaluj
+
+    $sourceNewest = $sourceFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+    # Znajdz najnowszy plik w celu
+    $targetFiles = Get-ChildItem -Path $TargetDir -Recurse -File -ErrorAction SilentlyContinue
+    if (-not $targetFiles) { return $true }  # Cel pusty = instaluj
+
+    $targetNewest = $targetFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+    # Porownaj
+    return $sourceNewest.LastWriteTime -gt $targetNewest.LastWriteTime
+}
+
+function Get-TargetRelativePath {
+    <#
+    .SYNOPSIS
+    Wyciaga relatywna sciezke z target value (np. ~/.claude/skills/eos/ -> skills/eos/)
+    #>
+    param([string]$TargetValue)
+
+    $normalized = $TargetValue -replace "~/\.claude/", "" -replace "~\\\.claude\\", ""
+    $normalized = $normalized -replace "^/", "" -replace "^\\", ""
+    return $normalized
+}
+
+# ============================================================
+# ORIGINAL HELPER FUNCTIONS
+# ============================================================
 
 function Get-Addons {
     $addons = @()
@@ -172,24 +309,64 @@ function Install-Addon {
         }
     }
 
-    # Copy files
+    # Copy files (v2.0: z detekcja duplikatow)
     foreach ($target in $Addon.Targets.PSObject.Properties) {
         $sourcePath = Join-Path $Addon.Path $target.Name
-        $targetPath = $target.Value -replace "~/", "$TargetBase\"
-        $targetPath = $targetPath -replace "~\\", "$TargetBase\"
+        $targetValue = $target.Value
 
-        if (Test-Path $sourcePath) {
-            # Create target directory
-            if (-not (Test-Path $targetPath)) {
-                New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-            }
-
-            # Copy recursively
-            Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
-            Write-OK "Skopiowano: $($target.Name) -> $targetPath"
-        } else {
+        if (-not (Test-Path $sourcePath)) {
             Write-Warn "Brak zrodla: $sourcePath"
+            continue
         }
+
+        # Sprawdz czy to target do .claude/ (skills, commands, etc.)
+        $isClaudeTarget = $targetValue -match "~/\.claude/" -or $targetValue -match "~\\\.claude\\"
+
+        if ($isClaudeTarget) {
+            # Wyciagnij relatywna sciezke (np. skills/eos/)
+            $relativePath = Get-TargetRelativePath -TargetValue $targetValue
+
+            # Sprawdz czy juz istnieje gdzies
+            $existing = Find-ExistingTarget -TargetRelative $relativePath
+
+            if ($existing.Found) {
+                # Juz istnieje - sprawdz czy mamy nowsza wersje
+                $isNewer = Test-SourceNewer -SourceDir $sourcePath -TargetDir $existing.Path
+
+                if (-not $isNewer -and -not $Force) {
+                    Write-Skip "Pominieto: $relativePath (istniejacy w $($existing.Location) jest nowszy)"
+                    continue
+                }
+
+                # Instaluj do ISTNIEJĄCEJ lokalizacji (nie twórz duplikatu!)
+                $targetPath = $existing.Path
+                $locationNote = if ($existing.Location -eq "project") { "-> projekt" } else { "-> global" }
+
+                if ($isNewer) {
+                    Write-Info "Aktualizuje: $relativePath $locationNote (nowsza wersja)"
+                } else {
+                    Write-Info "Nadpisuje: $relativePath $locationNote (--Force)"
+                }
+            } else {
+                # Nie istnieje nigdzie - instaluj do globalnego (domyslnie)
+                $targetPath = $targetValue -replace "~/", "$TargetBase\"
+                $targetPath = $targetPath -replace "~\\", "$TargetBase\"
+                Write-Info "Nowy: $relativePath -> global"
+            }
+        } else {
+            # Nie-claude target (np. ~/.templates/) - standardowa logika
+            $targetPath = $targetValue -replace "~/", "$TargetBase\"
+            $targetPath = $targetPath -replace "~\\", "$TargetBase\"
+        }
+
+        # Utworz katalog docelowy jesli nie istnieje
+        if (-not (Test-Path $targetPath)) {
+            New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+        }
+
+        # Kopiuj
+        Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
+        Write-OK "Skopiowano: $($target.Name) -> $targetPath"
     }
 
     # Run postinstall script if defined
