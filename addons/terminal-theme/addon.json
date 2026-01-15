@@ -1,12 +1,12 @@
 {
   "name": "terminal-theme",
   "displayName": "KMYLPENTER Terminal Theme",
-  "version": "1.0.0",
-  "description": "Windows Terminal theme z kolorami KMYLPENTER brand (#3A90C8, #076AAC)",
+  "version": "2.0.0",
+  "description": "Full color scheme: Windows Terminal + VS Code + Windows 11 accent (opcjonalnie)",
   "author": "KFG",
   "targets": {},
   "scripts": {
     "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\install-theme.ps1\""
   },
-  "notes": "Instaluje schemat kolorow do Windows Terminal. Wymaga recznie ustawic profil na 'KMYLPENTER'."
+  "notes": "Automatycznie ustawia KMYLPENTER jako default. Windows 11 accent color = opcjonalne pytanie."
 }

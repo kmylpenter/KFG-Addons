@@ -303,3 +303,5 @@ Write-Host "  +-----------------------------------------------------------+" -Fo
 Write-Host "  |           Instalacja zakonczona!                          |" -ForegroundColor Green
 Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Green
 Write-Host ""
+Write-Host "  Nacisnij dowolny klawisz, aby zamknac..." -ForegroundColor DarkGray
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

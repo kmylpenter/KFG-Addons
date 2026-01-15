@@ -19,7 +19,7 @@
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
   "scripts": {
-    "postinstall": "powershell -Command \"npx -y ccstatusline@latest --help | Out-Null; Write-Host '[OK] ccstatusline zainstalowany' -ForegroundColor Green\""
+    "postinstall": "powershell -Command \"npm install -g ccstatusline@latest; Write-Host '[OK] ccstatusline zainstalowany globalnie' -ForegroundColor Green\""
   },
   "notes": "Wymaga ustawienia statusLine.command w ~/.claude/settings.json na 'powershell -File ~/.claude/statusline-wrapper.ps1'"
 }
