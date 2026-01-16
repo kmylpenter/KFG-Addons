@@ -1,7 +1,11 @@
 # ============================================================
-# KFG Addons Installer v2.0
+# KFG Addons Installer v2.1
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
+#
+# v2.1: Fix dla pojedynczych plikow do ~/.claude/
+#       - Poprawna obsluga plikow (nie tylko katalogow)
+#       - Porownanie dat plik-do-pliku dla pojedynczych plikow
 #
 # v2.0: Inteligentne wykrywanie duplikatow i lokalizacji
 #       - Sprawdza czy skill/target juz istnieje (globalnie/projektowo)
@@ -24,7 +28,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.0.0"
+$Version = "2.1.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -317,7 +321,7 @@ function Install-Addon {
         }
     }
 
-    # Copy files (v2.0: z detekcja duplikatow)
+    # Copy files (v2.1: fix dla pojedynczych plikow do ~/.claude/)
     foreach ($target in $Addon.Targets.PSObject.Properties) {
         $sourcePath = Join-Path $Addon.Path $target.Name
         $targetValue = $target.Value
@@ -327,6 +331,10 @@ function Install-Addon {
             continue
         }
 
+        # Sprawdz czy source to PLIK czy KATALOG
+        $isSourceFile = Test-Path $sourcePath -PathType Leaf
+        $sourceFileName = if ($isSourceFile) { Split-Path $sourcePath -Leaf } else { $null }
+
         # Sprawdz czy to target do .claude/ (skills, commands, etc.)
         $isClaudeTarget = $targetValue -match "~/\.claude/" -or $targetValue -match "~\\\.claude\\"
 
@@ -334,12 +342,25 @@ function Install-Addon {
             # Wyciagnij relatywna sciezke (np. skills/eos/)
             $relativePath = Get-TargetRelativePath -TargetValue $targetValue
 
+            # FIX v2.1: Dla pojedynczych plikow do ~/.claude/ (pusty relativePath)
+            # Uzyj nazwy pliku zamiast pustego stringa
+            if ($isSourceFile -and (-not $relativePath -or $relativePath -eq "")) {
+                $relativePath = $sourceFileName
+            }
+
             # Sprawdz czy juz istnieje gdzies
             $existing = Find-ExistingTarget -TargetRelative $relativePath
 
             if ($existing.Found) {
                 # Juz istnieje - sprawdz czy mamy nowsza wersje
-                $isNewer = Test-SourceNewer -SourceDir $sourcePath -TargetDir $existing.Path
+                # Dla plikow: porownaj plik z plikiem, nie katalog z katalogiem
+                if ($isSourceFile) {
+                    $sourceTime = (Get-Item $sourcePath).LastWriteTime
+                    $targetTime = (Get-Item $existing.Path -ErrorAction SilentlyContinue).LastWriteTime
+                    $isNewer = $sourceTime -gt $targetTime
+                } else {
+                    $isNewer = Test-SourceNewer -SourceDir $sourcePath -TargetDir $existing.Path
+                }
 
                 if (-not $isNewer -and -not $Force) {
                     Write-Skip "Pominieto: $relativePath (istniejacy w $($existing.Location) jest nowszy)"
@@ -347,7 +368,12 @@ function Install-Addon {
                 }
 
                 # Instaluj do ISTNIEJĄCEJ lokalizacji (nie twórz duplikatu!)
-                $targetPath = $existing.Path
+                # Dla plikow: targetPath to KATALOG (parent), nie sam plik
+                if ($isSourceFile) {
+                    $targetPath = Split-Path $existing.Path -Parent
+                } else {
+                    $targetPath = $existing.Path
+                }
                 $locationNote = if ($existing.Location -eq "project") { "-> projekt" } else { "-> global" }
 
                 if ($isNewer) {
@@ -372,8 +398,12 @@ function Install-Addon {
             New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
         }
 
-        # Kopiuj
-        Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
+        # Kopiuj - dla plikow nie uzywaj wildcard
+        if ($isSourceFile) {
+            Copy-Item -Path $sourcePath -Destination $targetPath -Force
+        } else {
+            Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
+        }
         Write-OK "Skopiowano: $($target.Name) -> $targetPath"
     }
 
