@@ -2,7 +2,7 @@
 # Fix: ctx% używa 160k (usableTokens) zamiast 200k - 100% = compact
 # Format 4x3 z poziomym parowaniem SESJA/TOTAL
 #
-# Rzad 1: Model/Device | ctx%/compacts
+# Rzad 1: Model/User | ctx%/compacts
 # Rzad 2: czas/typing  | turns/AI_chars
 # Rzad 3: tokens/prompts | cost/cost_t
 
@@ -227,9 +227,9 @@ if ($rawModel) {
     else { $modelName = "C$version" }
 }
 
-# Device name
-$deviceName = $env:COMPUTERNAME
-if (-not $deviceName) { $deviceName = "LOCAL" }
+# User name (np. DELL, StriX)
+$userName = $env:USERNAME
+if (-not $userName) { $userName = "USER" }
 
 # === CONTEXT, TURNS, SESSION DURATION z transcript ===
 $transcriptPath = $data.transcript_path
@@ -374,10 +374,10 @@ $sep1 = " "   # miedzy col1 i col2
 $sep2 = "  "  # miedzy para 1 i para 2
 $sep3 = " "   # miedzy col3 i col4
 
-# Rzad 1: Model/Device | ctx%/compacts (czerwony | dynamiczny)
+# Rzad 1: Model/User | ctx%/compacts (czerwony | dynamiczny)
 # Kolumny 1,3 do lewej - kolumny 2,4 do prawej
 $r1c1 = Pad-Left $modelName $colW
-$r1c2 = Pad-Right $deviceName $colW
+$r1c2 = Pad-Right $userName $colW
 $r1c3 = Pad-Left $ctxPctStr $colW
 $r1c4 = Pad-Right $compactsStr $colW
 
