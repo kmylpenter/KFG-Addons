@@ -7,19 +7,23 @@ description: End of Session - handoff + stats + project push + history push. Tri
 
 Workflow zamykajacy sesje pracy. Bezpieczne zakonczenie z zapisem stanu.
 
+## MANDATORY STEPS - NIE WOLNO POMINAC
+
+**KRYTYCZNE:** Musisz wykonac WSZYSTKIE 4 kroki w kolejnosci. Pominiecie JAKIEGOKOLWIEK kroku oznacza FAILURE.
+
 ## Workflow
 
-### KROK 0: Handoff (KRYTYCZNY)
+### KROK 0: Handoff (MANDATORY - UZYJ SKILL TOOL)
 
-**ZAWSZE** zapytaj usera przed zamknieciem:
+**MUSISZ** uzyc Skill tool z skill="create_handoff":
 ```
-Utworzyc handoff przed zamknieciem sesji? (t/n)
+Skill(skill="create_handoff", args="<summary sesji>")
 ```
 
-Jesli tak → uzyj `/create_handoff` z podsumowaniem sesji.
-Jesli nie → kontynuuj do kroku 1.
+**NIE PYTAJ** usera czy chce handoff - **PO PROSTU GO UTWORZ**.
+Handoff jest OBOWIAZKOWY dla kazdej sesji EOS.
 
-**UWAGA:** Handoff jest krytyczny - zachowuje kontekst pracy dla przyszlych sesji.
+**BLAD:** Jesli nie uzyles Skill tool dla create_handoff - WRÓC i uzyj go TERAZ.
 
 ### KROK 1: Eksport stats (KRYTYCZNY jesli skrypt istnieje)
 
@@ -51,26 +55,22 @@ git push
 - Jesli brak zmian - poinformuj i kontynuuj do kroku 3
 - Jesli push sie nie uda - poinformuj o bledzie
 
-### KROK 3: Push Claude History (KRYTYCZNY jesli skonfigurowane)
+### KROK 3: Push Claude History (MANDATORY)
 
-Sprawdz czy `~/.claude/projects` jest git repo z remote:
+**MUSISZ** wykonac push historii konwersacji. To jest OBOWIAZKOWE.
+
 ```bash
-cd ~/.claude/projects && git remote -v 2>/dev/null
+cd "$USERPROFILE/.claude-history" && git add . && git commit -m "eos: [ARGUMENTS lub summary]" && git push
 ```
 
-**Jesli jest skonfigurowane** (ma remote origin):
-```bash
-cd ~/.claude/projects
-git add .
-git commit -m "eos: [ARGUMENTS lub summary]"
-git push
-```
+**UWAGA:** Sciezka to `~/.claude-history/` (NIE `~/.claude/projects/` - to jest junction).
 
-**Jesli NIE jest skonfigurowane** (brak .git lub brak remote):
-- Wyswietl: `[SKIP] Claude History nie skonfigurowane`
-- Kontynuuj do kroku 4
+**Jesli git push sie nie uda:**
+1. Sprawdz `git status` i `git remote -v`
+2. Pokaz userowi blad
+3. NIE kontynuuj bez udanego push
 
-**Sciezka:** `~/.claude/projects/`
+**BLAD:** Jesli nie pushowales historii - sesja NIE jest prawidlowo zakonczona!
 
 ### KROK 4: Potwierdzenie (KRYTYCZNY)
 

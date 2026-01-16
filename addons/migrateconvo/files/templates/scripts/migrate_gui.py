@@ -660,6 +660,24 @@ class MigrationGUI:
                 dest_folder.mkdir(parents=True, exist_ok=True)
                 dest_path = dest_folder / jsonl_path.name
 
+                # SPRAWDZ CZY PLIK DOCELOWY JUZ ISTNIEJE
+                if dest_path.exists():
+                    existing_size = dest_path.stat().st_size
+                    new_size = len(content.encode('utf-8'))
+
+                    # Nie nadpisuj wiekszego pliku mniejszym
+                    if existing_size > new_size:
+                        print(f"  SKIP: Plik docelowy ({existing_size}B) wiekszy niz zrodlowy ({new_size}B)")
+                        return False
+
+                    # Jesli rowne lub mniejszy - zrob backup istniejacego
+                    existing_backup = dest_path.with_suffix(".jsonl.existing_backup")
+                    with open(dest_path, 'r', encoding='utf-8') as f:
+                        existing_content = f.read()
+                    with open(existing_backup, 'w', encoding='utf-8') as f:
+                        f.write(existing_content)
+                    print(f"  Backup istniejacego: {existing_backup.name}")
+
                 # Zapisz zmodyfikowany plik w NOWYM FOLDERZE
                 with open(dest_path, 'w', encoding='utf-8') as f:
                     f.write(content)
