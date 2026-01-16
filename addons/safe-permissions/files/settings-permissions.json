@@ -1,0 +1,63 @@
+{
+  "_comment": "Safe Permissions - fragment do merge z ~/.claude/settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(trash:*)",
+
+      "Bash(git:*)",
+      "Bash(gh:*)",
+
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(npx:*)",
+      "Bash(bun:*)",
+
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip:*)",
+      "Bash(uv:*)",
+      "Bash(pytest:*)",
+
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(echo:*)",
+      "Bash(pwd)",
+      "Bash(which:*)",
+      "Bash(cd:*)",
+
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)"
+    ],
+    "deny": [
+      "Bash(rm:*)",
+      "Bash(rmdir:*)",
+      "Bash(del:*)",
+      "Bash(rm)",
+      "Bash(Remove-Item:*)",
+
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/secrets/**)",
+      "Read(**/credentials/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Write(~/.ssh/**)",
+      "Edit(~/.ssh/**)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)"
+    ]
+  },
+  "_note": "Warstwa 1: settings blokuje rm/rmdir/del. Warstwa 2: hook lapie workaroundy (cd && rm, subshells)"
+}

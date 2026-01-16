@@ -1,0 +1,17 @@
+{
+  "name": "safe-permissions",
+  "displayName": "Safe Permissions",
+  "description": "Bezpieczne uprawnienia: trash zamiast rm, blokada plikow systemowych, auto-approve dla bezpiecznych operacji",
+  "version": "2.0.0",
+  "author": "kmylpenter",
+  "dependencies": {
+    "npm": ["trash-cli"]
+  },
+  "targets": {
+    "files/.claude/hooks/src/safe-permissions.ts": "~/.claude/hooks/src/safe-permissions.ts",
+    "files/.claude/scripts/install-safe-permissions.ps1": "~/.claude/scripts/install-safe-permissions.ps1",
+    "files/settings-permissions.json": "~/.claude/settings-permissions.json"
+  },
+  "postInstall": "powershell -ExecutionPolicy Bypass -File \"$env:USERPROFILE/.claude/scripts/install-safe-permissions.ps1\"",
+  "notes": "Auto-instaluje trash-cli. Hook blokuje rm/rmdir i sugeruje trash. Auto-approve dla git, npm, python, Read/Write w projektach."
+}
