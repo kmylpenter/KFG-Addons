@@ -30,7 +30,10 @@ When this command is invoked:
 
 3. **If no parameters provided** - auto-open the most recent handoff:
    - Search for all `.yaml` files in `thoughts/shared/handoffs/` recursively
-   - Sort by filename (format `YYYY-MM-DD_HH-MM-SS_*`) to find the most recent
+   - **Determine most recent using this priority:**
+     1. Try sorting by filename prefix `YYYY-MM-DD_HH-MM` (if all files have consistent format)
+     2. **Fallback if formats differ**: Read each file's `date:` field from YAML frontmatter
+     3. **Last resort**: Use file modification time (most recently modified)
    - **If no handoffs found**: tell the user "No handoff files found in thoughts/shared/handoffs/"
    - **If handoffs exist**: automatically proceed with the most recent one
    - Show brief message: "Auto-resuming from most recent handoff: [filename]"
