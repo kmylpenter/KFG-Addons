@@ -7,11 +7,6 @@ Uzytkownik chce zmigrowac konwersacje Claude Code z innego komputera.
 
 ## KROK 1: Uruchom GUI
 
-**Ścieżki (sprawdź w kolejności):**
-1. `D:\Projekty StriX\KFG\scripts\migrate\migrate_gui.py`
-2. `C:\Users\kamil\projekty\KFG\scripts\migrate\migrate_gui.py`
-3. `~/.templates/scripts/migrate_gui.py` (installed via desktop/install.ps1)
-
 Uruchom przez `pythonw` (bez konsoli):
 ```powershell
 Start-Process pythonw -ArgumentList "$env:USERPROFILE\.templates\scripts\migrate_gui.py"

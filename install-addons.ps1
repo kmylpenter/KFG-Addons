@@ -56,17 +56,25 @@ function Find-ProjectClaudeDir {
     <#
     .SYNOPSIS
     Szuka projektowego .claude/ katalogu w parent directories
+    Dynamicznie wykrywa na podstawie CWD i znanych wzorców
     #>
-    $searchPaths = @(
-        "D:\Projekty StriX\.claude",
-        "C:\Projekty\.claude",
-        "$env:USERPROFILE\Projects\.claude"
+
+    # Dynamiczne wykrywanie projektów - szukaj w typowych lokalizacjach
+    $projectRoots = @(
+        "$env:USERPROFILE\Projects",
+        "$env:USERPROFILE\projekty",
+        "C:\Projekty",
+        "D:\Projekty DELL KG",
+        "D:\Projekty StriX"
     )
 
-    # Sprawdz znane lokalizacje
-    foreach ($path in $searchPaths) {
-        if (Test-Path $path) {
-            return $path
+    # Znajdz istniejace rooty projektow
+    foreach ($root in $projectRoots) {
+        if (Test-Path $root) {
+            $claudeDir = Join-Path $root ".claude"
+            if (Test-Path $claudeDir) {
+                return $claudeDir
+            }
         }
     }
 
