@@ -60,15 +60,15 @@ git push
 **MUSISZ** wykonac push historii konwersacji. To jest OBOWIAZKOWE.
 
 ```bash
-cd "$USERPROFILE/.claude-history" && git add . && git commit -m "eos: [ARGUMENTS lub summary]" && git pull --rebase && git push
+cd "$USERPROFILE/.claude-history" && git add . && git commit -m "eos: [ARGUMENTS lub summary]" && git pull && git push
 ```
 
-**WAZNE:** `git pull --rebase` jest OBOWIAZKOWY przed push - zapobiega konfliktom gdy wiele terminali robi /eos rownoczesnie.
+**WAZNE:** `git pull` (merge) jest OBOWIAZKOWY przed push - zapobiega konfliktom gdy wiele terminali robi /eos rownoczesnie. NIE uzywaj `--rebase` - powoduje bledy gdy Claude pisze do plikow w tle.
 
 **UWAGA:** Sciezka to `~/.claude-history/` (NIE `~/.claude/projects/` - to jest junction).
 
 **Jesli git push sie nie uda:**
-1. Sprobuj `git pull --rebase && git push` jeszcze raz
+1. Sprobuj `git pull && git push` jeszcze raz
 2. Jesli dalej fail - sprawdz `git status` i pokaz userowi
 3. NIE kontynuuj bez udanego push
 

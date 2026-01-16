@@ -1,9 +1,11 @@
 # Analiza historycznych sesji Claude Code
 # Przechodzi przez wszystkie .jsonl i sumuje tokeny z kazdej wiadomosci
+# v5.0: Inkrementalne przetwarzanie - tylko nowe/zmienione pliki
 # v3.0: Filtrowanie po cwd WEWNATRZ plikow (Dell vs DELL w tym samym folderze)
 
 param(
     [switch]$Verbose,
+    [switch]$Force,              # Wymus pelna analize (ignoruj cache)
     [string]$DeviceFilter = "",  # Pusty = wszystkie, "STRIX", "DELL", "Dell", "ANDROID"
     [string]$OutputFile = ""     # Pusty = domyslny totals-history.json
 )
@@ -92,6 +94,30 @@ if (-not $allFolders) {
 Write-Host "Skanowanie $($allFolders.Count) folderow projektow..." -ForegroundColor Yellow
 Write-Host ""
 
+# v5.0: Laduj poprzednie wyniki (cache)
+$cachedSessions = @{}
+$cachedFileInfo = @{}
+$previousResult = $null
+
+if (-not $Force -and (Test-Path $historyFile)) {
+    try {
+        $previousResult = Get-Content $historyFile -Raw | ConvertFrom-Json
+        if ($previousResult.sessions) {
+            foreach ($prop in $previousResult.sessions.PSObject.Properties) {
+                $cachedSessions[$prop.Name] = $prop.Value
+            }
+        }
+        if ($previousResult.file_cache) {
+            foreach ($prop in $previousResult.file_cache.PSObject.Properties) {
+                $cachedFileInfo[$prop.Name] = $prop.Value
+            }
+        }
+        Write-Host "  Cache: $($cachedSessions.Count) sesji z poprzedniej analizy" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "  Cache: blad wczytywania, pelna analiza" -ForegroundColor DarkYellow
+    }
+}
+
 $globalStats = @{
     total_input_tokens = 0
     total_output_tokens = 0
@@ -105,11 +131,23 @@ $globalStats = @{
     chars_ai_total = 0      # v4.0
     files_processed = 0
     files_skipped = 0
+    cache_hits = 0      # v5.0: ile sesji z cache
+    cache_misses = 0    # v5.0: ile sesji przetworzone od nowa
 }
 
 $sessionsData = @{}
+$newFileCache = @{}  # v5.0: nowy cache file info
 
 foreach ($project in $allFolders) {
+    # v5.0: Szybkie odrzucenie folderu po nazwie (jesli filtr urzadzenia)
+    if ($DeviceFilter) {
+        $folderDevice = Get-DeviceFromFolderName $project.Name
+        if ($folderDevice -and -not (Test-DeviceMatch $folderDevice $DeviceFilter)) {
+            # Folder ewidentnie z innego urzadzenia - pomiń całkowicie
+            continue
+        }
+    }
+
     # Znajdz pliki sesji (UUID.jsonl, nie agent-*)
     $sessionFiles = Get-ChildItem -Path $project.FullName -Filter "*.jsonl" -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.jsonl$" }
@@ -123,6 +161,47 @@ foreach ($project in $allFolders) {
 
         # Pomin duplikaty (ten sam session moze byc w wielu folderach)
         if ($sessionsData.ContainsKey($sessionId)) { continue }
+
+        # v5.0: Sprawdz czy plik sie zmienil (cache hit)
+        $fileKey = $file.FullName
+        $fileMtime = $file.LastWriteTime.Ticks
+        $fileSize = $file.Length
+
+        # Zapisz info do nowego cache
+        $newFileCache[$fileKey] = @{ mtime = $fileMtime; size = $fileSize }
+
+        # Sprawdz czy mozemy uzyc cache
+        $cachedInfo = $cachedFileInfo[$fileKey]
+        if ($cachedInfo -and $cachedInfo.mtime -eq $fileMtime -and $cachedInfo.size -eq $fileSize) {
+            # Plik niezmieniony - uzyj danych z cache
+            if ($cachedSessions.ContainsKey($sessionId)) {
+                $cached = $cachedSessions[$sessionId]
+                # Sprawdz filtr urzadzenia
+                if ($DeviceFilter -and -not (Test-DeviceMatch $cached.device $DeviceFilter)) {
+                    $globalStats.files_skipped++
+                    $globalStats.files_processed++
+                    continue
+                }
+                # Uzyj danych z cache
+                $sessionsData[$sessionId] = $cached
+                $globalStats.total_input_tokens += $cached.tokens_in
+                $globalStats.total_output_tokens += $cached.tokens_out
+                $globalStats.total_cache_read += $cached.cache_read
+                $globalStats.total_cache_write += $cached.cache_write
+                $globalStats.total_agent_savings += $cached.agent_savings
+                $globalStats.messages_count += $cached.messages
+                $globalStats.user_prompts_count += $cached.user_prompts
+                $globalStats.chars_user_total += if ($cached.chars_user) { $cached.chars_user } else { 0 }
+                $globalStats.chars_ai_total += if ($cached.chars_ai) { $cached.chars_ai } else { 0 }
+                $globalStats.sessions_count++
+                $globalStats.cache_hits++
+                $globalStats.files_processed++
+                continue
+            }
+        }
+
+        # Cache miss - przetworz plik normalnie
+        $globalStats.cache_misses++
 
         $sessionCwd = $null
         $sessionDevice = $null
@@ -346,7 +425,10 @@ $result = @{
         user_prompts_total = $globalStats.user_prompts_count
         chars_user_total = $globalStats.chars_user_total    # v4.0
         chars_ai_total = $globalStats.chars_ai_total        # v4.0
+        cache_hits = $globalStats.cache_hits                # v5.0
+        cache_misses = $globalStats.cache_misses            # v5.0
     }
+    file_cache = $newFileCache  # v5.0: cache file info dla inkrementalnej analizy
     total_cost = [math]::Round($totalCost, 2)
     total_duration_ms = $totalDurMs
     total_tokens_main = $totalTokMain
@@ -375,6 +457,11 @@ Write-Host ""
 Write-Host "  Plikow przetworzonych:  $($globalStats.files_processed)" -ForegroundColor White
 if ($DeviceFilter) {
     Write-Host "  Plikow pominietych:     $($globalStats.files_skipped) (inny device)" -ForegroundColor DarkGray
+}
+# v5.0: pokaż cache stats
+if ($globalStats.cache_hits -gt 0 -or $globalStats.cache_misses -gt 0) {
+    Write-Host "  Cache hits:             $($globalStats.cache_hits) (pominieto)" -ForegroundColor DarkGreen
+    Write-Host "  Cache misses:           $($globalStats.cache_misses) (przetworzone)" -ForegroundColor DarkYellow
 }
 Write-Host "  Unikalnych sesji:       $($globalStats.sessions_count)" -ForegroundColor White
 Write-Host "  Wiadomosci:             $($globalStats.messages_count)" -ForegroundColor White
