@@ -1,0 +1,10 @@
+{
+  "name": "todo",
+  "displayName": "TODO Skill",
+  "description": "Persistent TODO list across sessions - /todo add, list, done",
+  "version": "1.0.0",
+  "targets": {
+    "files/skills/todo": "~/.claude/skills/"
+  },
+  "notes": "Tasks saved to thoughts/shared/todo.yaml per project"
+}
