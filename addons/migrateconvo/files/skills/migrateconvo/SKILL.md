@@ -7,9 +7,9 @@ Uzytkownik chce zmigrowac konwersacje Claude Code z innego komputera.
 
 ## KROK 1: Uruchom GUI
 
-Uruchom przez `pythonw` (bez konsoli):
-```powershell
-Start-Process pythonw -ArgumentList "$env:USERPROFILE\.templates\scripts\migrate_gui.py"
+Uruchom GUI (bez konsoli):
+```bash
+pythonw "$USERPROFILE/.templates/scripts/migrate_gui.py" &
 ```
 
 Poinformuj usera: "Otworzylem okno migracji. Wybierz konwersacje i kliknij 'Migruj wybrane'. Daj znac jak skonczysz."
