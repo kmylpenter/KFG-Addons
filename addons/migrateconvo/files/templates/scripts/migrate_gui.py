@@ -219,9 +219,10 @@ class MigrationGUI:
         self.conversations = find_foreign_conversations(include_current=True)
 
         if not self.conversations:
-            messagebox.showinfo("Info", "Nie znaleziono konwersacji.")
-            self.save_result(None, "Brak konwersacji")
-            self.root.destroy()
+            self.status_label.config(text="Brak konwersacji do migracji. Mozesz zamknac okno.")
+            self.computer_listbox.delete(0, tk.END)
+            self.project_listbox.delete(0, tk.END)
+            self.conv_listbox.delete(0, tk.END)
             return
 
         # Grupuj po komputerze
@@ -594,9 +595,12 @@ class MigrationGUI:
         self.save_result(result, "OK")
 
         messagebox.showinfo("Gotowe",
-                           f"Zamieniono sciezki w {success}/{len(to_migrate)} konwersacjach.")
+                           f"Zamieniono sciezki w {success}/{len(to_migrate)} konwersacjach.\n\n"
+                           f"Mozesz wybrac kolejne konwersacje lub zamknac okno.")
 
-        self.root.destroy()
+        # Odswiez liste - usun zmigrowane konwersacje
+        self.status_label.config(text=f"Zmigrowano {success} konwersacji. Wybierz kolejne lub zamknij.")
+        self.load_data()
 
     def migrate_to_target(self, conv: dict) -> bool:
         """Migruje konwersacje - zamienia sciezki wewnatrz pliku.
