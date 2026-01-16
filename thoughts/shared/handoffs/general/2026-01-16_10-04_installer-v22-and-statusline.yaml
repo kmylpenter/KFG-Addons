@@ -1,0 +1,57 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Fix installer v2.2 + statusline v5.2 - poprawna obsługa plików/katalogów i ctx% 160k
+now: Wszystko wypushowane, można testować na innych urządzeniach
+
+test: powershell -ExecutionPolicy Bypass -File install-addons.ps1 -Addon statusline-advanced -Force
+
+done_this_session:
+  - task: Debug ctx% bug - potwierdzone że parsowanie działa poprawnie
+    files: [statusline-wrapper.ps1]
+  - task: Fix ctx% limit 200k -> 160k (usableTokens = compact threshold)
+    files: [statusline-wrapper.ps1, addons/statusline-advanced/addon.json]
+  - task: Fix installer v2.1 - pojedyncze pliki do ~/.claude/
+    files: [install-addons.ps1]
+  - task: Fix installer v2.2 - katalogi do rodzica (skills/np/ -> skills/)
+    files: [install-addons.ps1]
+  - task: Update dokumentacji ADDON-DEVELOPMENT.md z wzorcami targets
+    files: [ADDON-DEVELOPMENT.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - use_160k_not_200k: ccstatusline używa usableTokens (160k) nie maxTokens (200k) - 100% = compact imminent
+  - append_dirname_to_relativePath: dla katalogów kopiowanych do rodzica, dodaj nazwę źródłowego katalogu
+
+findings:
+  - installer_file_bug: Dla plików do ~/.claude/ relativePath był pusty - porównywał cały .claude/
+  - installer_dir_bug: Dla katalogów do rodzica (np/ -> skills/) relativePath był zbyt ogólny (skills/ zamiast skills/np/)
+  - ctx_calculation_correct: Get-ContextFromTranscript działa identycznie jak ccstatusline
+
+worked:
+  - Debug logging do statusline-wrapper.ps1 (usunięte po debug)
+  - Porównanie z kodem źródłowym ccstatusline
+  - Testowanie instalatora z -Force flag
+
+failed:
+  - Początkowo zakładałem 200k jako limit (błąd)
+  - Wildcard * przy kopiowaniu pojedynczych plików
+
+next:
+  - Przetestować instalator na czystym środowisku
+  - Sprawdzić czy ctx% pokazuje poprawne wartości po kompakcji
+
+files:
+  created: []
+  modified:
+    - install-addons.ps1
+    - ADDON-DEVELOPMENT.md
+    - addons/statusline-advanced/addon.json
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
