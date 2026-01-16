@@ -1,0 +1,66 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: partial
+outcome: PARTIAL_PLUS  # Testing pending
+---
+
+goal: Redesign stats system for CCv3+Addons - custom DeviceId, per-user aggregation, stats in claude-history
+now: Test statusline display with new stats, verify totals match expected values
+test: powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\scripts\export-device-stats.ps1" -SkipAnalyze
+
+done_this_session:
+  - task: Audit old KFG v2 stats flow - identified bugs (git push never worked, DeviceId mismatch)
+    files: [addons/statusline-advanced/files/.claude/statusline-wrapper.ps1, addons/statusline-advanced/files/.claude/scripts/export-device-stats.ps1]
+  - task: Design new config format with deviceMapping and pathPatterns (array format for case-sensitive paths)
+    files: [~/.config/kfg-stats/users.json]
+  - task: Update export-device-stats.ps1 - custom DeviceId from config, stats to ~/.claude-history/stats/
+    files: [~/.claude/scripts/export-device-stats.ps1, addons/statusline-advanced/files/.claude/scripts/export-device-stats.ps1]
+  - task: Update analyze-history.ps1 - pathPatterns array format for device detection
+    files: [~/.claude/analyze-history.ps1, addons/statusline-advanced/files/.claude/analyze-history.ps1]
+  - task: Update statusline-wrapper.ps1 - read from ~/.claude-history/stats/, per-user aggregation
+    files: [addons/statusline-advanced/files/.claude/statusline-wrapper.ps1]
+  - task: First successful export - device-Biuro-Kmyl.json created and pushed to claude-history
+    files: [~/.claude-history/stats/device-Biuro-Kmyl.json]
+
+blockers: []
+
+questions:
+  - Does statusline show correct totals from new stats location?
+  - Do other devices (StriX) need their COMPUTERNAME added to deviceMapping?
+
+decisions:
+  - pathPatterns_array_format: Dict keys case collision on Windows (DELL vs Dell) - changed to array of {path, device}
+  - stats_in_claude_history: Stats sync via git with conversation history - no separate sync needed
+  - custom_deviceid: User-defined names (Biuro-Kmyl, PC-StriX) instead of COMPUTERNAME
+
+findings:
+  - old_git_push_bug: $kfgRepo variable never set, git push silently failed
+  - windows_case_collision: JSON dict can't have C:\Users\DELL\ and C:\Users\Dell\ as keys
+  - per_user_aggregation: statusline now filters devices by defaultUser from config
+
+worked:
+  - deviceMapping COMPUTERNAME -> custom DeviceId
+  - pathPatterns as array with {path, device} objects
+  - Git commit & push in ~/.claude-history/ repo
+
+failed:
+  - pathPatterns as dict - Windows case-insensitive file system caused key collision
+
+next:
+  - Test statusline totals display
+  - Add StriX COMPUTERNAME to deviceMapping when known
+  - Update kfg-settings.ps1 UI for new format (optional)
+  - Mark /todo task as done after verification
+
+files:
+  created:
+    - ~/.claude-history/stats/device-Biuro-Kmyl.json
+  modified:
+    - ~/.config/kfg-stats/users.json
+    - ~/.claude/scripts/export-device-stats.ps1
+    - ~/.claude/analyze-history.ps1
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+    - addons/statusline-advanced/files/.claude/scripts/export-device-stats.ps1
+    - addons/statusline-advanced/files/.claude/analyze-history.ps1
+    - addons/statusline-advanced/addon.json

@@ -1,8 +1,8 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced v5.2",
-  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i cross-device stats",
-  "version": "5.2.0",
+  "displayName": "StatusLine Advanced v5.3",
+  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats",
+  "version": "5.3.0",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {
@@ -13,5 +13,5 @@
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
   "scripts": {},
-  "notes": "v5.2: ctx% używa 160k (usableTokens) zamiast 200k - 100% = compact threshold. Format 4x3, nie wymaga ccstatusline."
+  "notes": "v5.3: Stats w ~/.claude-history/stats/, custom DeviceId z users.json, per-user aggregation. ctx% używa 160k."
 }

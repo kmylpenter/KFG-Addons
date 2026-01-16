@@ -314,20 +314,36 @@ if (Test-Path $compactStateFile) {
 $newState = @{ session_id = $sessionId; count = $compactsCount; last_context_length = $contextLength } | ConvertTo-Json -Compress
 try { [System.IO.File]::WriteAllText($compactStateFile, $newState, [System.Text.UTF8Encoding]::new($false)) } catch {}
 
-# === CROSS-DEVICE TOTALS ===
-$statsDir = $null
-$statsPaths = @("$env:USERPROFILE\.claude\stats", "D:\Projekty StriX\KFG\stats", "D:\Projekty DELL KG\KFG\stats", "C:\Projekty\KFG\stats")
-foreach ($p in $statsPaths) { if (Test-Path $p) { $statsDir = $p; break } }
+# === CROSS-DEVICE TOTALS (per-user aggregation) ===
+# v5.3: Stats from ~/.claude-history/stats/, aggregated per defaultUser from config
+$statsDir = "$env:USERPROFILE\.claude-history\stats"
+$configPath = "$env:USERPROFILE\.config\kfg-stats\users.json"
+
+# Load user config to get devices for defaultUser
+$userDevices = @()
+if (Test-Path $configPath) {
+    try {
+        $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+        $defaultUser = $cfg.defaultUser
+        if ($cfg.users -and $cfg.users.$defaultUser -and $cfg.users.$defaultUser.devices) {
+            $userDevices = @($cfg.users.$defaultUser.devices)
+        }
+    } catch {}
+}
 
 $totalCharsUser = 0; $totalCharsAi = 0; $totalUserPrompts = 0; $totalCost = 0.0
-if ($statsDir -and (Test-Path $statsDir)) {
+if (Test-Path $statsDir) {
     Get-ChildItem "$statsDir\device-*.json" -ErrorAction SilentlyContinue | ForEach-Object {
         try {
             $dev = Get-Content $_.FullName -Raw | ConvertFrom-Json
-            $totalCharsUser += if ($dev.chars_user) { [long]$dev.chars_user } else { 0 }
-            $totalCharsAi += if ($dev.chars_ai) { [long]$dev.chars_ai } else { 0 }
-            $totalUserPrompts += if ($dev.user_prompts) { [int]$dev.user_prompts } else { 0 }
-            $totalCost += [double]$dev.cost
+            # Filter: only include devices belonging to defaultUser (or all if no config)
+            $deviceId = $dev.deviceId
+            if ($userDevices.Count -eq 0 -or $userDevices -contains $deviceId) {
+                $totalCharsUser += if ($dev.chars_user) { [long]$dev.chars_user } else { 0 }
+                $totalCharsAi += if ($dev.chars_ai) { [long]$dev.chars_ai } else { 0 }
+                $totalUserPrompts += if ($dev.user_prompts) { [int]$dev.user_prompts } else { 0 }
+                $totalCost += [double]$dev.cost
+            }
         } catch {}
     }
 }

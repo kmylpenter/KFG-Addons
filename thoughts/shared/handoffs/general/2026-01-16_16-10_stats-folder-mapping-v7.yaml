@@ -1,0 +1,53 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Stats system v7 - simplified folder prefix mapping (folderMapping zamiast pathPatterns)
+now: Opcjonalnie - przetestuj kfg-settings UI i zweryfikuj folder mapping
+test: powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\scripts\export-device-stats.ps1" -SkipAnalyze
+
+done_this_session:
+  - task: Przeprojektowano system stats na prostsze folder mapping
+    files: [~/.claude/kfg-settings.ps1, ~/.claude/analyze-history.ps1, ~/.claude/scripts/export-device-stats.ps1]
+  - task: Nowa heurystyka - max 2 segmenty po "Projekty" (D--Projekty-DELL-KG zamiast D--Projekty-DELL-KG-KFG-Addons)
+    files: [~/.claude/kfg-settings.ps1:25-42, ~/.claude/analyze-history.ps1:60-82]
+  - task: Config uproszczony z 21 mappings do 6 glownych folderow
+    files: [~/.config/kfg-stats/users.json]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - folder_mapping_over_pathPatterns: pathPatterns wymagaly rekonstrukcji sciezek i case-sensitive matching - zbyt skomplikowane
+  - max_2_segments: Po "Projekty" bierzemy max 2 uppercase segmenty (np. DELL-KG lub StriX), potem stop
+
+findings:
+  - old_config_overcomplicated: Stary system mial osobny mapping dla kazdego projektu (21 wpisow)
+  - new_config_clean: Nowy system ma tylko 6 glownych folderow (android, C--Users-DELL, C--Users-kamil, D--Projekty-DELL-KG, D--Projekty-StriX, D--Projekty-Dell-Pawel)
+
+worked:
+  - Heurystyka maxSegments=2 poprawnie grupuje projekty (D--Projekty-DELL-KG zamiast D--Projekty-DELL-KG-KFG)
+  - Export-device-stats.ps1 v6 agreguje stats per user z totals-history.json
+
+failed:
+  - Stare pathPatterns z rekonstrukcja sciezek - problemy z case-sensitive matching
+
+next:
+  - Przetestowac kfg-settings UI - menu Folder Mapping
+  - Zweryfikowac na innych urzadzeniach (StriX, Android)
+  - Opcjonalnie: SafelySkipPermissions Addon z todo.yaml
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-16_16-10_stats-folder-mapping-v7.yaml
+  modified:
+    - ~/.claude/kfg-settings.ps1
+    - ~/.claude/analyze-history.ps1
+    - ~/.claude/scripts/export-device-stats.ps1
+    - ~/.config/kfg-stats/users.json
+    - addons/statusline-advanced/files/.claude/analyze-history.ps1
+    - addons/statusline-advanced/files/.claude/scripts/export-device-stats.ps1

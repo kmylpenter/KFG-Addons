@@ -1,0 +1,55 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Stats system CCv3 + kfg-settings auto-discovery - statusline działa, config zachowuje pathPatterns
+now: Opcjonalnie: dodać UI do dodawania pathPatterns z kfg-settings (obecnie tylko info)
+test: powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\scripts\export-device-stats.ps1" -SkipAnalyze
+
+done_this_session:
+  - task: Naprawiono statusline - skopiowano nową wersję z repo do ~/.claude/
+    files: [~/.claude/statusline-wrapper.ps1]
+  - task: Zaktualizowano kfg-settings v1.2 - Discover-Devices używa pathPatterns z config
+    files: [~/.claude/kfg-settings.ps1]
+  - task: Naprawiono Load-Config/Save-Config - zachowują pathPatterns i deviceMapping
+    files: [~/.claude/kfg-settings.ps1]
+  - task: Uzupełniono users.json - pełna konfiguracja z pathPatterns, deviceMapping, devices dla Kmyl
+    files: [~/.config/kfg-stats/users.json]
+
+blockers: []
+
+questions:
+  - Czy dodać UI w kfg-settings do edycji/dodawania pathPatterns (obecnie tylko pokazuje instrukcję)?
+
+decisions:
+  - pathPatterns_in_config: pathPatterns i deviceMapping przechowywane w users.json, Load/Save zachowują te pola
+  - discover_uses_pathPatterns: Discover-Devices mapuje ścieżki → DeviceId przez pathPatterns zamiast hardcoded reguł
+  - mapped_vs_unmapped_ui: UI pokazuje mapped (można dodać) vs unmapped (wymaga pathPattern w config)
+
+findings:
+  - statusline_not_updated: Zainstalowana wersja ~/.claude/statusline-wrapper.ps1 była stara, nie miała kodu claude-history
+  - save_config_overwrites: Save-Config nadpisywał cały plik - tracił pathPatterns bo Load-Config ich nie ładował
+  - users_json_reset: Każde Save-Config kasowało pathPatterns bo nie były w $config
+
+worked:
+  - Match-PathToDevice z case-insensitive -like dla Windows paths
+  - Discover-Devices zwraca {mapped: [], unmapped: {}} dla lepszego UI
+  - Load-Config ładuje wszystkie pola (users, deviceMapping, pathPatterns)
+
+failed:
+  - Stara wersja Discover-Devices z hardcoded regułami - nie działała z custom DeviceId
+
+next:
+  - Opcjonalnie: UI do dodawania/edycji pathPatterns w kfg-settings
+  - Test na innych urządzeniach (StriX, Android)
+  - Zsynchronizować kfg-settings.ps1 do repo addons jeśli potrzebne
+
+files:
+  created: []
+  modified:
+    - ~/.claude/statusline-wrapper.ps1
+    - ~/.claude/kfg-settings.ps1
+    - ~/.config/kfg-stats/users.json

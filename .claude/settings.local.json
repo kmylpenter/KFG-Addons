@@ -1,7 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Skill(create_handoff)"
+      "Skill(create_handoff)",
+      "Bash(xargs:*)",
+      "Bash(copy:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"& ./install-addons.ps1 -List\")",
+      "Bash(if [ -f \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\" ])",
+      "Bash(then powershell.exe -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")",
+      "Bash(else echo \"Stats script not found\")",
+      "Bash(fi)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"& ''$env:USERPROFILE\\\\.claude\\\\scripts\\\\export-device-stats.ps1'' -SkipAnalyze -Verbose\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -Command \"& ''C:\\\\Users\\\\DELL\\\\.claude\\\\scripts\\\\export-device-stats.ps1'' -SkipAnalyze\")",
+      "Bash(Get-ChildItem \"$env:USERPROFILE\\\\.claude\\\\projects\" -Directory)",
+      "Bash(Select-Object -First 20 Name)",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''$env:USERPROFILE\\\\.claude\\\\projects'' -Directory | Select-Object -First 30 Name\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Users\\\\DELL\\\\.claude\\\\projects'' -Directory | Select-Object -First 30 Name\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem ''C:\\\\Users\\\\DELL\\\\.claude\\\\projects'' -Directory | ForEach-Object { $_Name } | Sort-Object -Unique | Select-Object -First 60\")",
+      "Bash(powershell.exe -NoProfile -Command \"\\(Get-ChildItem ''C:\\\\Users\\\\DELL\\\\.claude\\\\projects'' -Directory\\).Name | Select-Object -First 60\")",
+      "Bash(powershell.exe -NoProfile -Command \"$folders = \\(Get-ChildItem ''C:\\\\Users\\\\DELL\\\\.claude\\\\projects'' -Directory\\).Name; $prefixes = @{}; foreach \\($f in $folders\\) { if \\($f -match ''^\\(android--data-data-com-termux|[A-Za-z]--Users-[^-]+|[A-Za-z]--Projekty-[^-]+-[^-]+|[A-Za-z]--Projekty-[^-]+|[A-Za-z]--\\)''\\) { $prefixes[$Matches[1]] = $true } }; $prefixes.Keys | Sort-Object\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\DELL\\\\.claude\\\\temp-prefixes.ps1\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\DELL\\\\.claude\\\\analyze-history.ps1\" -Force)",
+      "Bash(powershell.exe -NoProfile -Command \"\\(Get-Content ''C:\\\\Users\\\\DELL\\\\.claude\\\\totals-history.json'' -Raw | ConvertFrom-Json\\).sessions.PSObject.Properties | ForEach-Object { $_Value.user } | Group-Object | Sort-Object Count -Descending\")",
+      "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\DELL\\\\.claude\\\\temp-check-users.ps1\")",
+      "Bash(powershell.exe:*)"
     ]
   }
 }

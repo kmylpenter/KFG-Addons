@@ -1,145 +1,193 @@
-﻿# Export Device Stats for Cross-Device Totals
-# Generuje device-{ID}.json z lokalnymi statystykami
-# v4.0: DeviceId = USERNAME (matches analyze-history cwd logic)
-#       Eksportuje chars_user, chars_ai dla nowych wskaźników
-# v2.0: Filtrowanie po urzadzeniu - eksportuje TYLKO dane z tego urzadzenia
+# Export Device Stats for Cross-Device Totals
+# v6.0: Simplified - aggregates per-user stats from totals-history.json
+#
+# Flow:
+# 1. Run analyze-history.ps1 to update totals
+# 2. Aggregate stats per user from sessions
+# 3. Save to ~/.claude-history/stats/user-{name}.json
+# 4. Git commit & push
 
 param(
-    [string]$RepoPath = "",  # Auto-detect: ~/.claude parent (KFG repo) or D:\Projekty StriX\KFG
-    [string]$DeviceId = $env:COMPUTERNAME,  # Device ID for stats (configure in kfgsettings)
-    [switch]$SkipAnalyze
+    [switch]$SkipAnalyze,
+    [switch]$Verbose
 )
-
-# Auto-detect KFG repo path if not provided
-if (-not $RepoPath -or -not (Test-Path $RepoPath)) {
-    # Try: PSScriptRoot/.../stats (when installed to ~/.claude/)
-    $kfgFromInstalled = Join-Path (Split-Path $PSScriptRoot -Parent) "stats"
-
-    # Try: KFG repo in common locations (StriX, DELL, Projekty)
-    $kfgRepoPaths = @(
-        "D:\Projekty StriX\KFG",
-        "D:\Projekty DELL KG\KFG",
-        "C:\Projekty\KFG"
-    )
-
-    if (Test-Path $kfgFromInstalled) {
-        $RepoPath = Split-Path $kfgFromInstalled -Parent
-        Write-Host "Wykryto KFG repo: $RepoPath" -ForegroundColor Gray
-    } else {
-        $found = $false
-        foreach ($kfgRepo in $kfgRepoPaths) {
-            if (Test-Path "$kfgRepo\stats") {
-                $RepoPath = $kfgRepo
-                Write-Host "Wykryto KFG repo: $RepoPath" -ForegroundColor Gray
-                $found = $true
-                break
-            }
-        }
-        if (-not $found) {
-            Write-Host "BLAD: Nie znaleziono KFG repo ze stats/" -ForegroundColor Red
-            exit 1
-        }
-    }
-}
 
 $ErrorActionPreference = 'SilentlyContinue'
 
-# Sciezki
-$deviceHistoryFile = "$env:USERPROFILE\.claude\totals-$DeviceId.json"  # Per-device history
+# === CONFIG ===
+$configPath = "$env:USERPROFILE\.config\kfg-stats\users.json"
+$statsDir = "$env:USERPROFILE\.claude-history\stats"
 $analyzeScript = "$env:USERPROFILE\.claude\analyze-history.ps1"
-$statsDir = Join-Path $RepoPath "stats"
-$deviceFile = Join-Path $statsDir "device-$DeviceId.json"
+$totalsFile = "$env:USERPROFILE\.claude\totals-history.json"
 
 Write-Host ""
-Write-Host "=== Export Device Stats ===" -ForegroundColor Cyan
-Write-Host "Device ID: $DeviceId" -ForegroundColor Yellow
+Write-Host "=== Export User Stats v6.0 ===" -ForegroundColor Cyan
+
+# === LOAD CONFIG ===
+function Load-Config {
+    if (-not (Test-Path $configPath)) {
+        Write-Host "BLAD: Brak konfiguracji $configPath" -ForegroundColor Red
+        Write-Host "Uruchom kfg-settings aby skonfigurowac uzytkownikow" -ForegroundColor Yellow
+        return $null
+    }
+    try {
+        $json = Get-Content $configPath -Raw | ConvertFrom-Json
+        $config = @{
+            defaultUser = $json.defaultUser
+            users = @{}
+            folderMapping = @{}
+        }
+        if ($json.users) {
+            foreach ($prop in $json.users.PSObject.Properties) {
+                $config.users[$prop.Name] = $prop.Value
+            }
+        }
+        if ($json.folderMapping) {
+            foreach ($prop in $json.folderMapping.PSObject.Properties) {
+                $config.folderMapping[$prop.Name] = $prop.Value
+            }
+        }
+        Write-Host "  Config: $($config.users.Count) users, $($config.folderMapping.Count) folder mappings" -ForegroundColor DarkGray
+        return $config
+    } catch {
+        Write-Host "BLAD: Nie mozna wczytac konfiguracji: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+    }
+}
+
+# === MAIN ===
+$config = Load-Config
+if (-not $config) { exit 1 }
+
 Write-Host ""
 
-# 1. Uruchom analyze-history.ps1 z filtrem dla TEGO urzadzenia
+# === CREATE STATS DIR ===
+if (-not (Test-Path $statsDir)) {
+    New-Item -ItemType Directory -Path $statsDir -Force | Out-Null
+    Write-Host "Utworzono: $statsDir" -ForegroundColor Gray
+}
+
+# === RUN ANALYZE-HISTORY ===
 if (-not $SkipAnalyze -and (Test-Path $analyzeScript)) {
-    Write-Host "Uruchamiam analyze-history.ps1 -DeviceFilter $DeviceId..." -ForegroundColor Gray
-    & $analyzeScript -DeviceFilter $DeviceId -OutputFile $deviceHistoryFile
+    Write-Host "Uruchamiam analyze-history.ps1..." -ForegroundColor Gray
+    & $analyzeScript -Force
     Write-Host ""
 }
 
-# Fallback: jesli brak per-device, uzyj globalnego (ale to bedzie cross-device!)
-$historyFile = if (Test-Path $deviceHistoryFile) { $deviceHistoryFile } else { "$env:USERPROFILE\.claude\totals-history.json" }
-
-# 2. Sprawdz czy mamy dane
-if (-not (Test-Path $historyFile)) {
-    Write-Host "BLAD: Brak pliku $historyFile" -ForegroundColor Red
+# === LOAD TOTALS ===
+if (-not (Test-Path $totalsFile)) {
+    Write-Host "BLAD: Brak pliku $totalsFile" -ForegroundColor Red
     Write-Host "Uruchom najpierw: analyze-history.ps1" -ForegroundColor Yellow
     exit 1
 }
 
-# 3. Wczytaj dane
-$history = Get-Content $historyFile -Raw | ConvertFrom-Json
+$totals = Get-Content $totalsFile -Raw | ConvertFrom-Json
 
-# 4. Przygotuj podsumowanie dla tego urzadzenia
-# v4.0: dodano chars_user, chars_ai
-$deviceStats = @{
-    deviceId = $DeviceId
-    lastUpdate = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    duration_ms = [long]$history.total_duration_ms
-    tokens_main = [long]$history.total_tokens_main
-    tokens_total = [long]$history.total_tokens_total
-    agent_savings = [long]$history.total_agent_savings
-    chars_user = if ($history.total_chars_user) { [long]$history.total_chars_user } else { 0 }
-    chars_ai = if ($history.total_chars_ai) { [long]$history.total_chars_ai } else { 0 }
-    cost = [double]$history.total_cost
-    sessions = [int]$history.analysis_stats.sessions_found
-    messages = [int]$history.analysis_stats.messages_total
-    user_prompts = [int]$history.analysis_stats.user_prompts_total
+# === AGGREGATE PER USER ===
+$userStats = @{}
+
+# Initialize all users
+foreach ($userName in $config.users.Keys) {
+    $userStats[$userName] = @{
+        user = $userName
+        lastUpdate = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+        duration_ms = [long]0
+        tokens_main = [long]0
+        tokens_total = [long]0
+        agent_savings = [long]0
+        chars_user = [long]0
+        chars_ai = [long]0
+        cost = [double]0
+        sessions = [int]0
+        messages = [int]0
+        user_prompts = [int]0
+    }
 }
 
-# 5. Utworz folder stats jesli nie istnieje
-if (-not (Test-Path $statsDir)) {
-    New-Item -ItemType Directory -Path $statsDir -Force | Out-Null
+# Aggregate from sessions
+if ($totals.sessions) {
+    foreach ($prop in $totals.sessions.PSObject.Properties) {
+        $session = $prop.Value
+        $user = $session.user
+        if (-not $user) { $user = $config.defaultUser }
+
+        if (-not $userStats.ContainsKey($user)) {
+            # User not in config, add them
+            $userStats[$user] = @{
+                user = $user
+                lastUpdate = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+                duration_ms = [long]0
+                tokens_main = [long]0
+                tokens_total = [long]0
+                agent_savings = [long]0
+                chars_user = [long]0
+                chars_ai = [long]0
+                cost = [double]0
+                sessions = [int]0
+                messages = [int]0
+                user_prompts = [int]0
+            }
+        }
+
+        $userStats[$user].duration_ms += [long]$session.duration_ms
+        $userStats[$user].tokens_main += [long]$session.tokens_main
+        $userStats[$user].tokens_total += [long]$session.tokens_total
+        $userStats[$user].agent_savings += [long]$session.agent_savings
+        $userStats[$user].chars_user += [long]$(if ($session.chars_user) { $session.chars_user } else { 0 })
+        $userStats[$user].chars_ai += [long]$(if ($session.chars_ai) { $session.chars_ai } else { 0 })
+        $userStats[$user].cost += [double]$session.cost
+        $userStats[$user].sessions++
+        $userStats[$user].messages += [int]$session.messages
+        $userStats[$user].user_prompts += [int]$session.user_prompts
+    }
 }
 
-# 6. Zapisz device-{ID}.json
-$deviceStats | ConvertTo-Json -Depth 3 | Out-File -FilePath $deviceFile -Encoding UTF8
-
-# 6.5 Kopiuj też do ~/.claude/stats/ (wrapper czyta stamtąd priorytetowo)
-$localStatsDir = "$env:USERPROFILE\.claude\stats"
-if (-not (Test-Path $localStatsDir)) {
-    New-Item -ItemType Directory -Path $localStatsDir -Force | Out-Null
-}
-Copy-Item $deviceFile -Destination $localStatsDir -Force
-
-# 7. Wyswietl podsumowanie
-$totalMs = $deviceStats.duration_ms
-$days = [math]::Floor($totalMs / 86400000)
-$hours = [math]::Floor(($totalMs % 86400000) / 3600000)
-$tokMainM = [math]::Round($deviceStats.tokens_main / 1000000, 2)
-$tokTotalM = [math]::Round($deviceStats.tokens_total / 1000000, 2)
-$agentSavingsM = [math]::Round($deviceStats.agent_savings / 1000000, 2)
-
-Write-Host "=== Zapisano: $deviceFile ===" -ForegroundColor Green
+# === SAVE PER USER FILES ===
+Write-Host "=== Zapisano pliki uzytkownikow ===" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Czas:          ${days}d ${hours}h" -ForegroundColor Yellow
-Write-Host "  Tokeny main:   ${tokMainM}M" -ForegroundColor Cyan
-Write-Host "  Tokeny total:  ${tokTotalM}M" -ForegroundColor Cyan
-Write-Host "  Agent savings: ${agentSavingsM}M" -ForegroundColor Blue
-Write-Host "  Koszt:         `$$([math]::Round($deviceStats.cost, 2))" -ForegroundColor Magenta
-Write-Host "  Sesje:         $($deviceStats.sessions)" -ForegroundColor White
-Write-Host ""
 
-# 8. Git commit & push (jeśli w repo KFG)
-if ($kfgRepo) {
-    Push-Location $kfgRepo
+foreach ($userName in $userStats.Keys) {
+    $stats = $userStats[$userName]
+    $userFile = Join-Path $statsDir "user-$userName.json"
+    $stats | ConvertTo-Json -Depth 3 | Out-File -FilePath $userFile -Encoding UTF8
+
+    $totalMs = $stats.duration_ms
+    $days = [math]::Floor($totalMs / 86400000)
+    $hours = [math]::Floor(($totalMs % 86400000) / 3600000)
+    $tokMainM = [math]::Round($stats.tokens_main / 1000000, 2)
+    $costStr = "`$" + [math]::Round($stats.cost, 2)
+
+    Write-Host "  $userName" -ForegroundColor Yellow
+    Write-Host "    Czas:     ${days}d ${hours}h" -ForegroundColor White
+    Write-Host "    Tokeny:   ${tokMainM}M" -ForegroundColor Cyan
+    Write-Host "    Koszt:    $costStr" -ForegroundColor Magenta
+    Write-Host "    Sesje:    $($stats.sessions)" -ForegroundColor White
+    Write-Host ""
+}
+
+# === GIT COMMIT & PUSH ===
+$historyRepo = "$env:USERPROFILE\.claude-history"
+if (Test-Path "$historyRepo\.git") {
+    Push-Location $historyRepo
     try {
-        git add "stats/device-*.json" 2>$null
+        git add "stats/user-*.json" 2>$null
         $hasChanges = git diff --cached --quiet 2>$null; $hasChanges = $LASTEXITCODE -ne 0
         if ($hasChanges) {
-            git commit -m "stats: update device-$DeviceId" --quiet 2>$null
+            git commit -m "stats: update user stats" --quiet 2>$null
+            git pull --quiet 2>$null
             git push --quiet 2>$null
-            Write-Host "Git: committed & pushed" -ForegroundColor DarkGray
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Git: committed & pushed to claude-history" -ForegroundColor DarkGray
+            } else {
+                Write-Host "Git: commit OK, push failed (sprawdz recznie)" -ForegroundColor DarkYellow
+            }
+        } else {
+            Write-Host "Git: no changes to commit" -ForegroundColor DarkGray
         }
-    } catch { }
+    } catch {
+        Write-Host "Git: error - $($_.Exception.Message)" -ForegroundColor DarkRed
+    }
     Pop-Location
 }
 
-# 9. Zwroc sciezke do pliku (dla dalszego uzycia)
-return $deviceFile
-
+Write-Host ""

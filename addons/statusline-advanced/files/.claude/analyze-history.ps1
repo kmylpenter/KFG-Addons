@@ -1,89 +1,107 @@
 # Analiza historycznych sesji Claude Code
 # Przechodzi przez wszystkie .jsonl i sumuje tokeny z kazdej wiadomosci
+# v7.0: Simplified folder prefix mapping (no pathPatterns)
+# v6.0: Custom DeviceId from pathPatterns in kfg-stats config
 # v5.0: Inkrementalne przetwarzanie - tylko nowe/zmienione pliki
-# v3.0: Filtrowanie po cwd WEWNATRZ plikow (Dell vs DELL w tym samym folderze)
 
 param(
     [switch]$Verbose,
     [switch]$Force,              # Wymus pelna analize (ignoruj cache)
-    [string]$DeviceFilter = "",  # Pusty = wszystkie, "STRIX", "DELL", "Dell", "ANDROID"
+    [string]$UserFilter = "",    # Filter by user (e.g., "Kmyl")
     [string]$OutputFile = ""     # Pusty = domyslny totals-history.json
 )
 
 $projectsDir = "$env:USERPROFILE\.claude\projects"
 $historyFile = if ($OutputFile) { $OutputFile } else { "$env:USERPROFILE\.claude\totals-history.json" }
+$configPath = "$env:USERPROFILE\.config\kfg-stats\users.json"
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Cyan
-Write-Host "        ANALIZA HISTORYCZNYCH SESJI CLAUDE CODE             " -ForegroundColor Cyan
+Write-Host "        ANALIZA HISTORYCZNYCH SESJI CLAUDE CODE v7.0        " -ForegroundColor Cyan
 Write-Host "============================================================" -ForegroundColor Cyan
-if ($DeviceFilter) {
-    Write-Host "        Filtr urzadzenia: $DeviceFilter (po cwd w sesji)" -ForegroundColor Yellow
+if ($UserFilter) {
+    Write-Host "        Filtr uzytkownika: $UserFilter" -ForegroundColor Yellow
 }
 Write-Host ""
 
-# Funkcja: wyodrebnij device z cwd
-function Get-DeviceFromCwd {
-    param([string]$Cwd)
-    if (-not $Cwd) { return $null }
+# === LOAD CONFIG ===
+$folderMapping = @{}
+$defaultUser = $null
 
-    # Windows: C:\Users\USERNAME\...
-    if ($Cwd -cmatch "^C:\\Users\\([^\\]+)\\") {
-        return $Matches[1]
+if (Test-Path $configPath) {
+    try {
+        $json = Get-Content $configPath -Raw | ConvertFrom-Json
+        if ($json.folderMapping) {
+            foreach ($prop in $json.folderMapping.PSObject.Properties) {
+                $folderMapping[$prop.Name] = $prop.Value
+            }
+        }
+        $defaultUser = $json.defaultUser
+        Write-Host "  Config: $($folderMapping.Count) folder mappings loaded" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "  Config: blad wczytywania" -ForegroundColor DarkYellow
     }
-    # Windows: D:\Projekty DELL KG\... lub D:\Projekty StriX\...
-    if ($Cwd -cmatch "^[A-Z]:\\Projekty ([^\\]+)\\") {
-        $deviceName = $Matches[1]
-        if ($deviceName -eq "DELL KG") { return "DELL" }
-        if ($deviceName -eq "StriX") { return "kamil" }
-        return $deviceName
-    }
-    # Android: /data/data/com.termux/...
-    if ($Cwd -like "/data/data/com.termux/*") {
-        return "ANDROID"
-    }
-    return $null
 }
 
-# Funkcja: wyodrebnij device z nazwy folderu (fallback dla starszych sesji)
-function Get-DeviceFromFolderName {
+# Extract meaningful prefix from folder name (same logic as kfg-settings)
+function Get-FolderPrefix {
     param([string]$FolderName)
-    if (-not $FolderName) { return $null }
 
-    # C--Users-USERNAME-... (case-sensitive!)
-    if ($FolderName -cmatch "^C--Users-([^-]+)-") {
+    # android--data-data-com-termux-... → android--data-data-com-termux
+    if ($FolderName -match '^(android--data-data-com-termux)') {
         return $Matches[1]
     }
-    # D--Projekty-DELL-KG-... lub D--Projekty-StriX-...
-    if ($FolderName -cmatch "^[A-Z]--Projekty-DELL-KG-") {
-        return "DELL"
+
+    # C--Users-USERNAME-... → C--Users-USERNAME
+    if ($FolderName -match '^([A-Za-z])--Users-([^-]+)') {
+        return "$($Matches[1])--Users-$($Matches[2])"
     }
-    if ($FolderName -cmatch "^[A-Z]--Projekty-StriX-") {
-        return "kamil"
+
+    # D--Projekty-XXX-YYY-projectname → D--Projekty-XXX-YYY (main projects folder)
+    # Take max 2 uppercase segments after "Projekty" (e.g., DELL-KG or StriX)
+    if ($FolderName -match '^([A-Z])--Projekty-') {
+        $parts = $FolderName -split '-'
+        $prefix = @($parts[0], '', 'Projekty')
+        $segmentsAdded = 0
+        $maxSegments = 2
+
+        for ($i = 3; $i -lt $parts.Count -and $segmentsAdded -lt $maxSegments; $i++) {
+            $segment = $parts[$i]
+            if ($segment -and $segment[0] -cmatch '[a-z]') {
+                break
+            }
+            if ($segment) {
+                $prefix += $segment
+                $segmentsAdded++
+            }
+        }
+        return $prefix -join '-'
     }
-    # android--...
-    if ($FolderName -like "android--*") {
-        return "ANDROID"
-    }
+
     return $null
 }
 
-# Funkcja: sprawdz czy sesja pasuje do filtra
-function Test-DeviceMatch {
-    param([string]$Device, [string]$Filter)
-    if (-not $Filter) { return $true }  # brak filtra = wszystkie
+# Get user for folder using folderMapping
+function Get-UserFromFolder {
+    param([string]$FolderName)
 
-    switch ($Filter) {
-        "STRIX"   { return $Device -ceq "kamil" }
-        "DELL"    { return $Device -ceq "DELL" }
-        "DESKTOP-94BP3P3" { return $Device -ceq "DELL" }  # Laptop DELL (COMPUTERNAME)
-        "Dell"    { return $Device -ceq "Dell" }
-        "ANDROID" { return $Device -ceq "ANDROID" }
-        default   { return $Device -ceq $Filter }
+    $prefix = Get-FolderPrefix $FolderName
+    if ($prefix -and $folderMapping.ContainsKey($prefix)) {
+        return @{ user = $folderMapping[$prefix]; prefix = $prefix }
     }
+
+    # Fallback to default user
+    return @{ user = $defaultUser; prefix = $prefix }
 }
 
-# Znajdz wszystkie foldery projektow (skanuj wszystkie, filtruj pozniej)
+# Sprawdz czy sesja pasuje do filtra
+function Test-UserMatch {
+    param([string]$User, [string]$Filter)
+    if (-not $Filter) { return $true }
+    return $User -eq $Filter
+}
+
+# Znajdz wszystkie foldery projektow
 $allFolders = Get-ChildItem -Path $projectsDir -Directory -ErrorAction SilentlyContinue
 
 if (-not $allFolders) {
@@ -127,25 +145,26 @@ $globalStats = @{
     sessions_count = 0
     messages_count = 0
     user_prompts_count = 0
-    chars_user_total = 0    # v4.0
-    chars_ai_total = 0      # v4.0
+    chars_user_total = 0
+    chars_ai_total = 0
     files_processed = 0
     files_skipped = 0
-    cache_hits = 0      # v5.0: ile sesji z cache
-    cache_misses = 0    # v5.0: ile sesji przetworzone od nowa
+    cache_hits = 0
+    cache_misses = 0
 }
 
 $sessionsData = @{}
-$newFileCache = @{}  # v5.0: nowy cache file info
+$newFileCache = @{}
 
 foreach ($project in $allFolders) {
-    # v5.0: Szybkie odrzucenie folderu po nazwie (jesli filtr urzadzenia)
-    if ($DeviceFilter) {
-        $folderDevice = Get-DeviceFromFolderName $project.Name
-        if ($folderDevice -and -not (Test-DeviceMatch $folderDevice $DeviceFilter)) {
-            # Folder ewidentnie z innego urzadzenia - pomiń całkowicie
-            continue
-        }
+    # Get user for this folder
+    $userInfo = Get-UserFromFolder $project.Name
+    $folderUser = $userInfo.user
+    $folderPrefix = $userInfo.prefix
+
+    # Check user filter early (skip whole folder if doesn't match)
+    if ($UserFilter -and $folderUser -ne $UserFilter) {
+        continue
     }
 
     # Znajdz pliki sesji (UUID.jsonl, nie agent-*)
@@ -153,13 +172,13 @@ foreach ($project in $allFolders) {
         Where-Object { $_.Name -match "^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.jsonl$" }
 
     if ($Verbose) {
-        Write-Host "  $($project.Name): $($sessionFiles.Count) sesji" -ForegroundColor Gray
+        Write-Host "  $($project.Name): $($sessionFiles.Count) sesji -> $folderUser" -ForegroundColor Gray
     }
 
     foreach ($file in $sessionFiles) {
         $sessionId = $file.BaseName
 
-        # Pomin duplikaty (ten sam session moze byc w wielu folderach)
+        # Pomin duplikaty
         if ($sessionsData.ContainsKey($sessionId)) { continue }
 
         # v5.0: Sprawdz czy plik sie zmienil (cache hit)
@@ -167,22 +186,17 @@ foreach ($project in $allFolders) {
         $fileMtime = $file.LastWriteTime.Ticks
         $fileSize = $file.Length
 
-        # Zapisz info do nowego cache
         $newFileCache[$fileKey] = @{ mtime = $fileMtime; size = $fileSize }
 
-        # Sprawdz czy mozemy uzyc cache
         $cachedInfo = $cachedFileInfo[$fileKey]
         if ($cachedInfo -and $cachedInfo.mtime -eq $fileMtime -and $cachedInfo.size -eq $fileSize) {
-            # Plik niezmieniony - uzyj danych z cache
             if ($cachedSessions.ContainsKey($sessionId)) {
                 $cached = $cachedSessions[$sessionId]
-                # Sprawdz filtr urzadzenia
-                if ($DeviceFilter -and -not (Test-DeviceMatch $cached.device $DeviceFilter)) {
-                    $globalStats.files_skipped++
-                    $globalStats.files_processed++
-                    continue
-                }
-                # Uzyj danych z cache
+
+                # Update folder_prefix and user if needed
+                $cached.folder_prefix = $folderPrefix
+                $cached.user = $folderUser
+
                 $sessionsData[$sessionId] = $cached
                 $globalStats.total_input_tokens += $cached.tokens_in
                 $globalStats.total_output_tokens += $cached.tokens_out
@@ -200,11 +214,9 @@ foreach ($project in $allFolders) {
             }
         }
 
-        # Cache miss - przetworz plik normalnie
+        # Cache miss - przetworz plik
         $globalStats.cache_misses++
 
-        $sessionCwd = $null
-        $sessionDevice = $null
         $sessionTokensIn = 0
         $sessionTokensOut = 0
         $sessionCacheRead = 0
@@ -212,13 +224,12 @@ foreach ($project in $allFolders) {
         $sessionAgentSavings = 0
         $sessionMessages = 0
         $sessionUserPrompts = 0
-        $sessionCharsUser = 0    # v4.0: znaki promptów usera
-        $sessionCharsAi = 0      # v4.0: znaki odpowiedzi AI
+        $sessionCharsUser = 0
+        $sessionCharsAi = 0
         $sessionStart = $null
         $sessionEnd = $null
 
         try {
-            # Czytaj plik linia po linii
             $lines = Get-Content $file.FullName -ErrorAction SilentlyContinue
 
             foreach ($line in $lines) {
@@ -228,23 +239,15 @@ foreach ($project in $allFolders) {
                     $msg = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
                     if (-not $msg) { continue }
 
-                    # Wyodrebnij cwd z pierwszej wiadomosci user (case-sensitive!)
-                    if (-not $sessionCwd -and $msg.cwd) {
-                        $sessionCwd = $msg.cwd
-                        $sessionDevice = Get-DeviceFromCwd $sessionCwd
-                    }
-
                     # Timestamp
                     if ($msg.timestamp) {
                         if (-not $sessionStart) { $sessionStart = $msg.timestamp }
                         $sessionEnd = $msg.timestamp
                     }
 
-                    # User prompts (type=user, bez meta/systemowych, bez agentów)
-                    # v4.0: + filtr Warmup + liczenie znaków
+                    # User prompts
                     if ($msg.type -eq "user" -and -not $msg.isMeta -and -not $msg.isSidechain) {
                         $content = if ($msg.message -and $msg.message.content) { $msg.message.content } else { "" }
-                        # Wyciągnij tekst jeśli content to array
                         if ($content -is [array]) {
                             $textParts = @()
                             foreach ($c in $content) {
@@ -252,7 +255,6 @@ foreach ($project in $allFolders) {
                             }
                             $content = $textParts -join ""
                         }
-                        # Filtruj: command-name, local-command, Warmup
                         $isCommand = $content -match "^<command-name>" -or $content -match "^<local-command"
                         $isWarmup = $content.Trim() -eq "Warmup"
                         if ($content -and -not $isCommand -and -not $isWarmup) {
@@ -261,33 +263,25 @@ foreach ($project in $allFolders) {
                         }
                     }
 
-                    # v4.1: Znaki AI z odpowiedzi assistant (text + tool_use content)
+                    # AI chars
                     if ($msg.type -eq "assistant" -and $msg.message -and $msg.message.content) {
                         $aiContent = $msg.message.content
                         if ($aiContent -is [string]) {
                             $sessionCharsAi += $aiContent.Length
                         } elseif ($aiContent -is [array]) {
                             foreach ($c in $aiContent) {
-                                # Tekst odpowiedzi
                                 if ($c.type -eq "text" -and $c.text) {
                                     $sessionCharsAi += $c.text.Length
                                 }
-                                # Kod z Write/Edit (tool_use)
                                 if ($c.type -eq "tool_use" -and $c.input) {
-                                    # Write: input.content
-                                    if ($c.input.content) {
-                                        $sessionCharsAi += $c.input.content.Length
-                                    }
-                                    # Edit: input.new_string
-                                    if ($c.input.new_string) {
-                                        $sessionCharsAi += $c.input.new_string.Length
-                                    }
+                                    if ($c.input.content) { $sessionCharsAi += $c.input.content.Length }
+                                    if ($c.input.new_string) { $sessionCharsAi += $c.input.new_string.Length }
                                 }
                             }
                         }
                     }
 
-                    # Usage z message
+                    # Usage
                     if ($msg.message -and $msg.message.usage) {
                         $usage = $msg.message.usage
                         $sessionTokensIn += if ($usage.input_tokens) { $usage.input_tokens } else { 0 }
@@ -297,40 +291,21 @@ foreach ($project in $allFolders) {
                         $sessionMessages++
                     }
 
-                    # Agent savings z toolUseResult (Task tool)
+                    # Agent savings
                     if ($msg.toolUseResult -and $msg.toolUseResult.totalTokens) {
                         $tur = $msg.toolUseResult
                         $agentTotalTokens = [long]$tur.totalTokens
-
-                        # Estymuj summary tokens (4 chars ~ 1 token)
                         $summaryTokens = 0
                         if ($tur.content -and $tur.content.Count -gt 0) {
                             foreach ($c in $tur.content) {
-                                if ($c.text) {
-                                    $summaryTokens += [math]::Ceiling($c.text.Length / 4)
-                                }
+                                if ($c.text) { $summaryTokens += [math]::Ceiling($c.text.Length / 4) }
                             }
                         }
-
                         $contribution = $agentTotalTokens - $summaryTokens
-                        if ($contribution -gt 0) {
-                            $sessionAgentSavings += $contribution
-                        }
+                        if ($contribution -gt 0) { $sessionAgentSavings += $contribution }
                     }
 
                 } catch { }
-            }
-
-            # Fallback: jesli brak cwd, uzyj nazwy folderu (starsze sesje)
-            if (-not $sessionDevice) {
-                $sessionDevice = Get-DeviceFromFolderName $project.Name
-            }
-
-            # Sprawdz czy sesja pasuje do filtra (case-sensitive!)
-            if ($DeviceFilter -and -not (Test-DeviceMatch $sessionDevice $DeviceFilter)) {
-                $globalStats.files_skipped++
-                $globalStats.files_processed++
-                continue
             }
 
             # Oblicz czas sesji
@@ -365,9 +340,10 @@ foreach ($project in $allFolders) {
                     agent_savings = $sessionAgentSavings
                     messages = $sessionMessages
                     user_prompts = $sessionUserPrompts
-                    chars_user = $sessionCharsUser      # v4.0
-                    chars_ai = $sessionCharsAi          # v4.0
-                    device = $sessionDevice
+                    chars_user = $sessionCharsUser
+                    chars_ai = $sessionCharsAi
+                    folder_prefix = $folderPrefix
+                    user = $folderUser
                     last_update = (Get-Date -Format "yyyy-MM-dd HH:mm")
                     source = "history"
                 }
@@ -379,8 +355,8 @@ foreach ($project in $allFolders) {
                 $globalStats.total_agent_savings += $sessionAgentSavings
                 $globalStats.messages_count += $sessionMessages
                 $globalStats.user_prompts_count += $sessionUserPrompts
-                $globalStats.chars_user_total += $sessionCharsUser    # v4.0
-                $globalStats.chars_ai_total += $sessionCharsAi        # v4.0
+                $globalStats.chars_user_total += $sessionCharsUser
+                $globalStats.chars_ai_total += $sessionCharsAi
                 $globalStats.sessions_count++
             }
 
@@ -423,20 +399,20 @@ $result = @{
         sessions_found = $globalStats.sessions_count
         messages_total = $globalStats.messages_count
         user_prompts_total = $globalStats.user_prompts_count
-        chars_user_total = $globalStats.chars_user_total    # v4.0
-        chars_ai_total = $globalStats.chars_ai_total        # v4.0
-        cache_hits = $globalStats.cache_hits                # v5.0
-        cache_misses = $globalStats.cache_misses            # v5.0
+        chars_user_total = $globalStats.chars_user_total
+        chars_ai_total = $globalStats.chars_ai_total
+        cache_hits = $globalStats.cache_hits
+        cache_misses = $globalStats.cache_misses
     }
-    file_cache = $newFileCache  # v5.0: cache file info dla inkrementalnej analizy
+    file_cache = $newFileCache
     total_cost = [math]::Round($totalCost, 2)
     total_duration_ms = $totalDurMs
     total_tokens_main = $totalTokMain
     total_tokens_total = $totalTokTotal
     total_agent_savings = $totalAgentSavings
     total_user_prompts = $globalStats.user_prompts_count
-    total_chars_user = $globalStats.chars_user_total        # v4.0
-    total_chars_ai = $globalStats.chars_ai_total            # v4.0
+    total_chars_user = $globalStats.chars_user_total
+    total_chars_ai = $globalStats.chars_ai_total
     compacts = 0
     sessions = $sessionsData
 }
@@ -455,10 +431,9 @@ Write-Host "                      WYNIKI ANALIZY                        " -Foreg
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Plikow przetworzonych:  $($globalStats.files_processed)" -ForegroundColor White
-if ($DeviceFilter) {
-    Write-Host "  Plikow pominietych:     $($globalStats.files_skipped) (inny device)" -ForegroundColor DarkGray
+if ($UserFilter) {
+    Write-Host "  Filtr uzytkownika:      $UserFilter" -ForegroundColor Yellow
 }
-# v5.0: pokaż cache stats
 if ($globalStats.cache_hits -gt 0 -or $globalStats.cache_misses -gt 0) {
     Write-Host "  Cache hits:             $($globalStats.cache_hits) (pominieto)" -ForegroundColor DarkGreen
     Write-Host "  Cache misses:           $($globalStats.cache_misses) (przetworzone)" -ForegroundColor DarkYellow
