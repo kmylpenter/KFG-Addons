@@ -1,17 +1,17 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced v5.3",
+  "displayName": "StatusLine Advanced v5.4",
   "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats",
-  "version": "5.3.0",
+  "version": "5.4.0",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {
     "files/.claude/statusline-wrapper.ps1": "~/.claude/",
     "files/.claude/statusline-wrapper.sh": "~/.claude/",
     "files/.claude/analyze-history.ps1": "~/.claude/",
-    "files/.claude/export-device-stats.ps1": "~/.claude/",
+    "files/.claude/kfg-settings.ps1": "~/.claude/",
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
   "scripts": {},
-  "notes": "v5.3: Stats w ~/.claude-history/stats/, custom DeviceId z users.json, per-user aggregation. ctx% używa 160k."
+  "notes": "v5.4: User name from config, stats from user-{name}.json, dynamic folder prefix detection (case-sensitive)."
 }

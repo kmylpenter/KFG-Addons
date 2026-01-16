@@ -43,9 +43,38 @@ if (Test-Path $configPath) {
     }
 }
 
+# Build prefix cache from all folders (finds repeating prefixes)
+$script:prefixCache = $null
+
+function Build-PrefixCache {
+    if ($script:prefixCache) { return }
+    # Case-sensitive hashtable (DELL != Dell)
+    $script:prefixCache = New-Object System.Collections.Hashtable ([System.StringComparer]::Ordinal)
+
+    $allFolders = @()
+    if (Test-Path $projectsDir) {
+        $allFolders = Get-ChildItem -Path $projectsDir -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+    }
+
+    foreach ($folder in $allFolders) {
+        $parts = $folder -split '-'
+        # Only index first 4 segments (3 after drive letter: X--Y-Z)
+        $maxLen = [Math]::Min($parts.Count, 4)
+        for ($len = 3; $len -le $maxLen; $len++) {
+            $prefix = ($parts[0..($len-1)]) -join '-'
+            if (-not $script:prefixCache.ContainsKey($prefix)) {
+                $script:prefixCache[$prefix] = 0
+            }
+            $script:prefixCache[$prefix]++
+        }
+    }
+}
+
 # Extract meaningful prefix from folder name (same logic as kfg-settings)
 function Get-FolderPrefix {
     param([string]$FolderName)
+
+    Build-PrefixCache
 
     # android--data-data-com-termux-... → android--data-data-com-termux
     if ($FolderName -match '^(android--data-data-com-termux)') {
@@ -57,25 +86,26 @@ function Get-FolderPrefix {
         return "$($Matches[1])--Users-$($Matches[2])"
     }
 
-    # D--Projekty-XXX-YYY-projectname → D--Projekty-XXX-YYY (main projects folder)
-    # Take max 2 uppercase segments after "Projekty" (e.g., DELL-KG or StriX)
-    if ($FolderName -match '^([A-Z])--Projekty-') {
+    # D--Projekty-... → find shortest repeating prefix
+    if ($FolderName -match '^([A-Za-z])--Projekty-') {
         $parts = $FolderName -split '-'
-        $prefix = @($parts[0], '', 'Projekty')
-        $segmentsAdded = 0
-        $maxSegments = 2
-
-        for ($i = 3; $i -lt $parts.Count -and $segmentsAdded -lt $maxSegments; $i++) {
-            $segment = $parts[$i]
-            if ($segment -and $segment[0] -cmatch '[a-z]') {
-                break
-            }
-            if ($segment) {
-                $prefix += $segment
-                $segmentsAdded++
+        # Start from X--Projekty-FIRST (4 parts), max 3 segments total
+        $maxLen = [Math]::Min($parts.Count, 4)
+        for ($len = 4; $len -le $maxLen; $len++) {
+            $prefix = ($parts[0..($len-1)]) -join '-'
+            $count = $script:prefixCache[$prefix]
+            if ($count -gt 1) {
+                $nextPrefix = if ($len -lt $parts.Count) { ($parts[0..$len]) -join '-' } else { $null }
+                $nextCount = if ($nextPrefix) { $script:prefixCache[$nextPrefix] } else { 0 }
+                if ($nextCount -le 1) {
+                    return $prefix
+                }
             }
         }
-        return $prefix -join '-'
+        # Fallback: use first 4 segments (X--Projekty-FIRST)
+        if ($parts.Count -ge 4) {
+            return ($parts[0..3]) -join '-'
+        }
     }
 
     return $null

@@ -1,5 +1,5 @@
-# KFG Statusline Wrapper v5.2
-# Fix: ctx% używa 160k (usableTokens) zamiast 200k - 100% = compact
+# KFG Statusline Wrapper v5.4
+# v5.4: User name from config, stats from user-{name}.json
 # Format 4x3 z poziomym parowaniem SESJA/TOTAL
 #
 # Rzad 1: Model/User | ctx%/compacts
@@ -227,9 +227,7 @@ if ($rawModel) {
     else { $modelName = "C$version" }
 }
 
-# User name (np. DELL, StriX)
-$userName = $env:USERNAME
-if (-not $userName) { $userName = "USER" }
+# User name from config (np. Kmyl, Pawel) - loaded later with stats
 
 # === CONTEXT, TURNS, SESSION DURATION z transcript ===
 $transcriptPath = $data.transcript_path
@@ -314,38 +312,32 @@ if (Test-Path $compactStateFile) {
 $newState = @{ session_id = $sessionId; count = $compactsCount; last_context_length = $contextLength } | ConvertTo-Json -Compress
 try { [System.IO.File]::WriteAllText($compactStateFile, $newState, [System.Text.UTF8Encoding]::new($false)) } catch {}
 
-# === CROSS-DEVICE TOTALS (per-user aggregation) ===
-# v5.3: Stats from ~/.claude-history/stats/, aggregated per defaultUser from config
+# === CROSS-DEVICE TOTALS (per-user stats) ===
+# v5.4: Stats from ~/.claude-history/stats/user-{name}.json
 $statsDir = "$env:USERPROFILE\.claude-history\stats"
 $configPath = "$env:USERPROFILE\.config\kfg-stats\users.json"
 
-# Load user config to get devices for defaultUser
-$userDevices = @()
+# Load user config to get defaultUser
+$userName = $env:USERNAME  # fallback
 if (Test-Path $configPath) {
     try {
         $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
-        $defaultUser = $cfg.defaultUser
-        if ($cfg.users -and $cfg.users.$defaultUser -and $cfg.users.$defaultUser.devices) {
-            $userDevices = @($cfg.users.$defaultUser.devices)
-        }
+        if ($cfg.defaultUser) { $userName = $cfg.defaultUser }
     } catch {}
 }
 
-$totalCharsUser = 0; $totalCharsAi = 0; $totalUserPrompts = 0; $totalCost = 0.0
-if (Test-Path $statsDir) {
-    Get-ChildItem "$statsDir\device-*.json" -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            $dev = Get-Content $_.FullName -Raw | ConvertFrom-Json
-            # Filter: only include devices belonging to defaultUser (or all if no config)
-            $deviceId = $dev.deviceId
-            if ($userDevices.Count -eq 0 -or $userDevices -contains $deviceId) {
-                $totalCharsUser += if ($dev.chars_user) { [long]$dev.chars_user } else { 0 }
-                $totalCharsAi += if ($dev.chars_ai) { [long]$dev.chars_ai } else { 0 }
-                $totalUserPrompts += if ($dev.user_prompts) { [int]$dev.user_prompts } else { 0 }
-                $totalCost += [double]$dev.cost
-            }
-        } catch {}
-    }
+# Load stats for this user
+$totalCharsUser = 0; $totalCharsAi = 0; $totalUserPrompts = 0; $totalCost = 0.0; $totalDurationMs = 0
+$userStatsFile = "$statsDir\user-$userName.json"
+if (Test-Path $userStatsFile) {
+    try {
+        $userStats = Get-Content $userStatsFile -Raw | ConvertFrom-Json
+        $totalCharsUser = if ($userStats.chars_user) { [long]$userStats.chars_user } else { 0 }
+        $totalCharsAi = if ($userStats.chars_ai) { [long]$userStats.chars_ai } else { 0 }
+        $totalUserPrompts = if ($userStats.user_prompts) { [int]$userStats.user_prompts } else { 0 }
+        $totalCost = if ($userStats.cost) { [double]$userStats.cost } else { 0 }
+        $totalDurationMs = if ($userStats.duration_ms) { [long]$userStats.duration_ms } else { 0 }
+    } catch {}
 }
 
 # Typing time (total) - chars_user / 285 char/min

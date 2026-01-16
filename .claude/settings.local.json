@@ -23,7 +23,12 @@
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\DELL\\\\.claude\\\\analyze-history.ps1\" -Force)",
       "Bash(powershell.exe -NoProfile -Command \"\\(Get-Content ''C:\\\\Users\\\\DELL\\\\.claude\\\\totals-history.json'' -Raw | ConvertFrom-Json\\).sessions.PSObject.Properties | ForEach-Object { $_Value.user } | Group-Object | Sort-Object Count -Descending\")",
       "Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\\\Users\\\\DELL\\\\.claude\\\\temp-check-users.ps1\")",
-      "Bash(powershell.exe:*)"
+      "Bash(powershell.exe:*)",
+      "Bash(Select-Object -First 30 -ExpandProperty Name)",
+      "Bash(powershell -Command:*)",
+      "Bash(dir \"C:\\\\Users\\\\DELL\\\\.claude\\\\projects\" /b)",
+      "Bash(findstr:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"& ''$env:USERPROFILE\\\\.claude\\\\scripts\\\\export-device-stats.ps1'' -SkipAnalyze\")"
     ]
   }
 }

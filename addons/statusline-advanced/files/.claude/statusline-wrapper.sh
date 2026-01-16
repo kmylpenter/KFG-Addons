@@ -1,7 +1,7 @@
 #!/bin/bash
-# KFG Statusline Wrapper v2.0 (Android/Bash)
+# KFG Statusline Wrapper v5.4 (Android/Bash)
 # Linia 1: ccstatusline (via npx)
-# Linia 2: Cross-device Totals (z stats/device-*.json)
+# Linia 2: Cross-device Totals (z stats/user-{name}.json)
 
 # === LINIA 1: ccstatusline ===
 if command -v npx &> /dev/null; then
@@ -10,46 +10,53 @@ else
     echo "ccstatusline: npx not found"
 fi
 
-# === LINIA 2: Cross-device Totals ===
-STATS_DIRS=(
-    "$HOME/.claude/stats"
-    "$HOME/projekty/KFG/stats"
-)
+# === LINIA 2: User Stats ===
+STATS_DIR="$HOME/.claude-history/stats"
+CONFIG_PATH="$HOME/.config/kfg-stats/users.json"
 
-TOTAL_COST=0
-TOTAL_TOKENS=0
-TOTAL_DURATION=0
-DEVICE_COUNT=0
+# Get defaultUser from config
+USER_NAME="$USER"
+if [ -f "$CONFIG_PATH" ] && command -v jq &> /dev/null; then
+    DEFAULT_USER=$(jq -r '.defaultUser // empty' "$CONFIG_PATH" 2>/dev/null)
+    [ -n "$DEFAULT_USER" ] && USER_NAME="$DEFAULT_USER"
+fi
 
-for STATS_DIR in "${STATS_DIRS[@]}"; do
-    [ -d "$STATS_DIR" ] || continue
+USER_STATS_FILE="$STATS_DIR/user-$USER_NAME.json"
 
-    for f in "$STATS_DIR"/device-*.json; do
-        [ -f "$f" ] || continue
+if [ -f "$USER_STATS_FILE" ] && command -v jq &> /dev/null; then
+    COST=$(jq -r '.cost // 0' "$USER_STATS_FILE" 2>/dev/null)
+    TOKS=$(jq -r '.tokens_main // 0' "$USER_STATS_FILE" 2>/dev/null)
+    DUR=$(jq -r '.duration_ms // 0' "$USER_STATS_FILE" 2>/dev/null)
+    SESSIONS=$(jq -r '.sessions // 0' "$USER_STATS_FILE" 2>/dev/null)
+    CHARS_USER=$(jq -r '.chars_user // 0' "$USER_STATS_FILE" 2>/dev/null)
 
-        if command -v jq &> /dev/null; then
-            COST=$(jq -r '.cost // 0' "$f" 2>/dev/null)
-            TOKS=$(jq -r '.tokens_main // 0' "$f" 2>/dev/null)
-            DUR=$(jq -r '.duration_ms // 0' "$f" 2>/dev/null)
-
-            TOTAL_COST=$(echo "$TOTAL_COST + $COST" | bc 2>/dev/null || echo "$TOTAL_COST")
-            TOTAL_TOKENS=$((TOTAL_TOKENS + TOKS))
-            TOTAL_DURATION=$((TOTAL_DURATION + DUR))
-            DEVICE_COUNT=$((DEVICE_COUNT + 1))
-        fi
-    done
-done
-
-if [ "$DEVICE_COUNT" -gt 0 ]; then
-    if [ "$TOTAL_TOKENS" -gt 0 ]; then
-        TOKS_M=$(echo "scale=2; $TOTAL_TOKENS/1000000" | bc 2>/dev/null || echo "0")
+    # Format tokens
+    if [ "$TOKS" -gt 0 ]; then
+        TOKS_M=$(echo "scale=2; $TOKS/1000000" | bc 2>/dev/null || echo "0")
     else
         TOKS_M="0"
     fi
-    HOURS=$(echo "scale=1; $TOTAL_DURATION/3600000" | bc 2>/dev/null || echo "0")
-    COST_FMT=$(printf "%.2f" "$TOTAL_COST" 2>/dev/null || echo "0.00")
+
+    # Format typing time (chars_user / 285 char/min)
+    if [ "$CHARS_USER" -gt 0 ]; then
+        TYPING_MINS=$(echo "scale=0; $CHARS_USER/285" | bc 2>/dev/null || echo "0")
+        TYPING_HOURS=$((TYPING_MINS / 60))
+        TYPING_MINS_REM=$((TYPING_MINS % 60))
+        TYPING_TIME="${TYPING_HOURS}h${TYPING_MINS_REM}m"
+    else
+        TYPING_TIME="0m"
+    fi
+
+    # Format cost
+    if [ "$(echo "$COST >= 1000" | bc 2>/dev/null)" = "1" ]; then
+        COST_FMT="\$$(echo "scale=1; $COST/1000" | bc 2>/dev/null)k"
+    else
+        COST_FMT="\$$(printf "%.2f" "$COST" 2>/dev/null || echo "0.00")"
+    fi
 
     CYAN='\033[36m'
+    PURPLE='\033[35m'
+    YELLOW='\033[33m'
     RESET='\033[0m'
-    echo -e "${CYAN}Totals: ${TOKS_M}M tok | ${HOURS}h | \$${COST_FMT} | ${DEVICE_COUNT} dev${RESET}"
+    echo -e "${CYAN}$USER_NAME${RESET} | ${YELLOW}${TYPING_TIME}${RESET} | ${PURPLE}${COST_FMT}${RESET} | ${SESSIONS} sess"
 fi

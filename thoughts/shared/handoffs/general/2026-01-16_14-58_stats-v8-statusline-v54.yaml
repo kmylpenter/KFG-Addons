@@ -1,0 +1,64 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Stats system v8 - dynamic folder prefix detection + statusline v5.4 with per-user stats
+now: Przetestuj na innych urzadzeniach (StriX, Android) i zweryfikuj sync stats
+test: powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\scripts\export-device-stats.ps1" -SkipAnalyze
+
+done_this_session:
+  - task: Naprawiono folder mapping - dynamic prefix detection zamiast heurystyki
+    files: [~/.claude/kfg-settings.ps1:11-31, ~/.claude/analyze-history.ps1:46-71]
+  - task: Case-sensitive hashtable dla DELL vs Dell
+    files: [~/.claude/kfg-settings.ps1:14]
+  - task: Statusline v5.4 - user name z configu, stats z user-{name}.json
+    files: [~/.claude/statusline-wrapper.ps1:315-341]
+  - task: Zaktualizowano addon statusline-advanced do v5.4
+    files: [addons/statusline-advanced/addon.json, addons/statusline-advanced/files/.claude/*]
+  - task: Dodano kfg-settings.ps1 do instalatora addon
+    files: [addons/statusline-advanced/files/.claude/kfg-settings.ps1]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - dynamic_prefix_over_heuristics: Zamiast hardkodowanych regexow, budujemy cache wszystkich folderow i szukamy powtarzajacych sie prefiksow
+  - case_sensitive_hashtable: System.Collections.Hashtable z StringComparer.Ordinal dla rozroznienia DELL vs Dell
+  - max_4_segments: Prefiksy ograniczone do 4 segmentow (D--Projekty-X) zeby nie wchodzic zbyt gleboko
+
+findings:
+  - prefix_cache_pattern: Budowanie cache prefiksow z wszystkich folderow pozwala automatycznie wykryc grupy bez heurystyk
+  - user_stats_flow: kfg-settings (config) -> analyze-history (totals-history.json) -> export-device-stats (user-*.json) -> statusline (display)
+
+worked:
+  - Dynamic prefix detection z case-sensitive hashtable
+  - Stats flow przez user-{name}.json zamiast device-*.json
+  - Typing time = chars_user / 285 char/min
+
+failed:
+  - Stara heurystyka "pierwsza litera lowercase = projekt" - nie dzialala dla StriX/Claudia
+  - Heurystyka "ALL UPPERCASE = main folder" - nie dzialala dla mieszanych nazw
+
+next:
+  - Przetestowac na StriX i Android
+  - Zweryfikowac sync stats przez /eos na roznych urzadzeniach
+  - Opcjonalnie: SafelySkipPermissions Addon z todo.yaml
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-16_14-58_stats-v8-statusline-v54.yaml
+    - addons/statusline-advanced/files/.claude/kfg-settings.ps1
+  modified:
+    - ~/.claude/kfg-settings.ps1
+    - ~/.claude/analyze-history.ps1
+    - ~/.claude/statusline-wrapper.ps1
+    - addons/statusline-advanced/addon.json
+    - addons/statusline-advanced/files/.claude/analyze-history.ps1
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.sh
+  deleted:
+    - addons/statusline-advanced/files/.claude/export-device-stats.ps1 (stara wersja v4)
