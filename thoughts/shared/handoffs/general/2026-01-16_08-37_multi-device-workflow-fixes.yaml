@@ -1,0 +1,71 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Fix critical multi-device workflow bugs in EOS and migrate addons
+now: Test /eos on StriX to verify mandatory steps execute correctly
+
+test: /eos test-session && check handoff created + history pushed
+
+done_this_session:
+  - task: Fixed migrateconvo skill - wrong paths, bash command
+    files: [addons/migrateconvo/files/skills/migrateconvo/SKILL.md, addons/migrateconvo/install.ps1]
+  - task: Fixed migrateconvo installer - wrong source path
+    files: [addons/migrateconvo/install.ps1]
+  - task: Removed redundant install.ps1 from addon (use addon.json only)
+    files: [addons/migrateconvo/install.ps1]
+  - task: Fixed EOS - mandatory /create_handoff (was asking, now does)
+    files: [addons/eos/files/skills/eos/SKILL.md]
+  - task: Fixed EOS - mandatory push Claude History with correct path
+    files: [addons/eos/files/skills/eos/SKILL.md]
+  - task: Fixed EOS - git pull --rebase before push (multi-terminal conflicts)
+    files: [addons/eos/files/skills/eos/SKILL.md]
+  - task: Fixed migrate_gui.py - prevent overwriting larger files
+    files: [addons/migrateconvo/files/templates/scripts/migrate_gui.py]
+  - task: Fixed migrate_gui.py - keep window open for multiple migrations
+    files: [addons/migrateconvo/files/templates/scripts/migrate_gui.py]
+  - task: Fixed install-addons.ps1 - dynamic project detection
+    files: [install-addons.ps1]
+
+blockers: []
+
+questions:
+  - Konwersacje z 23:00 wczoraj na StriX - czy zostaly wypushowane?
+
+decisions:
+  - mandatory_handoff: EOS must create handoff without asking - users forget
+  - pull_rebase: Required before push to handle multi-terminal /eos
+  - size_check_migrate: Don't overwrite larger files with smaller ones
+
+findings:
+  - skill_paths: Hardcoded device paths (StriX, kamil) broke cross-device
+  - installer_mismatch: addon install.ps1 had different paths than addon.json
+  - history_path: ~/.claude-history/ is the actual repo, not ~/.claude/projects/
+
+worked:
+  - MANDATORY wording in skill forces Claude to execute steps
+  - Size comparison prevents accidental data loss in migration
+
+failed:
+  - Asking user about handoff - Claude skipped 3/3 times
+  - ~/.claude/projects path - it's a junction, use ~/.claude-history/
+
+next:
+  - Test /eos on StriX device
+  - Verify handoff created automatically
+  - Verify history pushed correctly
+  - Push missing conversations from StriX (23:00 sessions)
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-16_08-37_multi-device-workflow-fixes.yaml
+  modified:
+    - addons/eos/files/skills/eos/SKILL.md
+    - addons/migrateconvo/files/skills/migrateconvo/SKILL.md
+    - addons/migrateconvo/files/templates/scripts/migrate_gui.py
+    - install-addons.ps1
+  deleted:
+    - addons/migrateconvo/install.ps1
