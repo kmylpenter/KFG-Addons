@@ -1,7 +1,11 @@
 # ============================================================
-# KFG Addons Installer v2.1
+# KFG Addons Installer v2.2
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
+#
+# v2.2: Fix dla katalogow kopiowanych do rodzica (np. skills/np/ -> skills/)
+#       - Dodaje nazwe zrodlowego katalogu do relativePath
+#       - Zapobiega blednym pominieniom przy duplicate detection
 #
 # v2.1: Fix dla pojedynczych plikow do ~/.claude/
 #       - Poprawna obsluga plikow (nie tylko katalogow)
@@ -28,7 +32,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.1.0"
+$Version = "2.2.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -334,6 +338,7 @@ function Install-Addon {
         # Sprawdz czy source to PLIK czy KATALOG
         $isSourceFile = Test-Path $sourcePath -PathType Leaf
         $sourceFileName = if ($isSourceFile) { Split-Path $sourcePath -Leaf } else { $null }
+        $sourceDirName = if (-not $isSourceFile) { Split-Path $sourcePath -Leaf } else { $null }
 
         # Sprawdz czy to target do .claude/ (skills, commands, etc.)
         $isClaudeTarget = $targetValue -match "~/\.claude/" -or $targetValue -match "~\\\.claude\\"
@@ -346,6 +351,15 @@ function Install-Addon {
             # Uzyj nazwy pliku zamiast pustego stringa
             if ($isSourceFile -and (-not $relativePath -or $relativePath -eq "")) {
                 $relativePath = $sourceFileName
+            }
+
+            # FIX v2.2: Dla katalogow kopiowanych DO rodzica (np. skills/np/ -> skills/)
+            # Dodaj nazwe zrodlowego katalogu do relativePath
+            if (-not $isSourceFile -and $sourceDirName) {
+                # Sprawdz czy relativePath juz zawiera nazwe katalogu
+                if (-not $relativePath.TrimEnd('/\').EndsWith($sourceDirName)) {
+                    $relativePath = Join-Path $relativePath $sourceDirName
+                }
             }
 
             # Sprawdz czy juz istnieje gdzies

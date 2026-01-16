@@ -121,15 +121,50 @@ Format: `"sciezka/w/repo/": "sciezka/docelowa/"`
 | `~/.claude/` | `C:\Users\USERNAME\.claude\` |
 | `~/.templates/` | `C:\Users\USERNAME\.templates\` |
 
+### Wzorce targets (WAZNE!)
+
+Installer v2.2+ obsluguje trzy wzorce:
+
+#### 1. Katalog do katalogu (zalecane)
+
+```json
+"files/skills/moj-skill/": "~/.claude/skills/moj-skill/"
+```
+Kopiuje ZAWARTOSC `moj-skill/` do docelowego `moj-skill/`.
+
+#### 2. Katalog do rodzica
+
+```json
+"files/.claude/skills/np/": "~/.claude/skills/"
+```
+Kopiuje folder `np/` DO katalogu `skills/`, wynik: `~/.claude/skills/np/`
+
+#### 3. Pojedynczy plik
+
+```json
+"files/.claude/statusline-wrapper.ps1": "~/.claude/"
+```
+Kopiuje plik do katalogu, wynik: `~/.claude/statusline-wrapper.ps1`
+
 ### Przyklady
 
 ```json
 "targets": {
   "files/skills/moj-skill/": "~/.claude/skills/moj-skill/",
   "files/scripts/": "~/.templates/scripts/",
-  "files/hooks/": "~/.claude/hooks/"
+  "files/hooks/": "~/.claude/hooks/",
+  "files/.claude/moj-skrypt.ps1": "~/.claude/"
 }
 ```
+
+### WAZNE - unikaj bledow
+
+| Wzorzec | Status | Uwagi |
+|---------|--------|-------|
+| `"files/skills/x/": "~/.claude/skills/x/"` | OK | Katalog do katalogu (explicit) |
+| `"files/skills/x/": "~/.claude/skills/"` | OK | Katalog do rodzica (v2.2+) |
+| `"files/skrypt.ps1": "~/.claude/"` | OK | Plik do katalogu (v2.1+) |
+| `"files/skills/": "~/.claude/skills/"` | UWAGA | Kopiuje ZAWARTOSC, nie folder |
 
 **WAZNE:** Koncz sciezki folderow na `/`
 
