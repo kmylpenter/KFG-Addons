@@ -1,0 +1,55 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Optimize analyze-history.ps1 with incremental processing (~7x faster)
+now: Test /eos on StriX to verify full workflow timing improvement
+
+test: powershell.exe -Command "Measure-Command { & 'C:\Users\DELL\.claude\analyze-history.ps1' -DeviceFilter DESKTOP-94BP3P3 }"
+
+done_this_session:
+  - task: Added incremental processing to analyze-history.ps1 (v5.0)
+    files: [C:\Users\DELL\.claude\analyze-history.ps1, addons/statusline-advanced/files/.claude/analyze-history.ps1]
+  - task: Added folder-level filtering by device name
+    files: [C:\Users\DELL\.claude\analyze-history.ps1]
+  - task: Fixed EOS git workflow - merge instead of rebase
+    files: [addons/eos/files/skills/eos/SKILL.md]
+  - task: Pushed changes and installed addon locally
+    files: []
+
+blockers: []
+
+questions: []
+
+decisions:
+  - incremental_cache: Store file mtime+size in totals-history.json, skip unchanged files
+  - folder_filter: Skip entire folders that don't match DeviceFilter based on folder name
+  - merge_over_rebase: git pull (merge) instead of --rebase to avoid "unstaged changes" race condition
+
+findings:
+  - race_condition: Claude writes to .jsonl in background, causing rebase failures between commit and pull
+  - folder_optimization: Most time was spent iterating 1700+ files from other devices
+
+worked:
+  - Cache with mtime+size comparison for file change detection
+  - Early folder rejection by device name before iterating files
+  - git pull without --rebase for claude-history
+
+failed:
+  - git pull --rebase - fails when Claude writes to files between commit and pull
+
+next:
+  - Test /eos on StriX to verify end-to-end timing
+  - Monitor cache hit rate over multiple sessions
+  - Consider adding -Force flag documentation
+
+files:
+  created:
+    - thoughts/shared/handoffs/general/2026-01-16_10-21_analyze-history-incremental.yaml
+  modified:
+    - C:\Users\DELL\.claude\analyze-history.ps1
+    - addons/statusline-advanced/files/.claude/analyze-history.ps1
+    - addons/eos/files/skills/eos/SKILL.md

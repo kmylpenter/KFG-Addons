@@ -1,0 +1,52 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Statusline username fix + new TODO addon + resume_handoff sorting fix
+now: Test /todo skill in fresh session, verify statusline shows username
+test: powershell -ExecutionPolicy Bypass -Command "& ./install-addons.ps1 -List"
+
+done_this_session:
+  - task: Fixed statusline to show USERNAME instead of COMPUTERNAME
+    files: [addons/statusline-advanced/files/.claude/statusline-wrapper.ps1]
+  - task: Created new TODO addon - persistent tasks across sessions
+    files: [addons/todo/addon.json, addons/todo/files/skills/todo/skill.md]
+  - task: Fixed resume_handoff sorting with fallback for inconsistent filename formats
+    files: [addons/resume_handoff/files/skills/resume_handoff/skill.md]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - username_over_computername: User prefers seeing USERNAME (DELL, StriX) for device identification
+  - todo_yaml_format: Simple YAML with text/added/done fields for human readability
+  - sorting_priority: filename prefix > YAML date field > file mtime
+
+findings:
+  - installer_auto_detect: install-addons.ps1 dynamically scans addons/*/addon.json - no manual update needed
+  - skill_reload: New skills require CC restart to be recognized
+
+worked:
+  - $env:USERNAME for cross-device user identification
+  - YAML format for todo persistence
+  - 3-tier fallback for handoff date sorting
+
+failed: []
+
+next:
+  - Test /todo skill on StriX after git pull
+  - Verify statusline shows "DELL" or "StriX" correctly
+  - Consider adding /todo integration with Claudia PM
+
+files:
+  created:
+    - addons/todo/addon.json
+    - addons/todo/files/skills/todo/skill.md
+    - thoughts/shared/todo.yaml
+  modified:
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
+    - addons/resume_handoff/files/skills/resume_handoff/skill.md
