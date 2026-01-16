@@ -1,0 +1,50 @@
+---
+session: kfg-addons
+date: 2026-01-16
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Fix statusline ctx% - use 160k usableTokens instead of 200k so 100% = compact threshold
+now: Commit and push statusline v5.2 changes
+
+test: powershell -NoProfile -Command "Get-Content 'C:\Users\kamil\.claude\statusline-wrapper.ps1' | Select-String 'contextLimit = 160000'"
+
+done_this_session:
+  - task: Debug ctx% calculation - confirmed parsing works correctly via debug logging
+    files: [statusline-wrapper.ps1]
+  - task: Fix ctx% limit from 200k to 160k (usableTokens = compact threshold)
+    files: [statusline-wrapper.ps1, addons/statusline-advanced/addon.json]
+  - task: Update addon to v5.2.0
+    files: [addons/statusline-advanced/addon.json, addons/statusline-advanced/files/.claude/statusline-wrapper.ps1]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - use_usable_tokens: ccstatusline uses usableTokens (160k) not maxTokens (200k) for ctx% so 100% = compact imminent
+
+findings:
+  - ctx_parsing_correct: Get-ContextFromTranscript works correctly - formula identical to ccstatusline
+  - rounding_difference: 71.5% (display) vs 72% (hook cache) was just precision difference, not bug
+  - compact_threshold: Claude triggers compact at ~160k tokens, not 200k
+
+worked:
+  - Debug logging to verify parsing
+  - Comparing with ccstatusline source code
+
+failed:
+  - Initially assumed 200k was correct limit
+
+next:
+  - Commit statusline v5.2 changes to KFG-Addons
+  - Push to remote
+  - Test that ctx% now shows ~50% after compact (was showing ~40% with 200k)
+
+files:
+  created: []
+  modified:
+    - C:\Users\kamil\.claude\statusline-wrapper.ps1
+    - addons/statusline-advanced/addon.json
+    - addons/statusline-advanced/files/.claude/statusline-wrapper.ps1
