@@ -13,7 +13,7 @@
     "files/settings-permissions.json": "~/.claude/settings-permissions.json"
   },
   "scripts": {
-    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%USERPROFILE%/.claude/scripts/install-safe-permissions.ps1\""
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"$env:USERPROFILE/.claude/scripts/install-safe-permissions.ps1\""
   },
   "notes": "Auto-instaluje trash-cli. Hook blokuje rm/rmdir i sugeruje trash. Auto-approve dla git, npm, python, Read/Write w projektach."
 }

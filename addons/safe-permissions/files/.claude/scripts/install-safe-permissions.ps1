@@ -27,8 +27,22 @@ if (-not $trashPath) {
 }
 Write-Host "  OK: $($trashPath.Source)" -ForegroundColor Green
 
-# 2. Kompiluj hook
-Write-Host "`n[2/4] Kompilacja hooka..." -ForegroundColor Yellow
+# 2. Sprawdz/zainstaluj esbuild
+Write-Host "`n[2/4] esbuild..." -ForegroundColor Yellow
+$esbuildPath = Get-Command esbuild -ErrorAction SilentlyContinue
+if (-not $esbuildPath) {
+    Write-Host "  Instaluje esbuild..." -ForegroundColor Yellow
+    npm install -g esbuild 2>&1 | Out-Null
+    $esbuildPath = Get-Command esbuild -ErrorAction SilentlyContinue
+    if (-not $esbuildPath) {
+        Write-Host "  BLAD: npm install -g esbuild nie powiodlo sie" -ForegroundColor Red
+        exit 1
+    }
+}
+Write-Host "  OK: $($esbuildPath.Source)" -ForegroundColor Green
+
+# 3. Kompiluj hook
+Write-Host "`n[3/5] Kompilacja hooka..." -ForegroundColor Yellow
 $hookSrc = "$srcDir\safe-permissions.ts"
 $hookDist = "$distDir\safe-permissions.mjs"
 
@@ -42,8 +56,8 @@ if (-not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 }
 
-# Kompiluj z npx esbuild
-npx esbuild $hookSrc --bundle --platform=node --format=esm --outfile=$hookDist 2>&1 | Out-Null
+# Kompiluj z esbuild (nie npx - juz zainstalowany globalnie)
+esbuild $hookSrc --bundle --platform=node --format=esm --outfile=$hookDist 2>&1 | Out-Null
 
 if (-not (Test-Path $hookDist)) {
     Write-Host "  BLAD: Kompilacja nie powiodla sie" -ForegroundColor Red
@@ -52,8 +66,8 @@ if (-not (Test-Path $hookDist)) {
 }
 Write-Host "  OK: $hookDist" -ForegroundColor Green
 
-# 3. Backup i aktualizuj settings.json
-Write-Host "`n[3/4] Aktualizacja settings.json..." -ForegroundColor Yellow
+# 4. Backup i aktualizuj settings.json
+Write-Host "`n[4/5] Aktualizacja settings.json..." -ForegroundColor Yellow
 
 if (-not (Test-Path $settingsFile)) {
     Write-Host "  BLAD: Brak $settingsFile" -ForegroundColor Red
@@ -106,8 +120,8 @@ if (-not $hookExists) {
     Write-Host "  Hook juz istnieje" -ForegroundColor Yellow
 }
 
-# 4. Merge permissions
-Write-Host "`n[4/4] Merge permissions..." -ForegroundColor Yellow
+# 5. Merge permissions
+Write-Host "`n[5/5] Merge permissions..." -ForegroundColor Yellow
 $permFile = "$claudeDir\settings-permissions.json"
 
 if (Test-Path $permFile) {
