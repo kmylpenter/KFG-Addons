@@ -1,0 +1,364 @@
+{
+  "description": "Polish keyword mappings for CCv3 skills - curated per-skill",
+  "version": "2.0",
+  "note": "Only skill-specific keywords, no generic words like 'w', 'z', 'do'",
+
+  "skills": {
+    "compound-learnings": [
+      "skonsoliduj", "skonsolidować", "wyciągnij wnioski", "wyciągnąć wnioski",
+      "przemyśl", "przemyśleć", "ulepsz setup", "ulepsz konfigurację",
+      "naucz się z sesji", "jakie wzorce", "zrób skill", "utwórz skill"
+    ],
+    "mot": [
+      "stan systemu", "sprawdź stan", "diagnostyka", "zdiagnozuj",
+      "sprawdź hooki", "sprawdź skille", "sprawdź agenty",
+      "waliduj setup", "audyt systemu", "zdrowie systemu"
+    ],
+    "debug-hooks": [
+      "hook nie działa", "hook nie odpala", "debuguj hook",
+      "problem z hookiem", "dlaczego hook", "hook nie uruchamia"
+    ],
+    "hook-developer": [
+      "stwórz hook", "napisz hook", "nowy hook", "hook input", "hook output",
+      "schemat hooka", "referencja hooków", "dokumentacja hooków",
+      "zarejestruj hook", "matcher hooka"
+    ],
+    "implement_plan": [
+      "zaimplementuj plan", "wykonaj plan", "zrealizuj plan", "wdróż plan",
+      "uruchom plan", "zacznij fazę", "kontynuuj fazę", "orkiestruj",
+      "orkiestracja agentów"
+    ],
+    "commit": [
+      "commituj", "zacommituj", "zrób commit", "git commit",
+      "zapisz zmiany", "zatwierdź zmiany", "wypchnij", "push",
+      "wypchnij na github", "wypchnij zmiany"
+    ],
+    "describe_pr": [
+      "opisz pr", "opis pr", "opis pull request", "napisz pr",
+      "stwórz pr", "treść pr"
+    ],
+    "fix": [
+      "napraw", "naprawić", "naprawiaj", "naprawmy", "naprawcie",
+      "popraw", "poprawić", "poprawiaj", "zepsute", "nie działa",
+      "failuje", "błąd w", "bug w", "szybka poprawka"
+    ],
+    "build": [
+      "zbuduj", "zbudować", "buduj", "budować",
+      "zaimplementuj feature", "dodaj feature", "stwórz feature",
+      "nowa funkcjonalność", "greenfield", "brownfield"
+    ],
+    "explore": [
+      "eksploruj", "eksplorować", "poznaj kod", "poznawaj",
+      "jak to działa", "zrozum kod", "co to robi",
+      "przegląd architektury", "struktura kodu"
+    ],
+    "debug": [
+      "debuguj", "debugować", "zbadaj", "zbadać",
+      "przyczyna główna", "dlaczego to się dzieje",
+      "dziwne zachowanie", "przerywane", "race condition"
+    ],
+    "create_handoff": [
+      "stwórz handoff", "utwórz handoff", "napisz handoff",
+      "dokument handoff", "przekaż", "koniec na dziś",
+      "zakończ sesję", "zmieniam zadanie", "odbiorę później", "podsumuj"
+    ],
+    "resume_handoff": [
+      "wznów handoff", "kontynuuj handoff", "odbierz handoff",
+      "wznów pracę", "kontynuuj pracę", "gdzie skończyłem",
+      "nowa sesja"
+    ],
+    "continuity_ledger": [
+      "ciągłość", "ledger", "zapisz stan", "aktualizuj stan",
+      "przed kompaktem", "wysoki kontekst", "użycie kontekstu",
+      "kończy się kontekst", "mało kontekstu", "ostrzeżenie kontekstu"
+    ],
+    "skill-developer": [
+      "system skillów", "stwórz skill", "dodaj skill",
+      "triggery skillów", "reguły skillów", "hook system",
+      "rozwój skillów", "skill-rules.json"
+    ],
+    "github-search": [
+      "github", "szukaj na github", "znajdź repo",
+      "szukaj kodu", "issue github", "pull request", "repozytorium"
+    ],
+    "firecrawl-scrape": [
+      "scrapuj", "zescrapuj", "pobierz url", "pobierz stronę",
+      "crawluj", "wyciągnij z url", "firecrawl"
+    ],
+    "nia-docs": [
+      "dokumentacja", "docs", "dokumentacja biblioteki",
+      "referencja API", "jak używać", "dokumentacja pakietu", "nia"
+    ],
+    "ast-grep-find": [
+      "ast", "ast-grep", "wzorzec kodu", "znajdź wzorzec",
+      "refaktoruj", "codemod", "znajdź wszystkie wywołania",
+      "znajdź wszystkie użycia", "zamień wszystko"
+    ],
+    "repoprompt": [
+      "repoprompt", "struktura kodu", "drzewo plików",
+      "kontekst kodu", "sygnatury"
+    ],
+    "recall-reasoning": [
+      "przypomnij", "poprzednie rozumowanie", "co próbowaliśmy",
+      "poprzednie próby", "szukaj rozumowania", "poprzednie decyzje",
+      "podobny problem", "próbowaliśmy wcześniej", "robiliśmy wcześniej",
+      "ostatnio", "precedens", "co działało", "co nie działało"
+    ],
+    "morph-search": [
+      "warpgrep", "morph", "szybkie szukanie", "szukaj w kodzie",
+      "grep", "znajdź w kodzie", "szukaj tekstu", "znajdź string"
+    ],
+    "morph-apply": [
+      "morph apply", "morph edit", "szybka edycja",
+      "edytuj plik", "zastosuj edycję", "smart edit",
+      "zastosuj zmiany", "batch edit"
+    ],
+    "perplexity-search": [
+      "perplexity", "szukaj w sieci", "przeszukaj internet",
+      "wyszukaj", "aktualne informacje", "najnowsze", "zbadaj temat"
+    ],
+    "qlty-check": [
+      "qlty", "jakość kodu", "lint", "linting",
+      "sprawdź kod", "sprawdzenie jakości", "auto-fix",
+      "metryki kodu", "złożoność", "code smells", "sformatuj kod"
+    ],
+    "braintrust-analyze": [
+      "braintrust", "analizuj sesję", "analiza sesji",
+      "przegląd sesji", "jakie agenty", "jakie skille",
+      "statystyki agentów", "wykryj pętle", "użycie tokenów",
+      "replay sesji", "ostatnia sesja", "podsumowanie tygodniowe"
+    ],
+    "onboard": [
+      "onboard", "onboarding", "nowy w projekcie",
+      "pierwszy raz", "poznaj", "zrozum ten projekt",
+      "analizuj ten projekt", "nowy projekt", "właśnie sklonowałem",
+      "właśnie zacząłem", "zainicjuj projekt"
+    ],
+    "tdd": [
+      "tdd", "test-driven", "najpierw test", "pisz testy najpierw",
+      "red green refactor", "najpierw failujący test"
+    ],
+    "tdd-migrate": [
+      "tdd migracja", "portuj do typescript", "portuj do ts",
+      "stwórz adaptery", "migruj z tdd", "wiele podobnych",
+      "batch tdd", "równoległe tdd", "orkiestruj agenty"
+    ],
+    "tdd-migration-pipeline": [
+      "pipeline migracji", "przepisz bazę kodu", "tryb orkiestratora",
+      "pełna migracja tdd", "migracja spec-driven",
+      "kontrakty behawioralne", "przegląd adversarial"
+    ],
+    "workflow-router": [
+      "jak podejść", "od czego zacząć", "pomóż mi z",
+      "jaki agent", "który agent", "workflow", "orkiestruj",
+      "zacznij zadanie", "nowe zadanie", "zacznij pracę",
+      "zaimplementuj z agentami", "użyj agentów", "wybierz workflow",
+      "najlepsze podejście"
+    ],
+    "environment-triage": [
+      "uv sync", "pip install", "błąd importu", "moduł nie znaleziony",
+      "pakiet nie znaleziony", "ModuleNotFoundError", "ImportError",
+      "wersja pythona", "zły python", "venv"
+    ],
+    "modular-code": [
+      "refaktoruj", "podziel plik", "plik za duży",
+      "za dużo linii", "organizacja modułów", "struktura pakietu",
+      "uporządkuj kod", "podziel moduł"
+    ],
+    "parallel-agent-contracts": [
+      "równoległe agenty", "spawn równoległy", "duplikacja typów",
+      "konflikt typów", "agenty TypeScript", "kontrakt typów agenta"
+    ],
+    "reference-sdk": [
+      "btca ask", "reference SDK", "sprawdź Vercel",
+      "sprawdź Anthropic SDK", "jak SDK", "implementacja SDK"
+    ],
+    "search-router": [
+      "które narzędzie szukania", "narzędzie szukania",
+      "jak szukać", "LEANN vs grep", "ast-grep vs",
+      "najlepszy sposób szukania"
+    ],
+    "tldr-code": [
+      "tldr", "tldr tree", "tldr structure", "tldr search",
+      "tldr daemon", "tldr cfg", "tldr dfg", "tldr slice", "tldr impact",
+      "call graph", "kto wywołuje", "co wywołuje",
+      "jak skomplikowane", "złożoność", "przepływ danych",
+      "skąd zmienna", "co wpływa", "zrozum funkcję", "śledzenie"
+    ],
+    "math-unified": [
+      "rozwiąż równanie", "całkuj", "pochodna", "różniczkuj",
+      "uprość wyrażenie", "wartość własna", "wyznacznik",
+      "obliczenie macierzy", "matematyka symboliczna"
+    ],
+    "math-help": [
+      "narzędzia matematyczne", "możliwości matematyczne",
+      "co umiesz z matematyki", "pomoc matematyczna"
+    ],
+    "pint-compute": [
+      "przelicz jednostki", "konwersja jednostek",
+      "metry na stopy", "mile na kilometry", "celsjusz na fahrenheit",
+      "analiza wymiarowa", "arytmetyka jednostek"
+    ],
+    "shapely-compute": [
+      "pole wielokąta", "przecięcie wielokątów", "przecięcie geometrii",
+      "otoczka wypukła", "punkt w wielokącie", "bufor geometrii",
+      "shapely", "geometria obliczeniowa"
+    ],
+    "dead-code": [
+      "martwy kod", "nieużywane funkcje", "znajdź nieużywane",
+      "nieosiągalny kod", "wyczyść nieużywane", "usuń martwy kod"
+    ],
+    "recall": [
+      "przypomnij", "przypomnij learningi", "szukaj w pamięci",
+      "czego się nauczyliśmy", "poprzednie learningi", "szukaj w learningach"
+    ],
+    "remember": [
+      "zapamiętaj", "zapamiętaj to", "zapisz learning",
+      "zapisz to", "zapisz ten wzorzec"
+    ],
+    "migrate": [
+      "migruj do", "upgrade frameworka", "przenieś z",
+      "upgrade pythona", "upgrade node", "migracja bazy",
+      "upgrade wersji", "migracja frameworka"
+    ],
+    "refactor": [
+      "refaktoruj", "refaktoruj to", "refaktoruj ten", "wyczyść ten kod",
+      "wyodrębnij do modułu", "popraw architekturę", "restrukturyzacja kodu", "dług techniczny"
+    ],
+    "release": [
+      "przygotuj release", "wydaj wersję", "release na produkcję",
+      "zrób release", "gotowe do deploy", "deployment produkcyjny"
+    ],
+    "review": [
+      "przejrzyj", "przejrzyj ten kod", "przejrzyj mój kod", "przejrzyj mój pr",
+      "sprawdź przed merge", "daj feedback", "code review", "przejrzyj implementację"
+    ],
+    "security": [
+      "audyt bezpieczeństwa", "sprawdź bezpieczeństwo", "sprawdź podatności",
+      "czy to bezpieczne", "przejrzyj autentykację", "sprawdź injection", "przegląd security"
+    ],
+    "test": [
+      "uruchom wszystkie testy", "przetestuj feature",
+      "zweryfikuj że działa", "pełny test suite", "uruchom testy"
+    ],
+    "prove": [
+      "udowodnij to", "formalny dowód", "lean 4", "lean4",
+      "theorem prover", "formalna weryfikacja", "udowodnij twierdzenie"
+    ],
+    "braintrust-tracing": [
+      "śledzenie braintrust", "śledzenie hooków", "hook tracing",
+      "korelacja agentów", "śledzenie sub-agentów"
+    ],
+    "cli-reference": [
+      "referencja cli", "linia poleceń", "headless mode",
+      "cli claude code", "flagi cli", "automatyzacja", "tryb nieinteraktywny"
+    ],
+    "premortem": [
+      "premortem", "pre-mortem", "co może pójść źle",
+      "tryby awarii", "analiza ryzyka", "przewidź problemy"
+    ],
+    "discovery-interview": [
+      "wywiad discovery", "pomóż mi zrozumieć co chcę",
+      "przemyśl ze mną", "wyjaśnij wymagania", "co powinienem zbudować",
+      "niejasny pomysł", "nie wiem czego potrzebuję"
+    ],
+    "loogle-search": [
+      "loogle", "szukaj w mathlib", "znajdź lemat",
+      "przeszukaj mathlib", "sygnatura typu", "lemat lean"
+    ],
+    "math/abstract-algebra": [
+      "teoria grup", "teoria pierścieni", "teoria ciał",
+      "homomorfizm grup", "grupa cykliczna"
+    ],
+    "math/category-theory": [
+      "funktor", "transformacja naturalna", "lemat Yonedy",
+      "funktor sprzężony", "diagram przemienny"
+    ],
+    "math/complex-analysis": [
+      "twierdzenie o residuach", "całka konturowa", "funkcja holomorficzna",
+      "szereg Laurenta", "całka Cauchy'ego"
+    ],
+    "math/functional-analysis": [
+      "przestrzeń Hilberta", "przestrzeń Banacha", "operator liniowy",
+      "twierdzenie spektralne", "reprezentacja Riesza"
+    ],
+    "math/graph-number-theory": [
+      "rozkład na czynniki pierwsze", "arytmetyka modularna",
+      "małe twierdzenie Fermata", "kolorowanie grafów", "drzewo rozpinające"
+    ],
+    "math/information-theory": [
+      "entropia Shannona", "informacja wzajemna", "przepustowość kanału",
+      "dywergencja KL"
+    ],
+    "math/linear-algebra": [
+      "problem wartości własnych", "wektor własny", "wielomian charakterystyczny",
+      "diagonalizacja", "rozkład SVD", "przestrzeń zerowa"
+    ],
+    "math/mathematical-logic": [
+      "logika zdań", "logika predykatów", "teoria dowodu",
+      "dedukcja naturalna", "tautologia"
+    ],
+    "math/measure-theory": [
+      "miara Lebesgue'a", "całka Lebesgue'a", "sigma-algebra",
+      "zbiór Borela", "zbieżność dominująca"
+    ],
+    "math/numerical-methods": [
+      "metoda Newtona-Raphsona", "metoda bisekcji", "Runge-Kutta",
+      "całkowanie numeryczne", "reguła Simpsona"
+    ],
+    "math/odes-pdes": [
+      "równanie różniczkowe", "zagadnienie początkowe",
+      "zagadnienie brzegowe", "równanie ciepła", "równanie falowe"
+    ],
+    "math/optimization": [
+      "optymalizacja wypukła", "gradient descent", "mnożnik Lagrange'a",
+      "warunki KKT", "programowanie liniowe"
+    ],
+    "math/real-analysis": [
+      "dowód epsilon-delta", "ciągłość jednostajna",
+      "zbieżność jednostajna", "ciąg Cauchy'ego"
+    ],
+    "math/topology": [
+      "przestrzeń topologiczna", "pokrycie otwarte", "przestrzeń zwarta",
+      "przestrzeń spójna", "homeomorfizm", "przestrzeń Hausdorffa"
+    ]
+  },
+
+  "agents": {
+    "scout": [
+      "eksploruj kod", "znajdź pliki", "zrozum kod",
+      "brownfield", "istniejący kod", "legacy code",
+      "zrozum bazę kodu", "obecna implementacja", "jak działa",
+      "znajdź wszystkie użycia", "gdzie jest", "przeszukaj kod",
+      "struktura kodu", "kto używa", "prześledzić", "analizuj kod"
+    ],
+    "oracle": [
+      "zbadaj", "investigate", "dowiedz się", "naucz się o",
+      "zbierz informacje", "najlepsze praktyki", "jak powinniśmy",
+      "jaki najlepszy sposób", "zrozum", "wyjaśnij", "udokumentuj"
+    ],
+    "plan-agent": [
+      "stwórz plan", "zrób plan", "zaplanuj",
+      "zaprojektuj", "zaarchitektuj", "plan implementacji",
+      "jak zaimplementować", "planowanie", "zaplanuj feature",
+      "nowa funkcjonalność", "fazowe podejście", "greenfield", "od zera"
+    ],
+    "validate-agent": [
+      "waliduj plan", "sprawdź plan", "przejrzyj plan",
+      "waliduj technologie", "waliduj wybory", "przed implementacją",
+      "gotowy do implementacji", "plan wygląda dobrze",
+      "sprawdź precedens", "poprzednie handoffy", "robiliśmy to wcześniej"
+    ],
+    "debug-agent": [
+      "debuguj", "debugowanie", "zbadaj problem", "znajdź buga",
+      "dlaczego", "co jest nie tak", "nie działa",
+      "błąd", "zepsute", "failuje", "logi", "sprawdź logi"
+    ],
+    "pathfinder": [
+      "zbadaj repo", "przeanalizuj repo", "zrozum repo", "analizuj strukturę repo",
+      "struktura repo", "strukturę repo", "konwencje repo", "wzorce repo",
+      "sklonuj i analizuj", "nowe repo", "wytyczne kontrybucji",
+      "jak działa ten projekt", "znajdź wzorce"
+    ]
+  }
+}

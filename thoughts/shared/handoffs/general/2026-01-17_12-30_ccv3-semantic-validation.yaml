@@ -1,0 +1,72 @@
+---
+session: ccv3-semantic-validation
+date: 2026-01-17
+status: complete
+outcome: SUCCESS
+---
+
+goal: Semantic validation of CCv3 Polish Translation keywords using 300 real user prompts
+now: V5 skill-rules.json ready - 39% reduction in false positives
+
+done_this_session:
+  - task: Extracted 300 prompts from 4257 conversation history entries
+    files: [addons/ccv3-polish-translation/extract-prompts-for-testing.py, addons/ccv3-polish-translation/extracted-prompts.json]
+  - task: Created keyword validation script
+    files: [addons/ccv3-polish-translation/validate-keywords.py]
+  - task: Ran 6 parallel agents for semantic analysis (50 prompts each)
+    files: [addons/ccv3-polish-translation/keyword-analysis-results.json]
+  - task: Fixed V4 - removed substring false positives (PR, nia, ast)
+    files: [addons/ccv3-polish-translation/fix-keywords-v4.py]
+  - task: Fixed V5 - added intentPatterns for generic words (sprawdz, zrob, napraw)
+    files: [addons/ccv3-polish-translation/fix-keywords-v5.py]
+  - task: Updated test suite to include intentPattern matching
+    files: [addons/ccv3-polish-translation/test-polish-prompts.py]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - intentPatterns_over_keywords: Generic words like "sprawdz" now use regex patterns instead of full phrases
+  - diacritic_alternatives: Patterns include both ASCII and Polish chars (sprawdz|sprawdź)
+
+findings:
+  - pr_substring_issue: "PR" matched Polish words like PRojekty, PRzeczytaj (183 false positives)
+  - nia_substring_issue: "nia" matched words like ustawienia, roznica (75 false positives)
+  - sprawdz_too_generic: Single word triggered 4-5 skills simultaneously
+  - session_continuation_noise: "This session is being continued..." triggered 15-23 skills
+
+worked:
+  - Removing substring keywords (PR, nia, ast) - 95%+ reduction
+  - Using intentPatterns with context (sprawdz.*(jakość|testy|bezpieczeństwo))
+  - Parallel agent analysis for semantic validation
+  - Adding both diacritic versions to patterns
+
+results:
+  v3_vs_v5:
+    total_matches: "870 -> 530 (39% reduction)"
+    github_search: "183 -> 9 (95% reduction)"
+    nia_docs: "75 -> 9 (88% reduction)"
+    prompts_with_5plus_matches: "63 -> 30 (52% reduction)"
+  test_suite: "35/35 passed"
+
+next:
+  - Install V5 to ~/.claude/skills/skill-rules.json
+  - Test in live sessions with Polish prompts
+  - Consider running 6 agents again on V5 for full semantic re-validation
+
+files:
+  created:
+    - addons/ccv3-polish-translation/extract-prompts-for-testing.py
+    - addons/ccv3-polish-translation/extracted-prompts.json
+    - addons/ccv3-polish-translation/validate-keywords.py
+    - addons/ccv3-polish-translation/keyword-analysis-results.json
+    - addons/ccv3-polish-translation/fix-keywords-v4.py
+    - addons/ccv3-polish-translation/fix-keywords-v5.py
+    - addons/ccv3-polish-translation/compare-v3-v4.py
+    - addons/ccv3-polish-translation/semantic-test-batch.py
+    - addons/ccv3-polish-translation/files/skills/skill-rules-v4.json
+    - addons/ccv3-polish-translation/files/skills/skill-rules-v5.json
+  modified:
+    - addons/ccv3-polish-translation/files/skills/skill-rules.json (now V5)
+    - addons/ccv3-polish-translation/test-polish-prompts.py (added intentPattern matching)

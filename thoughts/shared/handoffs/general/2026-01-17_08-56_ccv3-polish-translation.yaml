@@ -1,0 +1,74 @@
+---
+session: ccv3-polish-translation
+date: 2026-01-17
+status: complete
+outcome: PARTIAL_PLUS
+---
+
+goal: Created CCv3 Polish Translation addon with 853 keywords for skill activation
+now: Install addon by copying skill-rules.json to ~/.claude/skills/
+
+test: cd "D:\Projekty DELL KG\KFG-Addons\addons\ccv3-polish-translation" && python test-polish-prompts.py
+
+done_this_session:
+  - task: Ran /premortem to identify risks before modifying CCv3 skill-rules.json
+    files: []
+  - task: Created addon structure with addon.json, README.md
+    files: [addons/ccv3-polish-translation/addon.json, addons/ccv3-polish-translation/README.md]
+  - task: Built curated Polish keyword dictionary (v2) with 530 skill-specific keywords
+    files: [addons/ccv3-polish-translation/polish-keywords-v2.json]
+  - task: Analyzed 5934 user prompts to discover actual keyword usage patterns
+    files: [addons/ccv3-polish-translation/analyze-user-prompts.py, addons/ccv3-polish-translation/prompt-analysis-results.json]
+  - task: Added discovered keywords from prompt analysis (+75 keywords)
+    files: [addons/ccv3-polish-translation/add-discovered-keywords.py, addons/ccv3-polish-translation/polish-keywords-v2-enriched.json]
+  - task: Added ASCII variants for all Polish words (sprawdz = sprawdź) - handles typing without diacritics
+    files: [addons/ccv3-polish-translation/add-ascii-variants.py, addons/ccv3-polish-translation/polish-keywords-v3.json]
+  - task: Generated final skill-rules.json with 853 Polish keywords (70 skills + 6 agents)
+    files: [addons/ccv3-polish-translation/apply-translations-v3.py, addons/ccv3-polish-translation/files/skills/skill-rules.json]
+  - task: Created test suite with 35 test cases (all passing)
+    files: [addons/ccv3-polish-translation/test-polish-prompts.py]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - direct_merge_over_separate_file: User preferred merging Polish keywords directly into skill-rules.json rather than a separate overlay file
+  - ascii_variants_required: Discovered user often types without Polish diacritics (pamietaj vs pamiętaj), so both versions needed
+  - curated_over_automatic: V1 used automatic word matching which added too many generic words (w, z, do) - V2/V3 uses manually curated keywords per skill
+
+findings:
+  - skill_rules_has_76_entries: skill-rules.json has 70 skills + 6 agents (NOT 109 as initially stated)
+  - user_types_without_diacritics: Analysis of 5934 prompts showed frequent use of ASCII variants (pamietaj 65x, dzialaj 60x, sprobuj 50x)
+  - top_commands: dodaj (152x), zaktualizuj (139x), kontynuuj (84x), zweryfikuj (76x) are most used Polish imperatives
+
+worked:
+  - Curated per-skill keywords instead of generic word replacement
+  - Adding both Polish (ą,ć,ę) and ASCII (a,c,e) variants
+  - Analyzing actual user prompt history for real-world keyword discovery
+
+failed:
+  - V1 automatic matching added too many generic words causing false triggers
+
+next:
+  - Install addon: Copy-Item files/skills/skill-rules.json ~/.claude/skills/skill-rules.json
+  - Test in live session with Polish prompts
+  - Consider adding Polish translations to skill prompt.md files (scope 2 from user)
+
+files:
+  created:
+    - addons/ccv3-polish-translation/addon.json
+    - addons/ccv3-polish-translation/README.md
+    - addons/ccv3-polish-translation/polish-keywords-v2.json
+    - addons/ccv3-polish-translation/polish-keywords-v2-enriched.json
+    - addons/ccv3-polish-translation/polish-keywords-v3.json
+    - addons/ccv3-polish-translation/apply-translations.py
+    - addons/ccv3-polish-translation/apply-translations-v2.py
+    - addons/ccv3-polish-translation/apply-translations-v3.py
+    - addons/ccv3-polish-translation/add-ascii-variants.py
+    - addons/ccv3-polish-translation/add-discovered-keywords.py
+    - addons/ccv3-polish-translation/analyze-user-prompts.py
+    - addons/ccv3-polish-translation/test-polish-prompts.py
+    - addons/ccv3-polish-translation/prompt-analysis-results.json
+    - addons/ccv3-polish-translation/files/skills/skill-rules.json
+  modified: []

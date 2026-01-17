@@ -1,0 +1,13 @@
+{
+  "name": "ccv3-polish-translation",
+  "displayName": "CCv3 Polish Translation",
+  "description": "Polskie slowa kluczowe dla skill-rules.json (V6.1) - slang, diakrytyki, intentPatterns",
+  "version": "2.0.0",
+  "author": "kmylpenter",
+  "dependencies": {},
+  "targets": {
+    "files/skills/skill-rules.json": "~/.claude/skills/skill-rules.json"
+  },
+  "postInstall": null,
+  "notes": "UWAGA: Nadpisuje skill-rules.json. V6.1: 100% testow, slang PL (wrzuc/ogarnij/schrzanilo), intentPatterns dla zapisz/kontynuuj, regresja EN naprawiona."
+}

@@ -1,7 +1,11 @@
 # ============================================================
-# KFG Addons Installer v2.2
+# KFG Addons Installer v2.3
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
+#
+# v2.3: Automatyczny backup przed nadpisaniem plikow
+#       - Tworzy backup z timestampem (file.backup-YYYY-MM-DD-HHmm)
+#       - Tylko dla istniejacych plikow (nie dla katalogow)
 #
 # v2.2: Fix dla katalogow kopiowanych do rodzica (np. skills/np/ -> skills/)
 #       - Dodaje nazwe zrodlowego katalogu do relativePath
@@ -32,7 +36,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.2.0"
+$Version = "2.3.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -43,7 +47,7 @@ $addonsDir = Join-Path $scriptDir "addons"
 function Write-Banner {
     Write-Host ""
     Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
-    Write-Host "  |           KFG Addons Installer v$Version                     |" -ForegroundColor Cyan
+    Write-Host "  |           KFG Addons Installer v$Version                    |" -ForegroundColor Cyan
     Write-Host "  |           Modular Add-ons for Claude Code                 |" -ForegroundColor Cyan
     Write-Host "  |           Smart duplicate detection enabled               |" -ForegroundColor DarkCyan
     Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
@@ -410,6 +414,13 @@ function Install-Addon {
         # Utworz katalog docelowy jesli nie istnieje
         if (-not (Test-Path $targetPath)) {
             New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+        }
+
+        # Backup przed nadpisaniem (v2.3)
+        if ($existing.Found -and $isSourceFile) {
+            $backupPath = "$($existing.Path).backup-$(Get-Date -Format 'yyyy-MM-dd-HHmm')"
+            Copy-Item -Path $existing.Path -Destination $backupPath -Force
+            Write-Info "Backup: $backupPath"
         }
 
         # Kopiuj - dla plikow nie uzywaj wildcard

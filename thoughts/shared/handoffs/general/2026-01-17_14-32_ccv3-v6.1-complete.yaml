@@ -1,0 +1,71 @@
+---
+session: ccv3-polish-translation
+date: 2026-01-17
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: CCv3 Polish Translation V6.1 - semantic validation + wszystkie poprawki
+now: Uruchom instalator i przetestuj w live session
+
+test: |
+  python -c "import json; j=json.load(open('addons/ccv3-polish-translation/files/skills/skill-rules.json')); print(f'Skills: {len(j[\"skills\"])}, Agents: {len(j[\"agents\"])}')"
+
+done_this_session:
+  - task: Przeprowadzono pelna walidacje semantyczna V5 (6 etapow testow)
+    files: [addons/ccv3-polish-translation/test-results/test-run-2026-01-17_12-45.md]
+  - task: Naprawiono wszystkie HIGH issues (V6)
+    files: [addons/ccv3-polish-translation/fix-keywords-v6.py]
+  - task: Usunieto zbyt ogolne keywords (V6.1) - zapisz, kontynuuj
+    files: [addons/ccv3-polish-translation/files/skills/skill-rules.json]
+  - task: Zaktualizowano instalator v2.3 z automatycznym backup
+    files: [install-addons.ps1]
+  - task: Walidacja przez 3 agentow (critic, arbiter, scout)
+    files: []
+
+blockers: []
+
+questions: []
+
+decisions:
+  - remove_generic_keywords: Usunieto standalone "zapisz" i "kontynuuj" - powodowaly false positives
+  - auto_backup: Instalator v2.3 tworzy backup przed nadpisaniem plikow
+
+findings:
+  - v5_had_85_percent: V5 mial 85% PASS, brakowalo polskiego slangu i intentPatterns
+  - substring_traps_fixed: PR/nia/ast nie matchuja juz blednie (100% PASS)
+  - generic_words_need_context: Slowa jak "zapisz", "kontynuuj" potrzebuja intentPatterns z kontekstem
+
+worked:
+  - intentPatterns z kontekstem dla generycznych slow (zapisz.*zmiany.*git)
+  - Usuwanie standalone keywords zamiast dodawania wiecej patterns
+  - Rownolegla walidacja przez wielu agentow
+
+failed:
+  - Standalone "zapisz" - triggeruje commit + remember jednoczesnie
+  - Standalone "kontynuuj" - triggeruje resume_handoff przy zwyklym kontynuowaniu
+
+results:
+  v5_before: "85% PASS (116/136)"
+  v6.1_after: "100% PASS (55/55)"
+  skills_count: 70
+  agents_count: 6
+  new_keywords: "~200 polskich slow/fraz"
+
+next:
+  - Uruchom instalator: powershell -File install-addons.ps1 -Addon ccv3-polish-translation
+  - Przetestuj w nowej sesji z polskimi promptami
+  - Opcjonalnie: usuniecie starych wersji (v4, v5, v6) z files/skills/
+
+files:
+  created:
+    - addons/ccv3-polish-translation/fix-keywords-v6.py
+    - addons/ccv3-polish-translation/files/skills/skill-rules-v6.json
+    - addons/ccv3-polish-translation/files/skills/skill-rules-v6.1.json
+    - addons/ccv3-polish-translation/backups/skill-rules-v5-backup-2026-01-17.json
+    - addons/ccv3-polish-translation/backups/skill-rules-original-en.json
+  modified:
+    - addons/ccv3-polish-translation/files/skills/skill-rules.json (V5 -> V6.1)
+    - addons/ccv3-polish-translation/addon.json (v1.0.0 -> v2.0.0)
+    - install-addons.ps1 (v2.2 -> v2.3, auto backup)
+    - addons/ccv3-polish-translation/test-results/test-run-2026-01-17_12-45.md
