@@ -1,5 +1,6 @@
 {
   "name": "ccv3-structure-check",
+  "displayName": "CCv3 Structure Check",
   "version": "1.1.0",
   "description": "CCv3 infrastructure: auto-create thoughts/ structure + ledger staleness warnings based on ctx%",
   "author": "KFG",
@@ -18,6 +19,6 @@
     ]
   },
   "scripts": {
-    "postinstall": "cd \"$ADDON_DIR/hooks\" && npm install && npm run build"
+    "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\install.ps1\""
   }
 }

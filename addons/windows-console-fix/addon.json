@@ -1,5 +1,6 @@
 {
   "name": "windows-console-fix",
+  "displayName": "Windows Console Fix",
   "version": "1.0.0",
   "description": "Fix: ukrywa okna konsoli Python/UV na Windows (hooki + TLDR daemon)",
   "author": "KFG",
