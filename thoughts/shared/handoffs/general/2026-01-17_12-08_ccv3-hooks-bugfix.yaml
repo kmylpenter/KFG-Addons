@@ -1,0 +1,61 @@
+---
+session: ccv3-hooks-bugfix
+date: 2026-01-17
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Fix CCv3 hooks crashes + create addon for auto-structure & ctx%-based ledger warnings
+now: Install addon in projects, verify hooks work after compact
+
+test: node "D:/Projekty DELL KG/KFG-Addons/addons/ccv3-structure-check/hooks/dist/ccv3-structure-check.js"
+
+done_this_session:
+  - task: Fixed pre-compact-continuity.ts crash when thoughts/ledgers/ missing
+    files: [~/.claude/hooks/src/pre-compact-continuity.ts]
+  - task: Fixed ledger filter from CONTINUITY_CLAUDE- to CONTINUITY_ (both files)
+    files: [~/.claude/hooks/src/pre-compact-continuity.ts, ~/.claude/hooks/src/session-start-continuity.ts]
+  - task: Fixed Windows path normalization bug (backslash vs forward slash)
+    files: [~/.claude/hooks/src/pre-compact-continuity.ts]
+  - task: Created ccv3-structure-check addon v1.1.0 with two hooks
+    files: [addons/ccv3-structure-check/addon.json, addons/ccv3-structure-check/hooks/src/ccv3-structure-check.ts, addons/ccv3-structure-check/hooks/src/ledger-staleness-warning.ts]
+  - task: Created and ran test suite (10/10 passed)
+    files: [test-ccv3-hooks/test-hooks.js]
+
+blockers: []
+
+questions: []
+
+decisions:
+  - ctx_based_warnings: User preferred ctx% over time-based ledger staleness (can burn context in 5min)
+  - auto_create_structure: User chose auto-create + info over blocking or just informing
+  - statusline_integration: Leveraged existing statusline ctx% cache file instead of new mechanism
+
+findings:
+  - ledger_filter_bug: Root cause of "No ledger found" was filter requiring CONTINUITY_CLAUDE- prefix, but user had CONTINUITY_kmylpenter-website.md
+  - statusline_has_ctx: statusline-wrapper.ps1:252-256 already writes ctx% to %TEMP%\claude-context-pct-{session_id}.txt
+  - session_isolation: Each terminal has separate ctx% file via session_id - no cross-terminal pollution
+
+worked:
+  - Using existing statusline ctx% cache file
+  - fs.existsSync() checks before readdirSync()
+  - Path normalization with .replace(/\\/g, '/') for Windows
+
+failed: []
+
+next:
+  - Install addon in projects that use CCv3
+  - Delete test-ccv3-hooks/ folder (permission denied during session)
+  - Consider adding scope change detection hook (low priority)
+
+files:
+  created:
+    - addons/ccv3-structure-check/addon.json
+    - addons/ccv3-structure-check/hooks/package.json
+    - addons/ccv3-structure-check/hooks/tsconfig.json
+    - addons/ccv3-structure-check/hooks/src/ccv3-structure-check.ts
+    - addons/ccv3-structure-check/hooks/src/ledger-staleness-warning.ts
+    - test-ccv3-hooks/test-hooks.js
+  modified:
+    - ~/.claude/hooks/src/pre-compact-continuity.ts
+    - ~/.claude/hooks/src/session-start-continuity.ts

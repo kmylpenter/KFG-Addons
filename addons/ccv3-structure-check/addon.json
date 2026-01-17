@@ -1,0 +1,23 @@
+{
+  "name": "ccv3-structure-check",
+  "version": "1.1.0",
+  "description": "CCv3 infrastructure: auto-create thoughts/ structure + ledger staleness warnings based on ctx%",
+  "author": "KFG",
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node \"$ADDON_DIR/hooks/dist/ccv3-structure-check.js\""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "node \"$ADDON_DIR/hooks/dist/ledger-staleness-warning.js\""
+      }
+    ]
+  },
+  "scripts": {
+    "postinstall": "cd \"$ADDON_DIR/hooks\" && npm install && npm run build"
+  }
+}
