@@ -1,0 +1,66 @@
+---
+session: general
+date: 2026-01-17
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Naprawy Dynamic Terminal Saver - kolory, layoutManager, bug auto-otwierania
+now: Przetestuj extension po Reload Window i rozważ dodanie jako addon do KFG-Addons
+
+test: "Developer: Reload Window w VS Code, sprawdź czy terminale mają różne kolory i nie otwierają się automatycznie"
+
+done_this_session:
+  - task: Dodanie brakującego layoutManager.ts (odtworzony z JS)
+    files: [.vscode/extensions/dynamic-terminal-saver/src/layoutManager.ts]
+  - task: Podłączenie layoutManager w extension.ts
+    files: [.vscode/extensions/dynamic-terminal-saver/src/extension.ts]
+  - task: Naprawienie kolorów terminali - hash-based zamiast sekwencyjnych
+    files: [.vscode/extensions/dynamic-terminal-saver/src/terminalManager.ts]
+  - task: Naprawienie addNewTerminal - kolory z zapisanego stanu
+    files: [.vscode/extensions/dynamic-terminal-saver/src/terminalManager.ts]
+  - task: Usunięcie globalnej extension z bugiem onDidOpenTerminal
+    files: []
+  - task: Dodanie terminal.border do terminal-theme addon
+    files: [addons/terminal-theme/install-theme.ps1]
+  - task: Aktualizacja DOKUMENTACJA.md
+    files: [.vscode/extensions/dynamic-terminal-saver/DOKUMENTACJA.md]
+
+blockers: []
+
+questions:
+  - Czy dodać Dynamic Terminal Saver jako addon do KFG-Addons?
+
+decisions:
+  - hash_based_colors: "Kolory przypisywane przez hash nazwy terminala (deterministyczne) + unikanie duplikatów"
+  - colors_from_saved_state: "addNewTerminal sprawdza kolory z terminals-state.json, nie z API (które nie działa)"
+  - remove_global_extension: "Usunięto globalną extension vscode-local.dynamic-terminal-saver-1.0.0 z bugiem"
+
+findings:
+  - vs_code_api_color_limitation: "VS Code API nie udostępnia koloru terminala po utworzeniu - creationOptions.color.id nie działa"
+  - relaunch_terminal_bug: "Problem z trójkątami to znany bug Claude Code (#3301, #4751) - brak oficjalnego fix"
+  - two_extensions_conflict: "Były dwie wersje extension - globalna (stara z bugiem) i workspace (nowa)"
+
+worked:
+  - "Hash nazwy terminala daje deterministyczne kolory"
+  - "Odczyt kolorów z terminals-state.json zamiast API"
+  - "Odtworzenie layoutManager.ts ze skompilowanego JS"
+
+failed:
+  - "creationOptions.color.id - nie zwraca koloru terminala"
+  - "terminal.integrated.environmentChangesRelaunch - ustawienie bugowane w VS Code"
+
+next:
+  - Przetestować extension po Reload Window
+  - Rozważyć dodanie Dynamic Terminal Saver jako addon do KFG-Addons
+  - Ewentualnie zwiększyć delay autoRestore z 2s na 5s jeśli trójkąty dalej przeszkadzają
+
+files:
+  created:
+    - .vscode/extensions/dynamic-terminal-saver/src/layoutManager.ts
+    - thoughts/shared/handoffs/general/2026-01-17_14-40_dynamic-terminal-saver-fixes.yaml
+  modified:
+    - .vscode/extensions/dynamic-terminal-saver/src/extension.ts
+    - .vscode/extensions/dynamic-terminal-saver/src/terminalManager.ts
+    - .vscode/extensions/dynamic-terminal-saver/DOKUMENTACJA.md
+    - addons/terminal-theme/install-theme.ps1

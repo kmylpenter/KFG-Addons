@@ -133,6 +133,7 @@ $vscodeSettingsPaths = @(
 $vscodeColors = @{
     "terminal.background" = $brand.Charcoal
     "terminal.foreground" = $brand.OffWhite
+    "terminal.border" = $brand.BlueLight            # Split terminal border
     "terminalCursor.foreground" = $brand.BlueLight
     "terminal.selectionBackground" = $brand.Dark
     "terminal.ansiBlack" = $brand.Charcoal
