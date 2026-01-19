@@ -206,49 +206,11 @@ if (-not $vscodeInstalled) {
 }
 
 # ============================================================
-# 3. WINDOWS 11 ACCENT COLOR (OPTIONAL)
+# 3. WINDOWS 11 ACCENT COLOR (osobny skrypt)
 # ============================================================
-Write-Header "Windows 11 Accent Color (Opcjonalne)"
-
-Write-Host ""
-Write-Host "    Czy chcesz ustawic kolor akcentu Windows 11 na KMYLPENTER Blue?" -ForegroundColor White
-Write-Host "    (#3A90C8 - pasek zadan, ramki okien, przyciski)" -ForegroundColor Gray
-Write-Host ""
-$choice = Read-Host "    Ustawic? [t/N]"
-
-if ($choice -match "^[TtYy]") {
-    try {
-        # Convert hex to BGR (Windows uses BGR format)
-        # #3A90C8 -> RGB(58, 144, 200) -> BGR: 0x00C8903A
-        $blueLight = 0x00C8903A
-
-        # Set accent color in registry
-        $dwmPath = "HKCU:\SOFTWARE\Microsoft\Windows\DWM"
-        $themePath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"
-
-        # Enable custom accent color
-        Set-ItemProperty -Path $dwmPath -Name "AccentColor" -Value $blueLight -Type DWord -Force
-        Set-ItemProperty -Path $dwmPath -Name "ColorizationColor" -Value $blueLight -Type DWord -Force
-        Set-ItemProperty -Path $dwmPath -Name "ColorizationAfterglow" -Value $blueLight -Type DWord -Force
-
-        # Set color prevalence (show accent color on title bars and window borders)
-        Set-ItemProperty -Path $dwmPath -Name "ColorPrevalence" -Value 1 -Type DWord -Force
-
-        # Enable accent color on Start and taskbar
-        if (Test-Path $themePath) {
-            Set-ItemProperty -Path $themePath -Name "ColorPrevalence" -Value 1 -Type DWord -Force
-        }
-
-        Write-OK "Ustawiono kolor akcentu Windows 11"
-        Write-Info "Moze wymagac wylogowania/ponownego uruchomienia"
-
-    } catch {
-        Write-Warn "Blad ustawiania akcentu: $_"
-        Write-Info "Ustaw recznie: Ustawienia > Personalizacja > Kolory > Kolor akcentu"
-    }
-} else {
-    Write-Info "Pominieto Windows 11 accent color"
-}
+Write-Header "Windows 11 Accent Color"
+Write-Info "Wydzielono do osobnego skryptu (moze triggerowac AV)"
+Write-Info "Uruchom recznie: set-windows-accent.ps1"
 
 # ============================================================
 # SUMMARY
