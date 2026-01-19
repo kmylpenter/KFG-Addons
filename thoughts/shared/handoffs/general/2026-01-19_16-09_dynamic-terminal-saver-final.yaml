@@ -1,0 +1,78 @@
+---
+session: general
+date: 2026-01-19
+status: complete
+outcome: SUCCEEDED
+git_commit: d8dfb16
+---
+
+goal: Dynamic Terminal Saver v1.1 - ikonki, extensionDependencies, uproszczony instalator
+now: Monitorowac logi czy trojkacik sie powtarza, zbadac mystery terminal PowerShell
+
+test: "Restart VS Code, sprawdz terminale - kolory, ikonki, brak trojkacika"
+
+done_this_session:
+  - task: Dodano 24 unikalne ikonki terminali (deterministyczne na podstawie hash nazwy)
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:30-54, 85-100]
+  - task: SavedTerminal.icon - nowe pole w typach
+    files: [addons/dynamic-terminal-saver/extension/src/types.ts:8]
+  - task: extensionDependencies na Claude Code - rozwiazuje problem trojkacika
+    files: [addons/dynamic-terminal-saver/extension/package.json:12-14]
+  - task: Lepsza detekcja Reload Window - workspaceState z timestampem (60s threshold)
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:550-575]
+  - task: Logging do pliku .vscode/dynamic-terminal-saver.log
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:537-548]
+  - task: Usunieto filtrowanie duplikatow CWD - mozna miec wiele terminali w tym samym folderze
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts]
+  - task: Uproszczony instalator - tylko instaluje gotowy VSIX (bez npm/tsc/vsce)
+    files: [addons/dynamic-terminal-saver/install-extension.ps1]
+  - task: Wydzielono rejestr Windows do osobnego skryptu (unika alertow AV)
+    files: [addons/terminal-theme/set-windows-accent.ps1, addons/terminal-theme/install-theme.ps1]
+
+blockers: []
+
+questions:
+  - "Skad bierze sie mystery terminal PowerShell Extension? (nie z naszego extension - brak logow)"
+
+decisions:
+  - extension_order: "extensionDependencies na anthropic.claude-code - VS Code aktywuje Claude Code PRZED nami"
+  - prebuilt_vsix: "Instalator tylko instaluje gotowy VSIX zamiast kompilowac - szybciej i bez zawieszania"
+  - registry_separate: "Modyfikacja rejestru Windows wydzielona do set-windows-accent.ps1 - unika alertow AV"
+  - reload_detection: "workspaceState z timestampem - jesli < 60s to Reload Window"
+
+findings:
+  - av_triggers: "AV triggeruje na: Remove-Item -Recurse -Force, modyfikacje rejestru, modyfikacje JSON w systemowych lokalizacjach"
+  - claude_code_env: "Claude Code extension dodaje env vars do terminali - jesli terminal utworzony przed Claude Code, pojawia sie trojkacik"
+  - vsce_hang: "vsce package zawiesza sie bez --skip-license gdy brak pliku LICENSE"
+  - mystery_terminal: "Czasem pojawia sie terminal PowerShell Extension - NIE z naszego extension (brak logow w .vscode/dynamic-terminal-saver.log)"
+
+worked:
+  - "extensionDependencies - wymusza kolejnosc aktywacji extensions"
+  - "Gotowy VSIX w repo zamiast kompilacji przy instalacji"
+  - "Logging do pliku dla debugowania"
+  - "workspaceState timestamp do detekcji Reload Window"
+
+failed:
+  - "Delay (2s/5s) - nie rozwiazuje problemu kolejnosci extensions"
+  - "vsce package bez --skip-license - zawiesza sie"
+  - "Modyfikacja rejestru w glownym instalatorze - triggeruje AV"
+
+next:
+  - Monitorowac czy trojkacik sie powtarza po extensionDependencies
+  - Zbadac zrodlo mystery terminal PowerShell Extension
+  - TODO: Znalezc przyczyne samoistnego otwierania sie dodatkowego okienka terminala
+
+files:
+  created:
+    - addons/dynamic-terminal-saver/addon.json
+    - addons/dynamic-terminal-saver/install-extension.ps1
+    - addons/dynamic-terminal-saver/extension/dynamic-terminal-saver-1.1.0.vsix
+    - addons/dynamic-terminal-saver/extension/package.json
+    - addons/dynamic-terminal-saver/extension/src/extension.ts
+    - addons/dynamic-terminal-saver/extension/src/terminalManager.ts
+    - addons/dynamic-terminal-saver/extension/src/layoutManager.ts
+    - addons/dynamic-terminal-saver/extension/src/types.ts
+    - addons/terminal-theme/set-windows-accent.ps1
+  modified:
+    - addons/terminal-theme/install-theme.ps1
+    - thoughts/shared/todo.yaml

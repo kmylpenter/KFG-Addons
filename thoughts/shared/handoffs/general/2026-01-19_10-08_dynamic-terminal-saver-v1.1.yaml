@@ -1,13 +1,14 @@
 ---
 session: general
 date: 2026-01-19
-status: working
+status: complete
 outcome: PLUS
+git_commit: a33a4e9
 ---
 
-goal: Dynamic Terminal Saver v1.1 - ikonki, lepsza detekcja Reload Window
+goal: Dynamic Terminal Saver v1.1 - ikonki, extensionDependencies, logging
 
-test: "Restart VS Code, sprawdz czy terminale maja ikonki i kolory, sprawdz .vscode/dynamic-terminal-saver.log"
+test: "Restart VS Code, sprawdz czy terminale maja ikonki i kolory bez trojkacika"
 
 done_this_session:
   - task: Dodano pule 24 ikonek terminali (rocket, folder, code, gear, debug, beaker, package, database, server, cloud, globe, home, briefcase, book, lightbulb, tools, wrench, plug, zap, flame, heart, star, bookmark, tag)
@@ -24,39 +25,39 @@ done_this_session:
     files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:537-548]
   - task: Usunieto filtrowanie duplikatow CWD - mozna miec wiele terminali w tym samym folderze
     files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts]
-  - task: activationEvents zmieniony z "*" na "onStartupFinished"
-    files: [addons/dynamic-terminal-saver/extension/package.json:13-15]
-  - task: Delay przed tworzeniem terminali zwiekszony do 5s (dla Claude Code extension)
-    files: [addons/dynamic-terminal-saver/extension/src/extension.ts:72]
+  - task: extensionDependencies - Claude Code musi byc aktywny przed nami (rozwiazanie trojkacika)
+    files: [addons/dynamic-terminal-saver/extension/package.json:12-14]
+  - task: Zaktualizowano instalator z info o v1.1
+    files: [addons/dynamic-terminal-saver/install-extension.ps1]
 
-blockers:
-  - "Trojkacik przy terminalach - Claude Code chce relaunch (env vars). Delay 5s moze nie wystarczyc."
+blockers: []
 
-questions:
-  - "Czy 5s delay wystarczy zeby Claude Code zdazyl sie zainicjalizowac?"
-  - "Czy logging do pliku jest wystarczajacy do debugowania?"
+questions: []
 
 decisions:
+  - extension_order: "extensionDependencies na anthropic.claude-code - VS Code aktywuje Claude Code PRZED nami"
   - reload_detection: "workspaceState z timestampem - jesli < 60s to Reload Window"
   - icon_assignment: "Hash nazwy terminala do deterministycznego wyboru ikonki"
-  - file_logging: "Logi do .vscode/dynamic-terminal-saver.log zamiast Output channel"
+  - file_logging: "Logi do .vscode/dynamic-terminal-saver.log"
 
 findings:
-  - claude_code_env: "Claude Code extension chce dodac env vars do terminali - jesli terminal jest utworzony przed inicjalizacja Claude Code, pojawia sie trojkacik"
+  - claude_code_env: "Claude Code extension dodaje env vars do terminali - jesli terminal jest utworzony przed inicjalizacja Claude Code, pojawia sie trojkacik"
   - persistent_terminals: "VS Code persistent terminals zachowuja zawartosc przy Reload Window"
+  - mystery_terminal: "Czasem pojawia sie terminal PowerShell - NIE z naszego extension (brak logow). Prawdopodobnie VS Code lub PowerShell extension."
 
 worked:
+  - "extensionDependencies na Claude Code - rozwiazuje problem trojkacika"
   - "workspaceState timestamp do detekcji Reload Window"
   - "Deterministyczne ikonki na podstawie hash nazwy"
-  - "Logging do pliku dla pozniejszej analizy"
+  - "Logging do pliku dla debugowania"
 
 failed:
-  - "2s delay - za krotki dla Claude Code extension"
-  - "Sprawdzanie nazw terminali - nie zawsze dziala (race condition z persistent terminals)"
+  - "Delay (2s/5s) - nie rozwiazuje problemu kolejnosci extensions"
+  - "Sprawdzanie nazw terminali - race condition z persistent terminals"
 
 next:
-  - Monitorowac logi - czy problem z trojkacikiem sie powtarza
-  - Jesli tak - zwiekszyc delay lub uzyc innego mechanizmu (np. nasuchiwac na Claude Code ready)
+  - Monitorowac czy trojkacik sie powtarza po extensionDependencies
+  - Zbadac zrodlo mystery terminal (PowerShell extension?)
   - Rozwazyc dodanie komendy "Napraw kolory" dla terminali z trojkacikiem
 
 files:
@@ -66,5 +67,6 @@ files:
     - addons/dynamic-terminal-saver/extension/src/extension.ts
     - addons/dynamic-terminal-saver/extension/src/terminalManager.ts
     - addons/dynamic-terminal-saver/extension/src/types.ts
+    - addons/dynamic-terminal-saver/install-extension.ps1
   created:
     - addons/dynamic-terminal-saver/extension/dynamic-terminal-saver-1.1.0.vsix

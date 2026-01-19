@@ -1,5 +1,6 @@
 {
-  "_comment": "Safe Permissions - fragment do merge z ~/.claude/settings.json",
+  "_comment": "Safe Permissions v3 - YOLO Mode Protection",
+  "_description": "Warstwa 1 (settings.json) + Warstwa 2-4 (hook)",
   "permissions": {
     "allow": [
       "Bash(trash:*)",
@@ -42,6 +43,14 @@
       "Bash(rm)",
       "Bash(Remove-Item:*)",
 
+      "Bash(dd:*)",
+      "Bash(mkfs:*)",
+      "Bash(mkfs.*:*)",
+      "Bash(fdisk:*)",
+      "Bash(parted:*)",
+      "Bash(diskpart:*)",
+      "Bash(format:*)",
+
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(**/secrets/**)",
@@ -55,9 +64,19 @@
     ],
     "ask": [
       "Bash(git push:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git clean:*)",
       "Bash(curl:*)",
       "Bash(wget:*)"
     ]
   },
-  "_note": "Warstwa 1: settings blokuje rm/rmdir/del. Warstwa 2: hook lapie workaroundy (cd && rm, subshells)"
+  "_layers": {
+    "1_settings": "Proste pattern matching (rm:*, dd:*, mkfs:*)",
+    "2_hook_catastrophic": "Regex dla zlozone komendy (rm -rf /, dd of=/dev/)",
+    "3_hook_critical": "Ochrona sciezek (.git/, node_modules/, package.json)",
+    "4_hook_delete": "Przekierowanie rm -> trash",
+    "5_hook_suspicious": "Ostrzezenia dla find -delete, xargs rm, git push --force"
+  }
 }

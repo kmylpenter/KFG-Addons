@@ -34,7 +34,17 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\DELL\\\\.claude\\\\projects\" -Directory)",
       "Bash(then powershell -NoProfile -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")",
       "Bash(else echo \"Stats script not found - skipping\")",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"& { . .\\\\install-addons.ps1; Get-Addons | Where-Object { $_Name -eq ''dynamic-terminal-saver'' } | Format-List }\")",
+      "Bash(code:*)",
+      "Bash(Get-Alias claude -ErrorAction SilentlyContinue)",
+      "Bash(Format-List)",
+      "Bash(Get-Command claude -ErrorAction SilentlyContinue)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"Set-Location ''D:\\\\Projekty DELL KG\\\\KFG-Addons''; .\\\\install-addons.ps1 -Addon safe-permissions\")",
+      "Bash(powershell -NoProfile -Command \". ''$env:USERPROFILE\\\\Documents\\\\WindowsPowerShell\\\\Microsoft.PowerShell_profile.ps1''; Get-Command cc, ccd, cc-fast | Format-Table Name, CommandType\")",
+      "Bash(powershell -NoProfile -Command \". ''C:\\\\Users\\\\DELL\\\\Documents\\\\WindowsPowerShell\\\\Microsoft.PowerShell_profile.ps1''; Get-Command cc, ccd, cc-fast | Format-Table Name, CommandType\")",
+      "Bash(esbuild:*)",
+      "Bash(then powershell -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")"
     ]
   }
 }

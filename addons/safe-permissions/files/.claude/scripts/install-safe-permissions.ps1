@@ -1,5 +1,5 @@
-# Install Safe Permissions Addon v2
-# Kompiluje hook rm->trash, merguje permissions
+# Install Safe Permissions Addon v3
+# YOLO Mode Protection - 4-warstwowa ochrona
 
 param([switch]$Force)
 
@@ -10,10 +10,11 @@ $srcDir = "$hooksDir\src"
 $distDir = "$hooksDir\dist"
 $settingsFile = "$claudeDir\settings.json"
 
-Write-Host "=== Safe Permissions v2 ===" -ForegroundColor Cyan
+Write-Host "=== Safe Permissions v3 (YOLO Protection) ===" -ForegroundColor Cyan
+Write-Host "4 warstwy ochrony dla --dangerously-skip-permissions" -ForegroundColor Gray
 
 # 1. Sprawdz/zainstaluj trash-cli
-Write-Host "`n[1/4] trash-cli..." -ForegroundColor Yellow
+Write-Host "`n[1/6] trash-cli..." -ForegroundColor Yellow
 $trashPath = Get-Command trash -ErrorAction SilentlyContinue
 if (-not $trashPath) {
     Write-Host "  Instaluje trash-cli..." -ForegroundColor Yellow
@@ -28,7 +29,7 @@ if (-not $trashPath) {
 Write-Host "  OK: $($trashPath.Source)" -ForegroundColor Green
 
 # 2. Sprawdz/zainstaluj esbuild
-Write-Host "`n[2/4] esbuild..." -ForegroundColor Yellow
+Write-Host "`n[2/6] esbuild..." -ForegroundColor Yellow
 $esbuildPath = Get-Command esbuild -ErrorAction SilentlyContinue
 if (-not $esbuildPath) {
     Write-Host "  Instaluje esbuild..." -ForegroundColor Yellow
@@ -42,7 +43,7 @@ if (-not $esbuildPath) {
 Write-Host "  OK: $($esbuildPath.Source)" -ForegroundColor Green
 
 # 3. Kompiluj hook
-Write-Host "`n[3/5] Kompilacja hooka..." -ForegroundColor Yellow
+Write-Host "`n[3/6] Kompilacja hooka..." -ForegroundColor Yellow
 $hookSrc = "$srcDir\safe-permissions.ts"
 $hookDist = "$distDir\safe-permissions.mjs"
 
@@ -56,8 +57,7 @@ if (-not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 }
 
-# Kompiluj z esbuild (nie npx - juz zainstalowany globalnie)
-# Tymczasowo wylacz ErrorActionPreference bo esbuild pisze do stderr
+# Kompiluj z esbuild
 $prevEAP = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 esbuild $hookSrc --bundle --platform=node --format=esm --outfile=$hookDist 2>$null
@@ -71,7 +71,7 @@ if (-not (Test-Path $hookDist)) {
 Write-Host "  OK: $hookDist" -ForegroundColor Green
 
 # 4. Backup i aktualizuj settings.json
-Write-Host "`n[4/5] Aktualizacja settings.json..." -ForegroundColor Yellow
+Write-Host "`n[4/6] Aktualizacja settings.json..." -ForegroundColor Yellow
 
 if (-not (Test-Path $settingsFile)) {
     Write-Host "  BLAD: Brak $settingsFile" -ForegroundColor Red
@@ -125,7 +125,7 @@ if (-not $hookExists) {
 }
 
 # 5. Merge permissions
-Write-Host "`n[5/5] Merge permissions..." -ForegroundColor Yellow
+Write-Host "`n[5/6] Merge permissions..." -ForegroundColor Yellow
 $permFile = "$claudeDir\settings-permissions.json"
 
 if (Test-Path $permFile) {
@@ -175,8 +175,165 @@ if (Test-Path $permFile) {
 $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsFile -Encoding UTF8
 Write-Host "  Settings zapisane" -ForegroundColor Green
 
+# 6. Dodaj funkcje ccd do profilu PowerShell
+Write-Host "`n[6/6] Dodawanie komendy 'ccd'..." -ForegroundColor Yellow
+
+$profilePath = "$env:USERPROFILE\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1"
+$profileDir = Split-Path $profilePath -Parent
+
+# Utworz folder profilu jesli nie istnieje
+if (-not (Test-Path $profileDir)) {
+    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+}
+
+# Utworz profil jesli nie istnieje
+if (-not (Test-Path $profilePath)) {
+    New-Item -ItemType File -Path $profilePath -Force | Out-Null
+}
+
+$ccFunctions = @'
+
+# === CC/CCD: Claude Code Launcher (safe-permissions addon) ===
+# cc  = normalny tryb z git sync
+# ccd = YOLO mode z git sync (--dangerously-skip-permissions)
+
+function cc {
+    param(
+        [switch]$SkipGit,
+        [switch]$SkipSync,
+        [switch]$Force,
+        [switch]$Dangerous  # Internal: YOLO mode
+    )
+
+    Write-Host ""
+
+    # === 0. HISTORY SYNC (pull before session) ===
+    $historyRepo = "$env:USERPROFILE\.claude-history"
+    if (Test-Path "$historyRepo\.git") {
+        Write-Host "Syncing history..." -ForegroundColor DarkGray -NoNewline
+        Push-Location $historyRepo
+        try {
+            $localChanges = git status --porcelain 2>$null
+            if ($localChanges) {
+                git add -A 2>&1 | Out-Null
+                git commit -m "Auto-commit before sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1 | Out-Null
+            }
+            $pullResult = git pull --rebase 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " [OK]" -ForegroundColor DarkGray
+            } else {
+                Write-Host " [SKIP]" -ForegroundColor Yellow
+            }
+        } catch {
+            Write-Host " [ERROR]" -ForegroundColor Red
+        }
+        Pop-Location
+    }
+
+    # === 1. GIT PULL (current project) ===
+    if (-not $SkipGit -and (Test-Path ".git")) {
+        $projectName = Split-Path (Get-Location) -Leaf
+        Write-Host "Project: $projectName" -ForegroundColor Cyan
+
+        $gitStatus = git status --porcelain 2>$null
+        if ($gitStatus) {
+            Write-Host "   Uncommitted changes" -ForegroundColor Yellow
+        }
+
+        $pull = Read-Host "   Pull latest? [Y/n]"
+        if ($pull -notmatch "^[nN]") {
+            $pullResult = git pull --rebase 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                if ($pullResult -match "Already up to date") {
+                    Write-Host "   [OK] Up to date" -ForegroundColor DarkGray
+                } else {
+                    Write-Host "   [OK] Pulled" -ForegroundColor Green
+                }
+            } else {
+                Write-Host "   [X] Failed" -ForegroundColor Red
+                $continue = Read-Host "   Continue? [y/N]"
+                if ($continue -notmatch "^[yY]") { return }
+            }
+        }
+        Write-Host ""
+    }
+
+    # === 2. LAUNCH CLAUDE ===
+    if ($Dangerous) {
+        Write-Host "Starting Claude (YOLO mode)..." -ForegroundColor Yellow
+        Write-Host ""
+        claude --dangerously-skip-permissions @args
+    } else {
+        Write-Host "Starting Claude..." -ForegroundColor Cyan
+        Write-Host ""
+        claude @args
+    }
+
+    # === 3. HISTORY SYNC (push after session) ===
+    if (Test-Path "$historyRepo\.git") {
+        Push-Location $historyRepo
+        $changes = git status --porcelain 2>$null
+        if ($changes) {
+            Write-Host ""
+            Write-Host "Pushing history..." -ForegroundColor DarkGray -NoNewline
+            git add -A 2>&1 | Out-Null
+            git commit -m "Session $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1 | Out-Null
+            $pushResult = git push 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host " [OK]" -ForegroundColor DarkGray
+            } else {
+                Write-Host " [SKIP]" -ForegroundColor Yellow
+            }
+        }
+        Pop-Location
+    }
+}
+
+function ccd {
+    <#
+    .SYNOPSIS
+    Claude Code w YOLO mode z git sync.
+    #>
+    cc -Dangerous @args
+}
+
+function cc-fast { cc -SkipGit -SkipSync }
+# =============================================================
+'@
+
+$currentProfile = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+if (-not $currentProfile) { $currentProfile = "" }
+
+# Usun stara wersje jesli istnieje
+if ($currentProfile -match "# === CC/CCD:|# === CCD:") {
+    Write-Host "  Usuwam stara wersje cc/ccd..." -ForegroundColor Yellow
+    $currentProfile = $currentProfile -replace "(?s)# === CC.*?# ===+", ""
+    Set-Content -Path $profilePath -Value $currentProfile.Trim() -Encoding UTF8
+}
+
+$currentProfile = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+if ($currentProfile -notmatch "function cc \{") {
+    Add-Content -Path $profilePath -Value $ccFunctions
+    Write-Host "  Dodano funkcje cc/ccd do profilu" -ForegroundColor Green
+} else {
+    Write-Host "  Funkcje cc/ccd juz istnieja w profilu" -ForegroundColor Yellow
+}
+
 # Podsumowanie
 Write-Host "`n=== Gotowe ===" -ForegroundColor Cyan
-Write-Host "- Hook blokuje rm/rmdir/del i sugeruje trash" -ForegroundColor White
-Write-Host "- Uzyj: trash <plik> zamiast rm <plik>" -ForegroundColor White
-Write-Host "- Restart Claude Code aby hook zadzialal" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "4 warstwy ochrony aktywne:" -ForegroundColor White
+Write-Host "  1. CATASTROPHIC - blokuje rm -rf /, dd, mkfs" -ForegroundColor Red
+Write-Host "  2. CRITICAL     - chroni .git, node_modules, package.json" -ForegroundColor Yellow
+Write-Host "  3. DELETE       - rm/rmdir -> trash" -ForegroundColor Blue
+Write-Host "  4. SUSPICIOUS   - git push --force wymaga potwierdzenia" -ForegroundColor Magenta
+Write-Host ""
+Write-Host "Komendy:" -ForegroundColor White
+Write-Host "  cc      - Claude z git sync (history pull/push, project pull)" -ForegroundColor Cyan
+Write-Host "  ccd     - YOLO mode z git sync (--dangerously-skip-permissions)" -ForegroundColor Yellow
+Write-Host "  cc-fast - cc bez git sync (-SkipGit -SkipSync)" -ForegroundColor Gray
+Write-Host "  claude  - surowy Claude (bez git sync)" -ForegroundColor Gray
+Write-Host ""
+Write-Host "Uzyj: trash <plik> zamiast rm <plik>" -ForegroundColor White
+Write-Host ""
+Write-Host "WAZNE: Otworz nowy terminal zeby komendy zadzialaly!" -ForegroundColor Yellow
