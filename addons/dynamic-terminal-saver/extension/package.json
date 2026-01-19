@@ -1,0 +1,75 @@
+{
+  "name": "dynamic-terminal-saver",
+  "displayName": "Dynamic Terminal Saver",
+  "description": "Dynamicznie zapisuje i przywraca stan terminali + Layout States",
+  "version": "1.1.0",
+  "publisher": "vscode-local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionDependencies": [
+    "anthropic.claude-code"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dynamicTerminalSaver.saveState",
+        "title": "Dynamic Terminal Saver: Zapisz stan terminali"
+      },
+      {
+        "command": "dynamicTerminalSaver.restoreState",
+        "title": "Dynamic Terminal Saver: Przywroc terminale"
+      },
+      {
+        "command": "dynamicTerminalSaver.removeFromList",
+        "title": "Dynamic Terminal Saver: Usun terminale z listy"
+      },
+      {
+        "command": "dynamicTerminalSaver.addTerminal",
+        "title": "Dynamic Terminal Saver: Dodaj nowy terminal"
+      },
+      {
+        "command": "dynamicTerminalSaver.toggleLayoutLock",
+        "title": "Layout Lock: Włącz/Wyłącz"
+      },
+      {
+        "command": "dynamicTerminalSaver.saveState1",
+        "title": "Layout States: Zapisz Stan 1"
+      },
+      {
+        "command": "dynamicTerminalSaver.saveState2",
+        "title": "Layout States: Zapisz Stan 2"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "dynamicTerminalSaver.saveState",
+        "key": "ctrl+alt+s",
+        "when": "terminalFocus"
+      },
+      {
+        "command": "dynamicTerminalSaver.toggleLayoutLock",
+        "key": "ctrl+alt+l",
+        "when": "terminalFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}

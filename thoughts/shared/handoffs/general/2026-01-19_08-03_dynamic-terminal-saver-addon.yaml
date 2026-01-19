@@ -1,0 +1,68 @@
+---
+session: general
+date: 2026-01-19
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: Utworzenie addon Dynamic Terminal Saver dla KFG-Addons
+now: Naprawic problem z kolorami - terminale utworzone przed instalacja maja domyslny kolor
+
+test: "Zainstaluj addon przez install-addons.ps1 #4, zrob Reload Window, sprawdz czy przyciski sa na pasku"
+
+done_this_session:
+  - task: Utworzono addon dynamic-terminal-saver z pelna struktura
+    files: [addons/dynamic-terminal-saver/addon.json, addons/dynamic-terminal-saver/install-extension.ps1]
+  - task: Skopiowano pliki extension (src/*.ts, package.json, tsconfig.json)
+    files: [addons/dynamic-terminal-saver/extension/]
+  - task: Dodano czyszczenie extensions.json w skrypcie instalacyjnym
+    files: [addons/dynamic-terminal-saver/install-extension.ps1:45-66]
+  - task: Naprawiono problem z VS Code cache (extensions.json)
+    files: []
+  - task: Zainstalowano extension pomyslnie
+    files: []
+  - task: Dodano terminal.border do terminal-theme addon
+    files: [addons/terminal-theme/install-theme.ps1:136]
+
+blockers:
+  - "Terminale utworzone PRZED instalacja extension maja domyslny kolor (czerwony)"
+  - "VS Code API nie udostepnia koloru istniejacego terminala"
+
+questions:
+  - "Czy dodac funkcje 'Napraw kolory' ktora zamknie i otworzy terminale z kolorami?"
+
+decisions:
+  - extensions_json_cleanup: "Skrypt instalacyjny czysci wpisy z extensions.json zeby VS Code nie szukal usuniętych folderow"
+  - colors_from_saved_state: "addNewTerminal sprawdza kolory z terminals-state.json, nie z API"
+
+findings:
+  - vs_code_extensions_cache: "VS Code trzyma cache extensions w ~/.vscode/extensions/extensions.json - usunięcie folderu nie wystarczy"
+  - terminal_color_api: "creationOptions.color.id nie zwraca koloru dla terminali utworzonych recznie"
+  - two_extension_versions: "Byla globalna (stara) i workspace (nowa) wersja - konflikt"
+
+worked:
+  - "Czyszczenie extensions.json przy instalacji"
+  - "Hash nazwy terminala dla deterministycznych kolorow"
+  - "VSIX packaging i instalacja przez code --install-extension"
+
+failed:
+  - "creationOptions.color.id - nie dziala dla terminali recznych"
+  - "Folder .vscode/extensions/ jako workspace extension - VS Code nie laduje automatycznie"
+
+next:
+  - Dodac funkcje "Napraw kolory" - zamknie i otworzy terminale z kolorami
+  - Przetestowac pelny flow: zapisz -> zamknij -> przywroc
+  - Rozwazyc auto-naprawe kolorow przy starcie extension
+
+files:
+  created:
+    - addons/dynamic-terminal-saver/addon.json
+    - addons/dynamic-terminal-saver/install-extension.ps1
+    - addons/dynamic-terminal-saver/extension/package.json
+    - addons/dynamic-terminal-saver/extension/tsconfig.json
+    - addons/dynamic-terminal-saver/extension/src/extension.ts
+    - addons/dynamic-terminal-saver/extension/src/terminalManager.ts
+    - addons/dynamic-terminal-saver/extension/src/layoutManager.ts
+    - addons/dynamic-terminal-saver/extension/src/types.ts
+  modified:
+    - addons/terminal-theme/install-theme.ps1

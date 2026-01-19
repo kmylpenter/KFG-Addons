@@ -1,0 +1,70 @@
+---
+session: general
+date: 2026-01-19
+status: working
+outcome: PLUS
+---
+
+goal: Dynamic Terminal Saver v1.1 - ikonki, lepsza detekcja Reload Window
+
+test: "Restart VS Code, sprawdz czy terminale maja ikonki i kolory, sprawdz .vscode/dynamic-terminal-saver.log"
+
+done_this_session:
+  - task: Dodano pule 24 ikonek terminali (rocket, folder, code, gear, debug, beaker, package, database, server, cloud, globe, home, briefcase, book, lightbulb, tools, wrench, plug, zap, flame, heart, star, bookmark, tag)
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:30-54]
+  - task: Funkcja getIconForName() - deterministyczny wybor ikonki na podstawie hash nazwy
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:85-100]
+  - task: Ikonki w openAllTerminalsNormally() i addNewTerminal()
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:280, 526]
+  - task: SavedTerminal.icon - nowe pole w typach
+    files: [addons/dynamic-terminal-saver/extension/src/types.ts:8]
+  - task: Lepsza detekcja Reload Window - workspaceState z timestampem (60s threshold)
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:550-560]
+  - task: Logging do pliku .vscode/dynamic-terminal-saver.log
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts:537-548]
+  - task: Usunieto filtrowanie duplikatow CWD - mozna miec wiele terminali w tym samym folderze
+    files: [addons/dynamic-terminal-saver/extension/src/terminalManager.ts]
+  - task: activationEvents zmieniony z "*" na "onStartupFinished"
+    files: [addons/dynamic-terminal-saver/extension/package.json:13-15]
+  - task: Delay przed tworzeniem terminali zwiekszony do 5s (dla Claude Code extension)
+    files: [addons/dynamic-terminal-saver/extension/src/extension.ts:72]
+
+blockers:
+  - "Trojkacik przy terminalach - Claude Code chce relaunch (env vars). Delay 5s moze nie wystarczyc."
+
+questions:
+  - "Czy 5s delay wystarczy zeby Claude Code zdazyl sie zainicjalizowac?"
+  - "Czy logging do pliku jest wystarczajacy do debugowania?"
+
+decisions:
+  - reload_detection: "workspaceState z timestampem - jesli < 60s to Reload Window"
+  - icon_assignment: "Hash nazwy terminala do deterministycznego wyboru ikonki"
+  - file_logging: "Logi do .vscode/dynamic-terminal-saver.log zamiast Output channel"
+
+findings:
+  - claude_code_env: "Claude Code extension chce dodac env vars do terminali - jesli terminal jest utworzony przed inicjalizacja Claude Code, pojawia sie trojkacik"
+  - persistent_terminals: "VS Code persistent terminals zachowuja zawartosc przy Reload Window"
+
+worked:
+  - "workspaceState timestamp do detekcji Reload Window"
+  - "Deterministyczne ikonki na podstawie hash nazwy"
+  - "Logging do pliku dla pozniejszej analizy"
+
+failed:
+  - "2s delay - za krotki dla Claude Code extension"
+  - "Sprawdzanie nazw terminali - nie zawsze dziala (race condition z persistent terminals)"
+
+next:
+  - Monitorowac logi - czy problem z trojkacikiem sie powtarza
+  - Jesli tak - zwiekszyc delay lub uzyc innego mechanizmu (np. nasuchiwac na Claude Code ready)
+  - Rozwazyc dodanie komendy "Napraw kolory" dla terminali z trojkacikiem
+
+files:
+  modified:
+    - addons/dynamic-terminal-saver/addon.json
+    - addons/dynamic-terminal-saver/extension/package.json
+    - addons/dynamic-terminal-saver/extension/src/extension.ts
+    - addons/dynamic-terminal-saver/extension/src/terminalManager.ts
+    - addons/dynamic-terminal-saver/extension/src/types.ts
+  created:
+    - addons/dynamic-terminal-saver/extension/dynamic-terminal-saver-1.1.0.vsix
