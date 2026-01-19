@@ -57,7 +57,11 @@ if (-not (Test-Path $distDir)) {
 }
 
 # Kompiluj z esbuild (nie npx - juz zainstalowany globalnie)
-esbuild $hookSrc --bundle --platform=node --format=esm --outfile=$hookDist 2>&1 | Out-Null
+# Tymczasowo wylacz ErrorActionPreference bo esbuild pisze do stderr
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+esbuild $hookSrc --bundle --platform=node --format=esm --outfile=$hookDist 2>$null
+$ErrorActionPreference = $prevEAP
 
 if (-not (Test-Path $hookDist)) {
     Write-Host "  BLAD: Kompilacja nie powiodla sie" -ForegroundColor Red

@@ -435,12 +435,16 @@ function Install-Addon {
     # Run postinstall script if defined
     if ($Addon.Scripts -and $Addon.Scripts.postinstall) {
         Write-Info "Uruchamiam postinstall script..."
+        # Ustaw zmienne srodowiskowe dla postinstall skryptu
+        $env:ADDON_DIR = $Addon.Path
         $postinstallCmd = $Addon.Scripts.postinstall -replace "%ADDON_DIR%", $Addon.Path
         try {
             Invoke-Expression $postinstallCmd
             Write-OK "Postinstall wykonany"
         } catch {
             Write-Warn "Blad postinstall: $_"
+        } finally {
+            $env:ADDON_DIR = $null  # Posprzataj
         }
     }
 

@@ -1,0 +1,13 @@
+# Cache
+.claude/cache/
+.tldr/
+
+# Node
+node_modules/
+
+# Windows artifacts
+nul
+Thumbs.db
+
+# Test folders
+test-*/

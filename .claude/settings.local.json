@@ -28,7 +28,13 @@
       "Bash(powershell -Command:*)",
       "Bash(dir \"C:\\\\Users\\\\DELL\\\\.claude\\\\projects\" /b)",
       "Bash(findstr:*)",
-      "Bash(powershell -ExecutionPolicy Bypass -Command \"& ''$env:USERPROFILE\\\\.claude\\\\scripts\\\\export-device-stats.ps1'' -SkipAnalyze\")"
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"& ''$env:USERPROFILE\\\\.claude\\\\scripts\\\\export-device-stats.ps1'' -SkipAnalyze\")",
+      "Skill(github-search)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\DELL\\\\.claude\\\\projects\" -Directory)",
+      "Bash(then powershell -NoProfile -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")",
+      "Bash(else echo \"Stats script not found - skipping\")",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
