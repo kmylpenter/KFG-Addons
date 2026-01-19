@@ -119,7 +119,7 @@ try {
     Get-ChildItem -Filter "*.vsix" | Remove-Item -Force -ErrorAction SilentlyContinue
 
     Write-Info "vsce package..."
-    $result = npx vsce package --allow-missing-repository 2>&1
+    $result = npx vsce package --allow-missing-repository --skip-license 2>&1
 
     $vsixFile = Get-ChildItem -Filter "*.vsix" | Select-Object -First 1
     if ($vsixFile) {
