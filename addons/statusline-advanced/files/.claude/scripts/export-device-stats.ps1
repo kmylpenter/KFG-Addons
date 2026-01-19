@@ -70,7 +70,7 @@ if (-not (Test-Path $statsDir)) {
 # === RUN ANALYZE-HISTORY ===
 if (-not $SkipAnalyze -and (Test-Path $analyzeScript)) {
     Write-Host "Uruchamiam analyze-history.ps1..." -ForegroundColor Gray
-    & $analyzeScript -Force
+    & $analyzeScript
     Write-Host ""
 }
 

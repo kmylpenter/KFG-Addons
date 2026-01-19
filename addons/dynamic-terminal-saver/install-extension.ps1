@@ -71,7 +71,46 @@ if ($cleaned -eq 0) {
 }
 
 # ============================================================
-# 2. INSTALACJA EXTENSION (gotowy VSIX)
+# 2. USTAWIENIA VS CODE (persistent terminals, no auto-relaunch)
+# ============================================================
+Write-Header "Konfiguracja VS Code Settings"
+
+$vsCodeSettingsPath = "$env:APPDATA\Code\User\settings.json"
+
+if (Test-Path $vsCodeSettingsPath) {
+    try {
+        $settings = Get-Content $vsCodeSettingsPath -Raw | ConvertFrom-Json
+        $modified = $false
+
+        # Wyłącz auto-relaunch terminali (powoduje losowe otwieranie terminali)
+        if ($settings."terminal.integrated.environmentChangesRelaunch" -ne "off") {
+            $settings | Add-Member -NotePropertyName "terminal.integrated.environmentChangesRelaunch" -NotePropertyValue "off" -Force
+            $modified = $true
+            Write-OK "environmentChangesRelaunch = off"
+        }
+
+        # Włącz persistent sessions (terminale przeżywają restart VS Code)
+        if ($settings."terminal.integrated.enablePersistentSessions" -ne $true) {
+            $settings | Add-Member -NotePropertyName "terminal.integrated.enablePersistentSessions" -NotePropertyValue $true -Force
+            $modified = $true
+            Write-OK "enablePersistentSessions = true"
+        }
+
+        if ($modified) {
+            $settings | ConvertTo-Json -Depth 10 | Set-Content $vsCodeSettingsPath -Encoding UTF8
+            Write-OK "Settings zapisane"
+        } else {
+            Write-Info "Settings juz skonfigurowane"
+        }
+    } catch {
+        Write-Warn "Nie mozna zaktualizowac settings.json: $_"
+    }
+} else {
+    Write-Warn "Brak pliku settings.json"
+}
+
+# ============================================================
+# 3. INSTALACJA EXTENSION (gotowy VSIX)
 # ============================================================
 Write-Header "Instalacja Extension"
 

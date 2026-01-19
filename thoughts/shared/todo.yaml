@@ -1,9 +1,4 @@
 # Claude TODO - auto-managed
-- text: SafelySkipPermissions Addon
-  added: 2026-01-16
-
-- text: Znalezc przyczyne samoistnego otwierania sie dodatkowego okienka terminala
-  added: 2026-01-19
-
-- text: export-device-stats.ps1 nie korzysta z cache - analizuje wszystkie pliki kazdorazowo
-  added: 2026-01-19
+# Punkt 1 (SafelySkipPermissions) - oznaczony jako wykonany przez usera
+# Punkt 2 (terminal auto-open) - naprawiony: environmentChangesRelaunch: off
+# Punkt 3 (export-device-stats cache) - naprawiony: usunięto -Force z wywołania analyze-history
