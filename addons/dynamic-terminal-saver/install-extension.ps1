@@ -1,5 +1,5 @@
 # Dynamic Terminal Saver - VS Code Extension Installer
-# Czysci stare wersje i instaluje nowa
+# Instaluje gotowy VSIX z repo (bez kompilacji)
 
 $ErrorActionPreference = "Stop"
 
@@ -55,7 +55,6 @@ if (Test-Path $extensionsJsonPath) {
 
         $removedCount = $originalCount - $extJson.Count
         if ($removedCount -gt 0) {
-            # Zapisz zaktualizowany JSON
             $extJson | ConvertTo-Json -Depth 10 | Set-Content $extensionsJsonPath -Encoding UTF8
             Write-OK "Usunieto $removedCount wpisow z extensions.json"
             $cleaned += $removedCount
@@ -72,78 +71,25 @@ if ($cleaned -eq 0) {
 }
 
 # ============================================================
-# 2. INSTALACJA DEPENDENCIES
-# ============================================================
-Write-Header "Instalacja dependencies"
-
-Push-Location $extensionDir
-try {
-    if (-not (Test-Path "node_modules")) {
-        Write-Info "npm install..."
-        npm install --silent 2>$null
-        Write-OK "Dependencies zainstalowane"
-    } else {
-        Write-Info "Dependencies juz zainstalowane"
-    }
-} finally {
-    Pop-Location
-}
-
-# ============================================================
-# 3. KOMPILACJA TYPESCRIPT
-# ============================================================
-Write-Header "Kompilacja TypeScript"
-
-Push-Location $extensionDir
-try {
-    Write-Info "tsc -p ./"
-    npm run compile --silent 2>$null
-
-    if (Test-Path "out\extension.js") {
-        Write-OK "Kompilacja zakonczona"
-    } else {
-        throw "Brak pliku out/extension.js po kompilacji"
-    }
-} finally {
-    Pop-Location
-}
-
-# ============================================================
-# 4. PAKOWANIE VSIX
-# ============================================================
-Write-Header "Pakowanie VSIX"
-
-Push-Location $extensionDir
-try {
-    # Usun stary VSIX
-    Get-ChildItem -Filter "*.vsix" | Remove-Item -Force -ErrorAction SilentlyContinue
-
-    Write-Info "vsce package..."
-    $result = npx vsce package --allow-missing-repository --skip-license 2>&1
-
-    $vsixFile = Get-ChildItem -Filter "*.vsix" | Select-Object -First 1
-    if ($vsixFile) {
-        Write-OK "Utworzono: $($vsixFile.Name)"
-    } else {
-        throw "Nie utworzono pliku VSIX"
-    }
-} finally {
-    Pop-Location
-}
-
-# ============================================================
-# 5. INSTALACJA EXTENSION
+# 2. INSTALACJA EXTENSION (gotowy VSIX)
 # ============================================================
 Write-Header "Instalacja Extension"
 
-$vsixPath = Join-Path $extensionDir $vsixFile.Name
+# Znajdz VSIX w repo
+$vsixFile = Get-ChildItem -Path $extensionDir -Filter "*.vsix" | Sort-Object Name -Descending | Select-Object -First 1
+
+if (-not $vsixFile) {
+    throw "Brak pliku VSIX w $extensionDir"
+}
+
+$vsixPath = $vsixFile.FullName
+Write-Info "Znaleziono: $($vsixFile.Name)"
 
 # Sprawdz czy VS Code jest uruchomiony
 $vsCodeRunning = Get-Process -Name "Code" -ErrorAction SilentlyContinue
 
 if ($vsCodeRunning) {
     Write-Warn "VS Code jest uruchomiony"
-    Write-Info "Extension zostanie zainstalowana, ale wymaga restartu VS Code"
 }
 
 try {
@@ -153,10 +99,8 @@ try {
     if ($LASTEXITCODE -eq 0) {
         Write-OK "Extension zainstalowana"
     } else {
-        # Moze byc blad "Please restart VS Code" - to OK
         if ($installResult -match "restart") {
-            Write-Warn "VS Code wymaga restartu przed ponowna instalacja"
-            Write-Info "Zamknij VS Code, uruchom ponownie i extension bedzie aktywna"
+            Write-Warn "VS Code wymaga restartu"
         } else {
             throw "Blad instalacji: $installResult"
         }
@@ -184,11 +128,9 @@ Write-Host "    Skroty klawiszowe:" -ForegroundColor White
 Write-Host "      Ctrl+Alt+S  - Zapisz stan terminali" -ForegroundColor Gray
 Write-Host "      Ctrl+Alt+L  - Toggle Layout Lock" -ForegroundColor Gray
 Write-Host ""
-Write-Host "    Wymaga: Claude Code for VS Code (anthropic.claude-code)" -ForegroundColor DarkGray
-Write-Host ""
 
 if ($vsCodeRunning) {
-    Write-Host "    WAZNE: Uruchom ponownie VS Code aby aktywowac extension!" -ForegroundColor Yellow
+    Write-Host "    WAZNE: Uruchom ponownie VS Code!" -ForegroundColor Yellow
 }
 
 Write-Host ""
