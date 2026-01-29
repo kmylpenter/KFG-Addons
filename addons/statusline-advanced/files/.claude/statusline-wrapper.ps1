@@ -1,5 +1,6 @@
-# KFG Statusline Wrapper v5.4
-# v5.4: User name from config, stats from user-{name}.json
+# KFG Statusline Wrapper v5.6
+# v5.6: PERF AUDIT - regex pre-filter, atomic writes, dirty-checking, .NET direct calls
+# v5.5: INCREMENTAL PARSING - tylko nowe linie, cache per session
 # Format 4x3 z poziomym parowaniem SESJA/TOTAL
 #
 # Rzad 1: Model/User | ctx%/compacts
@@ -22,67 +23,239 @@ $c_blue = "$esc[38;5;39m"
 $c_purple = "$esc[38;5;171m"
 $c_gray = "$esc[38;5;245m"
 
-# === FUNKCJA: Parsowanie tokenow z .jsonl ===
-function Get-TokensFromSingleJsonl {
-    param([string]$Path, [switch]$OutputOnly)
-    $tokens = 0
-    if (-not $Path -or -not (Test-Path $Path)) { return 0 }
-    try {
-        $fileStream = [System.IO.FileStream]::new($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        $reader = [System.IO.StreamReader]::new($fileStream, [System.Text.Encoding]::UTF8)
-        while ($null -ne ($line = $reader.ReadLine())) {
-            if (-not $line.Trim()) { continue }
-            try {
-                $entry = $line | ConvertFrom-Json
-                $usage = $entry.message.usage
-                if ($usage) {
-                    $outp = if ($usage.output_tokens) { [long]$usage.output_tokens } else { 0 }
-                    if ($OutputOnly) { $tokens += $outp }
-                    else {
-                        $inp = if ($usage.input_tokens) { [long]$usage.input_tokens } else { 0 }
-                        $tokens += $inp + $outp
-                    }
-                }
-            } catch {}
-        }
-        $reader.Close(); $reader.Dispose(); $fileStream.Dispose()
-    } catch {}
-    return $tokens
+# === CACHE DIRECTORY ===
+$cacheDir = "$env:USERPROFILE\.claude\statusline-cache"
+if (-not [System.IO.Directory]::Exists($cacheDir)) {
+    [System.IO.Directory]::CreateDirectory($cacheDir) | Out-Null
 }
 
-# === FUNKCJA: Agent contribution z toolUseResult ===
-function Get-AgentContributionFromMain {
-    param([string]$TranscriptPath)
-    $totalContribution = 0
-    if (-not $TranscriptPath -or -not (Test-Path $TranscriptPath)) { return 0 }
+# === FUNKCJA: Load/Save Cache ===
+function Get-TranscriptCache {
+    param([string]$SessionId, [string]$TranscriptPath)
+    $cacheFile = "$cacheDir\$SessionId.json"
+
+    $default = @{
+        last_offset = 0
+        transcript_size = 0
+        turns = 0
+        agent_contribution = 0
+        first_timestamp = $null
+        last_timestamp = $null
+        context_length = 0
+        last_usage = $null
+    }
+
+    if (-not [System.IO.File]::Exists($cacheFile)) { return $default }
+
     try {
-        $fileStream = [System.IO.FileStream]::new($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        $reader = [System.IO.StreamReader]::new($fileStream, [System.Text.Encoding]::UTF8)
-        while ($null -ne ($line = $reader.ReadLine())) {
-            if (-not $line.Trim()) { continue }
-            if ($line -notmatch 'toolUseResult') { continue }
-            try {
-                $entry = $line | ConvertFrom-Json
-                $tur = $entry.toolUseResult
-                if ($tur -and $tur.usage) {
-                    $agentInput = if ($tur.usage.input_tokens) { [long]$tur.usage.input_tokens } else { 0 }
-                    $agentCacheCreate = if ($tur.usage.cache_creation_input_tokens) { [long]$tur.usage.cache_creation_input_tokens } else { 0 }
-                    $agentOutput = if ($tur.usage.output_tokens) { [long]$tur.usage.output_tokens } else { 0 }
-                    $agentNewWork = $agentInput + $agentCacheCreate + $agentOutput
-                    $summaryTokens = 0
-                    if ($tur.content -and $tur.content.Count -gt 0) {
-                        foreach ($c in $tur.content) {
-                            if ($c.text) { $summaryTokens += [math]::Ceiling($c.text.Length / 4) }
+        $cache = [System.IO.File]::ReadAllText($cacheFile) | ConvertFrom-Json
+
+        # Sprawdź czy transcript się nie zmniejszył (rewind/compact)
+        $currentSize = 0
+        if ($TranscriptPath -and [System.IO.File]::Exists($TranscriptPath)) {
+            $currentSize = (Get-Item $TranscriptPath).Length
+        }
+
+        if ($currentSize -lt $cache.transcript_size) {
+            # M12: Transcript rewind - reset offset but preserve accumulated counters
+            return @{
+                last_offset = 0
+                transcript_size = 0
+                turns = [int]$cache.turns
+                agent_contribution = [long]$cache.agent_contribution
+                first_timestamp = $cache.first_timestamp
+                last_timestamp = $cache.last_timestamp
+                context_length = [long]$cache.context_length
+                last_usage = $cache.last_usage
+            }
+        }
+
+        return @{
+            last_offset = [long]$cache.last_offset
+            transcript_size = [long]$cache.transcript_size
+            turns = [int]$cache.turns
+            agent_contribution = [long]$cache.agent_contribution
+            first_timestamp = $cache.first_timestamp
+            last_timestamp = $cache.last_timestamp
+            context_length = [long]$cache.context_length
+            last_usage = $cache.last_usage
+        }
+    } catch {
+        return $default
+    }
+}
+
+# M8: Atomic write - write to temp then rename (atomic on NTFS)
+function Write-Atomic {
+    param([string]$Path, [string]$Content)
+    $tmp = "$Path.$PID.tmp"
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Content, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::Move($tmp, $Path, $true)  # overwrite=true (PS7+ / .NET 5+)
+    } catch {
+        # Fallback for PS5: Move doesn't support overwrite
+        try {
+            if ([System.IO.File]::Exists($Path)) { [System.IO.File]::Delete($Path) }
+            [System.IO.File]::Move($tmp, $Path)
+        } catch {
+            # Last resort: direct write
+            try { [System.IO.File]::WriteAllText($Path, $Content, [System.Text.UTF8Encoding]::new($false)) } catch {}
+        }
+    }
+    # Cleanup temp on failure
+    try { if ([System.IO.File]::Exists($tmp)) { [System.IO.File]::Delete($tmp) } } catch {}
+}
+
+function Save-TranscriptCache {
+    param([string]$SessionId, [hashtable]$Cache)
+    $cacheFile = "$cacheDir\$SessionId.json"
+    try {
+        $json = $Cache | ConvertTo-Json -Depth 5 -Compress
+        Write-Atomic -Path $cacheFile -Content $json
+    } catch {}
+}
+
+# === FUNKCJA: Inkrementalne parsowanie transcript ===
+function Get-IncrementalTranscriptData {
+    param([string]$TranscriptPath, [hashtable]$Cache)
+
+    $result = @{
+        turns = $Cache.turns
+        agent_contribution = $Cache.agent_contribution
+        first_timestamp = $Cache.first_timestamp
+        last_timestamp = $Cache.last_timestamp
+        context_length = $Cache.context_length
+        last_usage = $Cache.last_usage
+        new_offset = $Cache.last_offset
+        new_size = $Cache.transcript_size
+    }
+
+    if (-not $TranscriptPath -or -not [System.IO.File]::Exists($TranscriptPath)) { return $result }
+
+    try {
+        $fileInfo = Get-Item $TranscriptPath
+        $currentSize = $fileInfo.Length
+        $result.new_size = $currentSize
+
+        # Jeśli plik się nie zmienił - zwróć cached
+        if ($currentSize -eq $Cache.transcript_size -and $Cache.last_offset -gt 0) {
+            return $result
+        }
+
+        $fileStream = $null
+        $reader = $null
+        try {
+            $fileStream = [System.IO.FileStream]::new(
+                $TranscriptPath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+            )
+
+            # Seek do ostatniej pozycji
+            if ($Cache.last_offset -gt 0 -and $Cache.last_offset -lt $currentSize) {
+                $fileStream.Seek($Cache.last_offset, [System.IO.SeekOrigin]::Begin) | Out-Null
+            }
+
+            $reader = [System.IO.StreamReader]::new($fileStream, [System.Text.Encoding]::UTF8)
+
+            $mostRecentTimestamp = $null
+            $mostRecentUsage = $null
+            $linesProcessed = 0
+            $maxLines = 5000  # C6: safeguard against huge re-parse
+            $lastGoodOffset = $fileStream.Position  # M9: track last valid offset
+
+            # Jeśli mamy cached usage, użyj go jako baseline
+            if ($Cache.last_usage) {
+                $mostRecentUsage = $Cache.last_usage
+            }
+
+            # C3+M6: Regex pre-filter + selective ConvertFrom-Json (10x fewer allocations)
+            while ($null -ne ($line = $reader.ReadLine())) {
+                if (-not $line.Trim()) { continue }
+                $linesProcessed++
+                if ($linesProcessed -gt $maxLines) { break }  # C6: line limit
+
+                # Extract timestamp via regex (most lines have it, cheap extraction)
+                if ($line -match '"timestamp"\s*:\s*"([^"]+)"') {
+                    if (-not $result.first_timestamp) { $result.first_timestamp = $Matches[1] }
+                    $result.last_timestamp = $Matches[1]
+                }
+
+                # Count user turns via regex (fast pre-check)
+                if ($line -match '"type"\s*:\s*"user"') {
+                    if ($line -notmatch '"isMeta"\s*:\s*true' -and $line -notmatch '"isSidechain"\s*:\s*true') {
+                        $result.turns++
+                    }
+                }
+
+                # Full parse ONLY for lines with usage or toolUseResult (expensive fields)
+                $needFullParse = ($line -match '"usage"') -or ($line -match '"toolUseResult"')
+                if ($needFullParse) {
+                    try {
+                        $entry = $line | ConvertFrom-Json
+                    } catch {
+                        # M9: Partial/truncated JSONL line - stop here
+                        break
+                    }
+
+                    # Context length: najnowszy main chain entry z usage
+                    if ($entry.message -and $entry.message.usage) {
+                        $isSidechain = $entry.isSidechain -eq $true
+                        $isError = $entry.isApiErrorMessage -eq $true
+                        if (-not $isSidechain -and -not $isError) {
+                            $mostRecentUsage = $entry.message.usage
                         }
                     }
-                    $contribution = $agentNewWork - $summaryTokens
-                    if ($contribution -gt 0) { $totalContribution += $contribution }
+
+                    # Agent contribution z toolUseResult (M13: prefer totalTokens)
+                    if ($entry.toolUseResult) {
+                        $tur = $entry.toolUseResult
+                        $agentNewWork = 0
+                        if ($tur.totalTokens) {
+                            $agentNewWork = [long]$tur.totalTokens
+                        } elseif ($tur.usage) {
+                            $agentInput = if ($tur.usage.input_tokens) { [long]$tur.usage.input_tokens } else { 0 }
+                            $agentCacheCreate = if ($tur.usage.cache_creation_input_tokens) { [long]$tur.usage.cache_creation_input_tokens } else { 0 }
+                            $agentOutput = if ($tur.usage.output_tokens) { [long]$tur.usage.output_tokens } else { 0 }
+                            $agentNewWork = $agentInput + $agentCacheCreate + $agentOutput
+                        }
+
+                        $summaryTokens = 0
+                        if ($tur.content -and $tur.content.Count -gt 0) {
+                            foreach ($c in $tur.content) {
+                                if ($c.text) { $summaryTokens += [math]::Ceiling($c.text.Length / 4) }
+                            }
+                        }
+
+                        $contribution = $agentNewWork - $summaryTokens
+                        if ($contribution -gt 0) { $result.agent_contribution += $contribution }
+                    }
                 }
-            } catch {}
+
+                # M9: Update last good offset after successful parse
+                $reader.DiscardBufferedData()
+                $lastGoodOffset = $fileStream.Position
+            }
+
+            # M9+M16: Use last good offset from successfully parsed lines
+            $result.new_offset = $lastGoodOffset
+            $result.last_usage = $mostRecentUsage
+
+            # Oblicz context length z najnowszego usage
+            if ($mostRecentUsage) {
+                $inputTok = if ($mostRecentUsage.input_tokens) { [long]$mostRecentUsage.input_tokens } else { 0 }
+                $cacheRead = if ($mostRecentUsage.cache_read_input_tokens) { [long]$mostRecentUsage.cache_read_input_tokens } else { 0 }
+                $cacheCreate = if ($mostRecentUsage.cache_creation_input_tokens) { [long]$mostRecentUsage.cache_creation_input_tokens } else { 0 }
+                $result.context_length = $inputTok + $cacheRead + $cacheCreate
+            }
+        } finally {
+            if ($reader) { $reader.Dispose() }
+            if ($fileStream) { $fileStream.Dispose() }
         }
-        $reader.Close(); $reader.Dispose(); $fileStream.Dispose()
     } catch {}
-    return $totalContribution
+
+    return $result
 }
 
 # === FUNKCJA: Dynamiczny kolor dla ctx% ===
@@ -96,74 +269,12 @@ function Get-CtxColor {
     else { return $c_green }
 }
 
-# === FUNKCJA: Context length z transcript (jak ccstatusline) ===
-function Get-ContextFromTranscript {
-    param([string]$TranscriptPath)
-
-    $result = @{ contextLength = 0; turns = 0; firstTimestamp = $null; lastTimestamp = $null }
-    if (-not $TranscriptPath -or -not (Test-Path $TranscriptPath)) { return $result }
-
-    $mostRecentTimestamp = $null
-    $mostRecentUsage = $null
-
-    try {
-        $fileStream = [System.IO.FileStream]::new($TranscriptPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        $reader = [System.IO.StreamReader]::new($fileStream, [System.Text.Encoding]::UTF8)
-
-        while ($null -ne ($line = $reader.ReadLine())) {
-            if (-not $line.Trim()) { continue }
-            try {
-                $entry = $line | ConvertFrom-Json
-
-                # Zliczaj turns (user messages)
-                if ($entry.type -eq 'user') { $result.turns++ }
-
-                # Track timestamps for session duration
-                if ($entry.timestamp) {
-                    $ts = [DateTime]::Parse($entry.timestamp)
-                    if (-not $result.firstTimestamp -or $ts -lt $result.firstTimestamp) {
-                        $result.firstTimestamp = $ts
-                    }
-                    if (-not $result.lastTimestamp -or $ts -gt $result.lastTimestamp) {
-                        $result.lastTimestamp = $ts
-                    }
-                }
-
-                # Context length: najnowszy main chain entry z usage (nie sidechain, nie error)
-                if ($entry.message -and $entry.message.usage) {
-                    $isSidechain = $entry.isSidechain -eq $true
-                    $isError = $entry.isApiErrorMessage -eq $true
-
-                    if (-not $isSidechain -and -not $isError -and $entry.timestamp) {
-                        $entryTime = [DateTime]::Parse($entry.timestamp)
-                        if (-not $mostRecentTimestamp -or $entryTime -gt $mostRecentTimestamp) {
-                            $mostRecentTimestamp = $entryTime
-                            $mostRecentUsage = $entry.message.usage
-                        }
-                    }
-                }
-            } catch {}
-        }
-        $reader.Close(); $reader.Dispose(); $fileStream.Dispose()
-    } catch {}
-
-    # Oblicz contextLength z najnowszego usage
-    if ($mostRecentUsage) {
-        $inputTok = if ($mostRecentUsage.input_tokens) { [long]$mostRecentUsage.input_tokens } else { 0 }
-        $cacheRead = if ($mostRecentUsage.cache_read_input_tokens) { [long]$mostRecentUsage.cache_read_input_tokens } else { 0 }
-        $cacheCreate = if ($mostRecentUsage.cache_creation_input_tokens) { [long]$mostRecentUsage.cache_creation_input_tokens } else { 0 }
-        $result.contextLength = $inputTok + $cacheRead + $cacheCreate
-    }
-
-    return $result
-}
-
-
 # === FUNKCJA: Formatowanie liczb ===
 function Format-Number {
     param([long]$Num, [string]$Suffix = "")
     $inv = [System.Globalization.CultureInfo]::InvariantCulture
-    if ($Num -ge 1000000) { return ($Num / 1000000).ToString("N1", $inv) + "M$Suffix" }
+    # m20: Use Floor for M to avoid premature "1.0M" for 999.9k
+    if ($Num -ge 1000000) { $v = [math]::Floor($Num / 100000) / 10; return "$v`M$Suffix" }
     elseif ($Num -ge 1000) { return ($Num / 1000).ToString("N1", $inv) + "k$Suffix" }
     else { return "$Num$Suffix" }
 }
@@ -187,12 +298,23 @@ function Format-Cost {
 
 # === CZYTAJ JSON ZE STDIN ===
 $jsonInput = [Console]::In.ReadToEnd()
-$jsonInput = $jsonInput -replace '\x00', '' -replace '^\xEF\xBB\xBF', '' -replace '^\xFF\xFE', ''
+# M17+m4: Fix BOM pattern (Unicode FEFF not UTF-8 bytes) + skip if clean
+if ($jsonInput.Length -gt 0 -and ($jsonInput[0] -eq "`0" -or $jsonInput[0] -eq [char]0xFEFF -or $jsonInput[0] -eq [char]0xFFFE)) {
+    $jsonInput = $jsonInput -replace '\x00', '' -replace '^\xFEFF', '' -replace '^\xFFFE', ''
+}
 if (-not $jsonInput.Trim()) { exit 0 }
 
 $data = $jsonInput | ConvertFrom-Json
 
 # === PARSOWANIE DANYCH SESJI ===
+# M10: Generate fallback ID from transcript path hash instead of "unknown"
+# M11: Sanitize session ID to prevent path traversal
+$rawSessionId = if ($data.session_id) { $data.session_id } else {
+    if ($data.transcript_path) {
+        "fallback-" + [System.IO.Path]::GetFileNameWithoutExtension($data.transcript_path)
+    } else { "fallback-$PID" }
+}
+$sessionId = $rawSessionId -replace '[^a-zA-Z0-9_\-]', '_'
 $sessionCost = 0.0
 if ($data.cost -and $data.cost.total_cost_usd) { $sessionCost = [double]$data.cost.total_cost_usd }
 
@@ -200,17 +322,12 @@ if ($data.cost -and $data.cost.total_cost_usd) { $sessionCost = [double]$data.co
 $modelName = "?"
 $rawModel = $null
 
-# ccstatusline uzywa model.id i model.display_name
 if ($data.model) {
-    if ($data.model.id) {
-        $rawModel = $data.model.id
-    } elseif ($data.model.display_name) {
-        $rawModel = $data.model.display_name
-    }
+    if ($data.model.id) { $rawModel = $data.model.id }
+    elseif ($data.model.display_name) { $rawModel = $data.model.display_name }
 }
 
 if ($rawModel) {
-    # Wyciagnij wersje z nazwy modelu (np. claude-opus-4-5-20251101 -> 4.5)
     $version = ""
     if ($rawModel -match '(\d+)-(\d+)-\d{8}') {
         $version = "$($Matches[1]).$($Matches[2])"
@@ -220,136 +337,131 @@ if ($rawModel) {
         $version = $Matches[1]
     }
 
-    # Skroc nazwe modelu do O/S/H + wersja
     if ($rawModel -match 'opus') { $modelName = "O$version" }
     elseif ($rawModel -match 'sonnet') { $modelName = "S$version" }
     elseif ($rawModel -match 'haiku') { $modelName = "H$version" }
     else { $modelName = "C$version" }
 }
 
-# User name from config (np. Kmyl, Pawel) - loaded later with stats
-
-# === CONTEXT, TURNS, SESSION DURATION z transcript ===
+# === INCREMENTAL TRANSCRIPT PARSING ===
 $transcriptPath = $data.transcript_path
-$transcriptData = Get-ContextFromTranscript -TranscriptPath $transcriptPath
-$contextLength = $transcriptData.contextLength
-$contextLimit = 160000  # Usable tokens - 100% = compact threshold (nie maxTokens 200k)
+$cache = Get-TranscriptCache -SessionId $sessionId -TranscriptPath $transcriptPath
+$transcriptData = Get-IncrementalTranscriptData -TranscriptPath $transcriptPath -Cache $cache
+
+# M3: Zapisz cache TYLKO gdy dane się zmieniły (dirty-check)
+$newCache = @{
+    last_offset = $transcriptData.new_offset
+    transcript_size = $transcriptData.new_size
+    turns = $transcriptData.turns
+    agent_contribution = $transcriptData.agent_contribution
+    first_timestamp = $transcriptData.first_timestamp
+    last_timestamp = $transcriptData.last_timestamp
+    context_length = $transcriptData.context_length
+    last_usage = $transcriptData.last_usage
+}
+$cacheDirty = ($newCache.last_offset -ne $cache.last_offset) -or `
+              ($newCache.turns -ne $cache.turns) -or `
+              ($newCache.agent_contribution -ne $cache.agent_contribution) -or `
+              ($newCache.context_length -ne $cache.context_length)
+if ($cacheDirty) {
+    Save-TranscriptCache -SessionId $sessionId -Cache $newCache
+}
+
+# === OBLICZENIA ===
+$contextLength = $transcriptData.context_length
+$contextLimit = 160000
 $contextPct = 0.0
 
 if ($contextLimit -gt 0 -and $contextLength -gt 0) {
     $contextPct = [math]::Round(($contextLength / $contextLimit) * 100, 1)
 }
 
-# Turns z transcript
 $turns = $transcriptData.turns
 
-# Session duration z timestamps
+# Session duration
 $sessionDuration = 0
-if ($transcriptData.firstTimestamp -and $transcriptData.lastTimestamp) {
-    $sessionDuration = [int]($transcriptData.lastTimestamp - $transcriptData.firstTimestamp).TotalSeconds
+if ($transcriptData.first_timestamp -and $transcriptData.last_timestamp) {
+    try {
+        $inv = [System.Globalization.CultureInfo]::InvariantCulture
+        $firstTs = [DateTime]::Parse($transcriptData.first_timestamp, $inv)
+        $lastTs = [DateTime]::Parse($transcriptData.last_timestamp, $inv)
+        $sessionDuration = [int]($lastTs - $firstTs).TotalSeconds
+    } catch {}
 }
 
-# Zapis ctx% dla hookow
+# M3: Zapis ctx% dla hookow - dirty-check
 $ctxPctInt = [int][Math]::Round($contextPct)
-$ctxSessionId = if ($data.session_id) { $data.session_id } else { $PID }
-$ctxCacheFile = "$env:TEMP\claude-context-pct-$ctxSessionId.txt"
-try { [System.IO.File]::WriteAllText($ctxCacheFile, "$ctxPctInt", [System.Text.UTF8Encoding]::new($false)) } catch {}
+$ctxCacheFile = "$env:TEMP\claude-context-pct-$sessionId.txt"
+$prevCtxPct = -1
+try { if ([System.IO.File]::Exists($ctxCacheFile)) { $prevCtxPct = [int][System.IO.File]::ReadAllText($ctxCacheFile).Trim() } } catch {}
+if ($ctxPctInt -ne $prevCtxPct) {
+    try { Write-Atomic -Path $ctxCacheFile -Content "$ctxPctInt" } catch {}
+}
 
 # === AGENT CONTRIBUTION / TOTAL TOKENS ===
-$transcriptPath = $data.transcript_path
-$agentContribution = Get-AgentContributionFromMain -TranscriptPath $transcriptPath
-$totalTokens = $agentContribution
+# M14: Display current agent_contribution (not high-water mark)
+# With M12 fix, counters survive rewind, so max_total tracking is no longer needed
+$totalTokens = $transcriptData.agent_contribution
 
-# === MAX_TOTAL TRACKING ===
-$maxTotalFile = "$env:USERPROFILE\.claude\max-total-state.json"
-$sessionId = $data.session_id
-$transcriptSize = 0
-if ($transcriptPath -and (Test-Path $transcriptPath)) { $transcriptSize = (Get-Item $transcriptPath).Length }
-
-$maxTotal = $totalTokens
-$rewindDetected = $false
-$allSessions = @{}
-
-if (Test-Path $maxTotalFile) {
-    try {
-        $maxState = Get-Content $maxTotalFile -Raw | ConvertFrom-Json
-        if ($maxState.sessions) {
-            $maxState.sessions.PSObject.Properties | ForEach-Object {
-                $allSessions[$_.Name] = @{ max_total = [long]$_.Value.max_total; transcript_size = [long]$_.Value.transcript_size }
-            }
-        }
-        if ($allSessions.ContainsKey($sessionId)) {
-            $prevSize = $allSessions[$sessionId].transcript_size
-            $savedMax = $allSessions[$sessionId].max_total
-            if ($transcriptSize -lt $prevSize) { $rewindDetected = $true; $maxTotal = $totalTokens }
-            else { $maxTotal = [Math]::Max($totalTokens, $savedMax) }
-        }
-    } catch {}
-}
-
-$allSessions[$sessionId] = @{ max_total = $maxTotal; transcript_size = $transcriptSize }
-$maxState = @{ sessions = $allSessions } | ConvertTo-Json -Depth 3 -Compress
-try { [System.IO.File]::WriteAllText($maxTotalFile, $maxState, [System.Text.UTF8Encoding]::new($false)) } catch {}
-
-$totalTokens = $maxTotal
-
-# === COMPACT COUNTER ===
-$compactStateFile = "$env:USERPROFILE\.claude\compact-state.json"
+# === COMPACT COUNTER (per-session file) ===
+$compactStateFile = "$cacheDir\compact-$sessionId.json"
 $compactsCount = 0
+$compactDirty = $false
 
-if (Test-Path $compactStateFile) {
-    try {
-        $compactState = Get-Content $compactStateFile -Raw | ConvertFrom-Json
-        if ($compactState.session_id -eq $sessionId) {
-            $compactsCount = [int]$compactState.count
-            $prevCtxLength = [long]$compactState.last_context_length
-            if ($contextLength -gt 0 -and $prevCtxLength -gt 0 -and -not $rewindDetected) {
-                if ($contextLength -lt ($prevCtxLength * 0.9)) { $compactsCount++ }
+try {
+    if ([System.IO.File]::Exists($compactStateFile)) {
+        $compactState = [System.IO.File]::ReadAllText($compactStateFile) | ConvertFrom-Json
+        $compactsCount = [int]$compactState.count
+        $prevCtxLength = [long]$compactState.last_context_length
+        # Detect compaction: context dropped by >10% (removed $rewindDetected guard - C7 fix)
+        if ($contextLength -gt 0 -and $prevCtxLength -gt 0) {
+            if ($contextLength -lt ($prevCtxLength * 0.9)) {
+                $compactsCount++
+                $compactDirty = $true
             }
         }
-    } catch {}
+        if ($contextLength -ne $prevCtxLength) { $compactDirty = $true }
+    } else {
+        $compactDirty = $true
+    }
+} catch { $compactDirty = $true }
+if ($compactDirty) {
+    $cJson = "{`"count`":$compactsCount,`"last_context_length`":$contextLength}"
+    try { Write-Atomic -Path $compactStateFile -Content $cJson } catch {}
 }
-$newState = @{ session_id = $sessionId; count = $compactsCount; last_context_length = $contextLength } | ConvertTo-Json -Compress
-try { [System.IO.File]::WriteAllText($compactStateFile, $newState, [System.Text.UTF8Encoding]::new($false)) } catch {}
 
 # === CROSS-DEVICE TOTALS (per-user stats) ===
-# v5.4: Stats from ~/.claude-history/stats/user-{name}.json
 $statsDir = "$env:USERPROFILE\.claude-history\stats"
 $configPath = "$env:USERPROFILE\.config\kfg-stats\users.json"
 
-# Load user config to get defaultUser
-$userName = $env:USERNAME  # fallback
-if (Test-Path $configPath) {
+$userName = $env:USERNAME
+if ([System.IO.File]::Exists($configPath)) {
     try {
-        $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+        $cfg = [System.IO.File]::ReadAllText($configPath) | ConvertFrom-Json
         if ($cfg.defaultUser) { $userName = $cfg.defaultUser }
     } catch {}
 }
 
-# Load stats for this user
-$totalCharsUser = 0; $totalCharsAi = 0; $totalUserPrompts = 0; $totalCost = 0.0; $totalDurationMs = 0
+$totalCharsUser = 0; $totalCharsAi = 0; $totalUserPrompts = 0; $totalCost = 0.0
 $userStatsFile = "$statsDir\user-$userName.json"
-if (Test-Path $userStatsFile) {
+if ([System.IO.File]::Exists($userStatsFile)) {
     try {
-        $userStats = Get-Content $userStatsFile -Raw | ConvertFrom-Json
+        $userStats = [System.IO.File]::ReadAllText($userStatsFile) | ConvertFrom-Json
         $totalCharsUser = if ($userStats.chars_user) { [long]$userStats.chars_user } else { 0 }
         $totalCharsAi = if ($userStats.chars_ai) { [long]$userStats.chars_ai } else { 0 }
         $totalUserPrompts = if ($userStats.user_prompts) { [int]$userStats.user_prompts } else { 0 }
         $totalCost = if ($userStats.cost) { [double]$userStats.cost } else { 0 }
-        $totalDurationMs = if ($userStats.duration_ms) { [long]$userStats.duration_ms } else { 0 }
     } catch {}
 }
 
-# Typing time (total) - chars_user / 285 char/min
 $typingMinutes = if ($totalCharsUser -gt 0) { $totalCharsUser / 285 } else { 0 }
 $typingHours = [math]::Floor($typingMinutes / 60)
 $typingMins = [math]::Floor($typingMinutes % 60)
 $typingTimeStr = if ($typingHours -gt 0) { "${typingHours}h${typingMins}m" } else { "${typingMins}m" }
 
 # === FORMATOWANIE WARTOSCI ===
-$inv = [System.Globalization.CultureInfo]::InvariantCulture
-
-$ctxPctStr = "$contextPct%"
+# m14: Cap display at 100% (context can technically exceed limit with cache tokens)
+$ctxPctStr = if ($contextPct -gt 100) { "100%+" } else { "$contextPct%" }
 $ctxColor = Get-CtxColor -Pct $contextPct
 
 $sessionTimeStr = Format-Time -Seconds $sessionDuration
@@ -363,51 +475,39 @@ $promptsStr = Format-Number -Num $totalUserPrompts
 $totalCostStr = Format-Cost -Cost $totalCost
 
 # === GENEROWANIE OUTPUTU 4x3 ===
-# Szerokosci kolumn
 $colW = 8
 
-# Wyrownanie: kolumna 1,3 do prawej, kolumna 2,4 do lewej
-function Pad-Right([string]$text, [int]$width) {
+# m11: Names are historically swapped but callers use them consistently - adding alias comments
+function Pad-Right([string]$text, [int]$width) {  # Actually LEFT-pads (right-aligns)
     if ($text.Length -ge $width) { return $text.Substring(0, $width) }
     return (" " * ($width - $text.Length)) + $text
 }
 
-function Pad-Left([string]$text, [int]$width) {
+function Pad-Left([string]$text, [int]$width) {  # Actually RIGHT-pads (left-aligns)
     if ($text.Length -ge $width) { return $text.Substring(0, $width) }
     return $text + (" " * ($width - $text.Length))
 }
 
-# Separatory (stale dla wszystkich linii)
-$sep1 = " "   # miedzy col1 i col2
-$sep2 = "  "  # miedzy para 1 i para 2
-$sep3 = " "   # miedzy col3 i col4
+$sep1 = " "; $sep2 = "  "; $sep3 = " "
 
-# Rzad 1: Model/User | ctx%/compacts (czerwony | dynamiczny)
-# Kolumny 1,3 do lewej - kolumny 2,4 do prawej
 $r1c1 = Pad-Left $modelName $colW
 $r1c2 = Pad-Right $userName $colW
 $r1c3 = Pad-Left $ctxPctStr $colW
 $r1c4 = Pad-Right $compactsStr $colW
-
 $line1 = "$c_red$r1c1$reset$sep1$c_red$r1c2$reset$sep2$ctxColor$r1c3$reset$sep3$ctxColor$r1c4$reset"
 
-# Rzad 2: czas/typing | turns/AI_chars (zolty | zielony)
 $r2c1 = Pad-Left $sessionTimeStr $colW
 $r2c2 = Pad-Right $typingTimeStr $colW
 $r2c3 = Pad-Left $turnsStr $colW
 $r2c4 = Pad-Right $aiCharsStr $colW
-
 $line2 = "$c_yellow$r2c1$reset$sep1$c_yellow$r2c2$reset$sep2$c_green$r2c3$reset$sep3$c_green$r2c4$reset"
 
-# Rzad 3: tokens/prompts | cost/cost_t (niebieski | fioletowy)
 $r3c1 = Pad-Left $totalTokensStr $colW
 $r3c2 = Pad-Right $promptsStr $colW
 $r3c3 = Pad-Left $sessionCostStr $colW
 $r3c4 = Pad-Right $totalCostStr $colW
-
 $line3 = "$c_blue$r3c1$reset$sep1$c_blue$r3c2$reset$sep2$c_purple$r3c3$reset$sep3$c_purple$r3c4$reset"
 
-# === OUTPUT ===
 Write-Host $line1
 Write-Host $line2
 Write-Host $line3

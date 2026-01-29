@@ -1,8 +1,8 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced v5.4",
+  "displayName": "StatusLine Advanced v5.6",
   "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats",
-  "version": "5.4.0",
+  "version": "5.6.0",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {
@@ -13,5 +13,5 @@
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
   "scripts": {},
-  "notes": "v5.4: User name from config, stats from user-{name}.json, dynamic folder prefix detection (case-sensitive)."
+  "notes": "v5.6: Performance audit - regex pre-filter (C3), atomic writes (M8), dirty-checking (M3), .NET direct calls (m1/m2), compact counter fix (C7), FileStream safety (C4), partial line handling (M9), session ID sanitization (M11). v5.5: Incremental parsing. v5.4: User name from config."
 }

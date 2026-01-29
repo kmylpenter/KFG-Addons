@@ -149,7 +149,9 @@ Write-Host ""
 foreach ($userName in $userStats.Keys) {
     $stats = $userStats[$userName]
     $userFile = Join-Path $statsDir "user-$userName.json"
-    $stats | ConvertTo-Json -Depth 3 | Out-File -FilePath $userFile -Encoding UTF8
+    # M19: Use WriteAllText with UTF8 no-BOM for consistency with wrapper
+    $json = $stats | ConvertTo-Json -Depth 3
+    [System.IO.File]::WriteAllText($userFile, $json, [System.Text.UTF8Encoding]::new($false))
 
     $totalMs = $stats.duration_ms
     $days = [math]::Floor($totalMs / 86400000)
@@ -174,12 +176,17 @@ if (Test-Path "$historyRepo\.git") {
         $hasChanges = git diff --cached --quiet 2>$null; $hasChanges = $LASTEXITCODE -ne 0
         if ($hasChanges) {
             git commit -m "stats: update user stats" --quiet 2>$null
+            # m19: Check git pull exit code before pushing
             git pull --quiet 2>$null
-            git push --quiet 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "Git: committed & pushed to claude-history" -ForegroundColor DarkGray
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Git: pull failed (merge conflict?) - sprawdz recznie" -ForegroundColor DarkYellow
             } else {
-                Write-Host "Git: commit OK, push failed (sprawdz recznie)" -ForegroundColor DarkYellow
+                git push --quiet 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Git: committed & pushed to claude-history" -ForegroundColor DarkGray
+                } else {
+                    Write-Host "Git: commit OK, push failed (sprawdz recznie)" -ForegroundColor DarkYellow
+                }
             }
         } else {
             Write-Host "Git: no changes to commit" -ForegroundColor DarkGray
