@@ -1,0 +1,54 @@
+---
+session: general
+date: 2026-01-29
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Audit, fix, and enhance autoinit-skills addon (loop, implement_plan, session-init, never-ask-continue)
+now: Skills are deployed to ~/.claude/ - test them in real sessions to validate enforcement works
+test: head -7 ~/.claude/skills/loop/SKILL.md  # should show v1.5
+
+done_this_session:
+  - task: Audited 4 skill files (new vs original versions)
+    files: [addons/autoinit-skills/backup-originals/loop-v1.3.md, addons/autoinit-skills/backup-originals/implement_plan-v2.1.md, addons/autoinit-skills/backup-originals/session-init-v4.4.md, addons/autoinit-skills/backup-originals/never-ask-continue-original.md]
+  - task: Fixed loop v1.4 (was missing ~70% content) - created v1.5 by merging EXECUTION GATES + full v1.3 content
+    files: [addons/autoinit-skills/files/.claude/skills/loop/SKILL.md]
+  - task: Enhanced all 3 skills with Quick Start, Compaction Recovery, Progress Reporting, Integration Chain
+    files: [addons/autoinit-skills/files/.claude/skills/loop/SKILL.md, addons/autoinit-skills/files/.claude/skills/implement_plan/SKILL.md, addons/autoinit-skills/files/.claude/skills/session-init/SKILL.md]
+  - task: Deployed all files to global ~/.claude/
+    files: [~/.claude/skills/loop/SKILL.md, ~/.claude/skills/implement_plan/SKILL.md, ~/.claude/skills/session-init/SKILL.md, ~/.claude/rules/never-ask-continue.md]
+
+blockers: []
+
+questions:
+  - Real-world validation needed - do EXECUTION GATES actually prevent premature stopping?
+  - Should loop v1.5 be further trimmed for token efficiency (1343 lines is large)?
+
+decisions:
+  - merged_not_replaced: loop v1.5 combines v1.4 EXECUTION GATES with full v1.3 content instead of choosing one approach
+  - additive_enhancements: implement_plan and session-init got additions at end, no original content removed
+  - version_bumped_loop_only: Only loop got version bump (1.4→1.5) since it had structural changes
+
+findings:
+  - loop_stripped_too_much: v1.4 was created by stripping v1.3 too aggressively - lost agent prompts, state schemas, examples, pseudocode
+  - other_files_were_complete: implement_plan v2.2, session-init v4.5, never-ask-continue all preserved original content correctly
+  - execution_gates_pattern: GATE 1 (before work) + GATE 2 (checkpoint) + GATE 3 (before ending) pattern is consistent across all 3 skills
+
+worked:
+  - Comparing line counts immediately reveals content loss (358 vs 1159 lines)
+  - Reading both versions side-by-side identifies exact missing sections
+  - Adding enhancements at end of file preserves original content safely
+
+failed:
+  - Previous session's aggressive rewrite of loop (v1.3→v1.4) lost critical content
+
+next:
+  - Test /loop solve in a real session to verify EXECUTION GATES prevent early stopping
+  - Test /session-init to verify EXECUTION GATES work during interview phase
+  - Consider creating automated tests for skill completeness (compare section headers)
+  - Update addon.json version if needed
+
+files:
+  created: [thoughts/shared/handoffs/general/2026-01-29_06-34_autoinit-skills-audit-enhance.yaml]
+  modified: [addons/autoinit-skills/files/.claude/skills/loop/SKILL.md, addons/autoinit-skills/files/.claude/skills/implement_plan/SKILL.md, addons/autoinit-skills/files/.claude/skills/session-init/SKILL.md, thoughts/shared/loop/audit-autoinit-skills-2026-01-28.yaml]

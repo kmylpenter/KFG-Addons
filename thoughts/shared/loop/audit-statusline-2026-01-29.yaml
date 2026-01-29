@@ -1,0 +1,488 @@
+meta:
+  mode: audit
+  target: addons/statusline-advanced
+  focus: "VSCode terminal lag during work - find performance bottlenecks"
+  started: "2026-01-29T09:00:00"
+  updated: "2026-01-29T09:35:00"
+  status: completed
+  iterations: 3
+  lenses: [process-spawning, file-io, parsing-overhead, polling-frequency, memory-allocation]
+
+issues:
+  # === CRITICAL ===
+  - id: "C1"
+    severity: critical
+    lens: polling-frequency
+    item: "PowerShell process spawned every 300ms poll cycle - startup alone takes 200-400ms"
+    location: "settings.json:3-4 / statusline-wrapper.ps1:0"
+    suggestion: "Rewrite in Node.js (~50ms startup) or Go/Rust (<10ms). PowerShell startup consumes 83-100%+ of poll interval."
+    found_in_iteration: 1
+    status: open
+
+  - id: "C2"
+    severity: critical
+    lens: file-io
+    item: "17-19 filesystem operations per invocation (7 stat + 5 reads + 2 stat + 1 stream + 4 writes)"
+    location: "statusline-wrapper.ps1:27-398"
+    suggestion: "Add dirty-checking to all 4 write operations. Consolidate state files. Skip writes when data unchanged."
+    found_in_iteration: 1
+    status: open
+
+  - id: "C3"
+    severity: critical
+    lens: parsing-overhead
+    item: "ConvertFrom-Json inside ReadLine loop - ~0.5-2ms per line, 50-200ms for burst of 100 lines"
+    location: "statusline-wrapper.ps1:140"
+    suggestion: "Use regex for simple field extraction or System.Text.Json.JsonDocument for 10x speedup."
+    found_in_iteration: 1
+    status: open
+
+  - id: "C4"
+    severity: critical
+    lens: memory-allocation
+    item: "FileStream/StreamReader not disposed on exception path - OS handle leak"
+    location: "statusline-wrapper.ps1:114-200"
+    suggestion: "Wrap in try/finally to ensure dispose. Current code only disposes in happy path."
+    found_in_iteration: 1
+    status: open
+
+  - id: "C5"
+    severity: critical
+    lens: polling-frequency
+    item: "Estimated 15-50% sustained CPU for statusline alone at 300ms polling"
+    location: "statusline-wrapper.ps1:0 (overall)"
+    suggestion: "Total per invocation: 250-550ms. At 3.3/sec = near-continuous CPU load. Root cause of terminal lag."
+    found_in_iteration: 1
+    status: open
+
+  - id: "C6"
+    severity: critical
+    lens: memory-allocation
+    item: "No line limit on transcript re-parse after cache invalidation - 100K+ PSObjects possible"
+    location: "statusline-wrapper.ps1:136-183"
+    suggestion: "Add safeguard: if lines to parse > 5000, process only last N bytes or chunk across invocations."
+    found_in_iteration: 1
+    status: open
+
+  # === BUG (from sleuth investigation) ===
+  - id: "C7"
+    severity: critical
+    lens: bugs
+    item: "Compact counter ALWAYS 0 - $rewindDetected blocks compaction detection"
+    location: "statusline-wrapper.ps1:345+367"
+    suggestion: "Remove '-not $rewindDetected' guard on line 367. Transcript shrink triggers BOTH rewindDetected AND compaction, but rewindDetected blocks the increment."
+    found_in_iteration: 1
+    status: open
+
+  # === MAJOR ===
+  - id: "M1"
+    severity: major
+    lens: process-spawning
+    item: "5x ConvertFrom-Json + 4x ConvertTo-Json per invocation for state files"
+    location: "statusline-wrapper.ps1:50,247,336,364,384 / 82,352,373,295"
+    suggestion: "Consolidate into single state file. Use string interpolation for simple flat JSON. Use .NET JsonDocument."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M2"
+    severity: major
+    lens: file-io
+    item: "Transcript file stat'd twice (lines 55 and 105) - redundant Get-Item"
+    location: "statusline-wrapper.ps1:55,105"
+    suggestion: "Pass file size from first call to Get-IncrementalTranscriptData to avoid redundant stat."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M3"
+    severity: major
+    lens: file-io
+    item: "4 UNCONDITIONAL writes every invocation even when data unchanged"
+    location: "statusline-wrapper.ps1:83,321,353,374"
+    suggestion: "Add dirty flags. ctx% rarely changes between polls. max-total only changes with transcript growth. compact-state almost never changes."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M4"
+    severity: major
+    lens: parsing-overhead
+    item: "PSObject.Properties enumeration for session tracking (slow PowerShell pattern)"
+    location: "statusline-wrapper.ps1:338-339"
+    suggestion: "Use .NET Dictionary directly or store sessions as JSON array instead of dynamic object keys."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M5"
+    severity: major
+    lens: memory-allocation
+    item: "PowerShell 5.1 process: 30-80MB RSS per invocation, constantly created/destroyed"
+    location: "statusline-wrapper.ps1:1 (entire script)"
+    suggestion: "Persistent process model or rewrite in low-memory-footprint language."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M6"
+    severity: major
+    lens: memory-allocation
+    item: "ConvertFrom-Json per JSONL line creates full PSCustomObject tree per line"
+    location: "statusline-wrapper.ps1:140"
+    suggestion: "Use regex extraction or System.Text.Json for read-only access with lower allocation."
+    found_in_iteration: 1
+    status: open
+
+  - id: "M7"
+    severity: major
+    lens: polling-frequency
+    item: "No persistent process option - Claude Code only supports 'type: command'"
+    location: "settings.json:2-5"
+    suggestion: "Background daemon + thin reader shim architecture. Daemon computes, shim only reads cached output."
+    found_in_iteration: 1
+    status: open
+
+  # === MINOR ===
+  - id: "m1"
+    severity: minor
+    lens: process-spawning
+    item: "Get-Content used for reads instead of [System.IO.File]::ReadAllText()"
+    location: "statusline-wrapper.ps1:50,336,364,383,392"
+    suggestion: "Replace 5 instances of Get-Content with ReadAllText for 2-5x faster file reads."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m2"
+    severity: minor
+    lens: process-spawning
+    item: "Test-Path called 8+ times instead of [System.IO.File]::Exists()"
+    location: "statusline-wrapper.ps1:27,47,54,102,105,334,361,381,391"
+    suggestion: "Use .NET direct calls to avoid cmdlet overhead (~1ms each x8 = ~8ms)."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m3"
+    severity: minor
+    lens: parsing-overhead
+    item: "DateTime.Parse called for every transcript entry, only first+last needed"
+    location: "statusline-wrapper.ps1:147"
+    suggestion: "Store timestamps as strings in loop, parse only 2 final values after loop exits."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m4"
+    severity: minor
+    lens: parsing-overhead
+    item: "3 regex -replace on stdin for BOM cleanup, usually unnecessary"
+    location: "statusline-wrapper.ps1:244"
+    suggestion: "Check first char before running replacements, or skip entirely if Claude Code always sends clean UTF-8."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m5"
+    severity: minor
+    lens: parsing-overhead
+    item: "Model name regex parsed every invocation, never changes during session"
+    location: "statusline-wrapper.ps1:265-276"
+    suggestion: "Cache parsed model name in transcript cache file."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m6"
+    severity: minor
+    lens: file-io
+    item: "Test-Path + Get-Content pattern should be try/catch ReadAllText"
+    location: "statusline-wrapper.ps1:47-50, 334-336, 361-363, 381-383, 390-392"
+    suggestion: "Eliminates 5-6 stat calls per invocation."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m7"
+    severity: minor
+    lens: memory-allocation
+    item: "reader.Close() redundant before reader.Dispose()"
+    location: "statusline-wrapper.ps1:197-198"
+    suggestion: "Remove Close() - Dispose() already calls it."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m8"
+    severity: minor
+    lens: memory-allocation
+    item: "max-total-state.json never pruned - grows unbounded over months"
+    location: "statusline-wrapper.ps1:338-339"
+    suggestion: "Add cleanup: remove sessions older than 7 days."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m9"
+    severity: minor
+    lens: memory-allocation
+    item: ".NET type loading on every invocation (~5-10ms total)"
+    location: "statusline-wrapper.ps1:10,83,114,219,247"
+    suggestion: "Inherent to per-process model. Fixed by persistent process architecture."
+    found_in_iteration: 1
+    status: open
+
+  - id: "m10"
+    severity: minor
+    lens: polling-frequency
+    item: "Bash wrapper calls npx -y ccstatusline@latest every poll (network check)"
+    location: "statusline-wrapper.sh:8"
+    suggestion: "Install globally. Note: this is Android variant, not active on Windows."
+    found_in_iteration: 1
+    status: open
+
+  # === ITERATION 2: NEW ISSUES ===
+
+  # CRITICAL (concurrency)
+  - id: "C8"
+    severity: critical
+    lens: concurrency
+    item: "Race condition on max-total-state.json - read-modify-write without locking. Parallel sessions overwrite each other's data."
+    location: "statusline-wrapper.ps1:334-353"
+    suggestion: "Use named mutex or per-session state files."
+    found_in_iteration: 2
+    status: open
+
+  - id: "C9"
+    severity: critical
+    lens: concurrency
+    item: "Race condition on compact-state.json - single-session design breaks in multi-session. Sessions overwrite each other's compact count."
+    location: "statusline-wrapper.ps1:358-374"
+    suggestion: "Use per-session compact state files (compact-state-{sessionId}.json)."
+    found_in_iteration: 2
+    status: open
+
+  # MAJOR (iteration 2)
+  - id: "M8"
+    severity: major
+    lens: concurrency
+    item: "Non-atomic WriteAllText - concurrent read during write can get partial/corrupt JSON"
+    location: "statusline-wrapper.ps1:83,353,374"
+    suggestion: "Write to temp file then rename (atomic on NTFS)."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M9"
+    severity: major
+    lens: concurrency
+    item: "Partial JSONL line read from transcript - offset advances past truncated line, data permanently lost"
+    location: "statusline-wrapper.ps1:136-183"
+    suggestion: "Track offset BEFORE each ReadLine. On ConvertFrom-Json failure, break and revert offset."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M10"
+    severity: major
+    lens: bugs
+    item: "Session ID 'unknown' causes cache collision when session_id missing - all such sessions corrupt each other"
+    location: "statusline-wrapper.ps1:250,34"
+    suggestion: "Generate fallback ID from transcript_path hash or PID."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M11"
+    severity: major
+    lens: bugs
+    item: "Path traversal via session_id - interpolated directly into file path without sanitization"
+    location: "statusline-wrapper.ps1:34,80"
+    suggestion: "Sanitize: $SafeId = $SessionId -replace '[^a-zA-Z0-9_-]', '_'"
+    found_in_iteration: 2
+    status: open
+
+  - id: "M12"
+    severity: major
+    lens: bugs
+    item: "Transcript rewind discards accumulated counters permanently - turns/agent_contribution lost after compaction"
+    location: "statusline-wrapper.ps1:52-61"
+    suggestion: "On rewind, preserve accumulated counters but reset offset to 0. Sum old + new."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M13"
+    severity: major
+    lens: data-correctness
+    item: "agent_contribution calculation differs from analyze-history: wrapper uses usage fields, analyze uses totalTokens. Missing cache_read_input_tokens in wrapper."
+    location: "statusline-wrapper.ps1:165-180 vs analyze-history.ps1:325-335"
+    suggestion: "Use toolUseResult.totalTokens if available for consistency."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M14"
+    severity: major
+    lens: bugs
+    item: "totalTokens displays non-decreasing high-water mark, not current value. Misleading after compaction."
+    location: "statusline-wrapper.ps1:324,330-355"
+    suggestion: "Display current agent_contribution or relabel as 'peak tokens'."
+    found_in_iteration: 2
+    status: open
+
+  - id: "M15"
+    severity: major
+    lens: concurrency
+    item: "Same-session cache race: overlapping invocations read same offset, both count same turns, write back doubled counts"
+    location: "statusline-wrapper.ps1:50-84,285-295"
+    suggestion: "Use per-session named mutex around read-parse-write cycle."
+    found_in_iteration: 2
+    status: open
+
+  # MINOR (iteration 2)
+  - id: "m11"
+    severity: minor
+    lens: bugs
+    item: "Pad-Right and Pad-Left function names are swapped (Pad-Right left-pads, Pad-Left right-pads)"
+    location: "statusline-wrapper.ps1:422-429"
+    suggestion: "Swap names or add comments. Visual output correct by accident."
+    found_in_iteration: 2
+    status: open
+
+  - id: "m12"
+    severity: minor
+    lens: data-correctness
+    item: "DateTime.Parse uses system locale - Polish Windows may misinterpret ISO 8601 timestamps"
+    location: "statusline-wrapper.ps1:147,312-313"
+    suggestion: "Use CultureInfo.InvariantCulture for locale-independent parsing."
+    found_in_iteration: 2
+    status: open
+
+  - id: "m13"
+    severity: minor
+    lens: data-correctness
+    item: "Typing time is LIFETIME metric displayed alongside SESSION metrics without distinction"
+    location: "statusline-wrapper.ps1:400-403"
+    suggestion: "Add visual indicator or relabel to clarify lifetime vs session scope."
+    found_in_iteration: 2
+    status: open
+
+  - id: "m14"
+    severity: minor
+    lens: data-correctness
+    item: "contextPct can exceed 100% with no cap"
+    location: "statusline-wrapper.ps1:302-304"
+    suggestion: "Cap at 100% or handle >100% display specially."
+    found_in_iteration: 2
+    status: open
+
+  - id: "m15"
+    severity: minor
+    lens: bugs
+    item: "ErrorActionPreference SilentlyContinue + empty catch blocks mask all errors globally"
+    location: "statusline-wrapper.ps1:9"
+    suggestion: "Scope SilentlyContinue to I/O sections only. Add stderr logging for unexpected errors."
+    found_in_iteration: 2
+    status: open
+
+  - id: "m16"
+    severity: minor
+    lens: concurrency
+    item: "Transcript size recorded before reading, not after - stale size if file grows during read"
+    location: "statusline-wrapper.ps1:105-112"
+    suggestion: "Use fileStream.Length after reading instead of pre-open Get-Item size."
+    found_in_iteration: 2
+    status: open
+
+  # === ITERATION 3: NEW ISSUES ===
+
+  - id: "M16"
+    severity: major
+    lens: bugs
+    item: "StreamReader buffer causes offset drift - fileStream.Position overshoots actual read position by up to 1KB. Silently drops JSONL lines on subsequent incremental reads."
+    location: "statusline-wrapper.ps1:126,186"
+    suggestion: "Track byte offset manually per line or use reader.DiscardBufferedData() before reading Position."
+    found_in_iteration: 3
+    status: open
+
+  - id: "M17"
+    severity: major
+    lens: bugs
+    item: "BOM regex pattern never matches - '^\xEF\xBB\xBF' regex matches literal bytes but input is already decoded Unicode. Correct pattern: '^\xFEFF'"
+    location: "statusline-wrapper.ps1:244"
+    suggestion: "Replace with '$jsonInput -replace '^\xFEFF', '' -replace '\\x00', ''"
+    found_in_iteration: 3
+    status: open
+
+  - id: "M18"
+    severity: major
+    lens: data-correctness
+    item: "Session turns count includes isMeta, isSidechain, commands, warmup - inflated vs analyze-history's user_prompts. Confusing when displayed side-by-side."
+    location: "statusline-wrapper.ps1:143 vs analyze-history.ps1:279-293"
+    suggestion: "Add same filters to wrapper: exclude isMeta, isSidechain, commands, warmup."
+    found_in_iteration: 3
+    status: open
+
+  - id: "M19"
+    severity: major
+    lens: data-correctness
+    item: "export-device-stats uses Out-File UTF8 (with BOM on PS5), wrapper uses WriteAllText UTF8Encoding(false) (no BOM). Encoding inconsistency across pipeline."
+    location: "export-device-stats.ps1:152 vs statusline-wrapper.ps1:83"
+    suggestion: "Standardize on WriteAllText with UTF8Encoding(false) everywhere."
+    found_in_iteration: 3
+    status: open
+
+  - id: "m17"
+    severity: minor
+    lens: dead-code
+    item: "settings.json (ccstatusline config) is dead - not listed in addon.json targets, never deployed, never consumed by any .ps1 script"
+    location: "files/.config/ccstatusline/settings.json + addon.json"
+    suggestion: "Remove from addon or add to targets if still needed for ccstatusline."
+    found_in_iteration: 3
+    status: open
+
+  - id: "m18"
+    severity: minor
+    lens: bugs
+    item: "ReadToEnd on stdin blocks indefinitely if no EOF - no timeout mechanism"
+    location: "statusline-wrapper.ps1:243"
+    suggestion: "Claude Code does close stdin properly, but fragile if upstream changes."
+    found_in_iteration: 3
+    status: open
+
+  - id: "m19"
+    severity: minor
+    lens: concurrency
+    item: "export-device-stats git pull without exit code check - merge conflict leaves repo in broken state"
+    location: "export-device-stats.ps1:178"
+    suggestion: "Check $LASTEXITCODE after git pull and handle merge conflicts."
+    found_in_iteration: 3
+    status: open
+
+  - id: "m20"
+    severity: minor
+    lens: data-correctness
+    item: "Format-Number rounds 999950-999999 to '1.0M' due to N1 formatting - displays M suffix for sub-million values"
+    location: "statusline-wrapper.ps1:220"
+    suggestion: "Use Floor or explicit boundary check."
+    found_in_iteration: 3
+    status: open
+
+iterations:
+  - number: 1
+    timestamp: "2026-01-29T09:15:00"
+    new_issues_found: 21
+    consensus: "0/5 no_issues"
+
+  - number: 2
+    timestamp: "2026-01-29T09:25:00"
+    new_issues_found: 16
+    lenses: [deep-dive, concurrency, data-correctness]
+    consensus: "0/3 no_new_issues"
+
+  - number: 3
+    timestamp: "2026-01-29T09:35:00"
+    new_issues_found: 9
+    lenses: [consensus-check-A, consensus-check-B, consensus-check-C]
+    consensus: "near-consensus - diminishing returns (9 new vs 16 vs 21)"
+
+solve:
+  status: completed
+  fixed: 39
+  wontfix: 7
+  wontfix_ids: [C1, C5, M5, M7, m9, m10, m15]
+  wontfix_reason: "C1/C5/M5/M7 require full rewrite to Node.js (architectural - out of scope for incremental fix). m9 inherent to per-process model. m10 Android-only. m15 SilentlyContinue required for statusline stability."
+  files_modified:
+    - statusline-wrapper.ps1 (v5.5 -> v5.6, 477 -> 513 lines)
+    - export-device-stats.ps1 (M19 BOM fix + m19 git pull check)
+    - addon.json (version bump 5.4.0 -> 5.6.0)
+
+summary:
+  total: 46
+  critical: 9
+  major: 19
+  minor: 20

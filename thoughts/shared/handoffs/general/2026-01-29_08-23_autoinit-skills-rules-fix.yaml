@@ -1,0 +1,48 @@
+---
+session: general
+date: 2026-01-29
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: Dodanie autoinit skills do skill-rules.json i naprawa addon.json
+now: Zweryfikowac czy nowe instancje Claude wykrywaja /loop verify poprawnie
+
+test: powershell -Command "Select-String 'loop' 'C:\Users\DELL\.claude\skills\skill-rules.json' | Select-Object -First 1"
+
+done_this_session:
+  - task: Zbadano skille addonu autoinit-skills (loop/implement_plan/session-init)
+    files: [addons/autoinit-skills/files/.claude/skills/loop/SKILL.md, addons/autoinit-skills/files/.claude/skills/implement_plan/SKILL.md, addons/autoinit-skills/files/.claude/skills/session-init/SKILL.md]
+  - task: Dodano loop i session-init do globalnego skill-rules.json
+    files: [C:\Users\DELL\.claude\skills\skill-rules.json]
+  - task: Naprawiono addon.json - wersje, postInstall.skillRules, bump do v1.1.0
+    files: [addons/autoinit-skills/addon.json]
+
+blockers: []
+
+questions:
+  - Czy installer KFG-Addons obsluguje sekcje postInstall.skillRules? Jesli nie, trzeba dodac logike merge do install.ps1
+
+decisions:
+  - skill_rules_format: Uzyto identycznego formatu jak istniejace wpisy (compound-learnings, mot) z keywords + intentPatterns
+  - addon_version_bump: 1.0.0 -> 1.1.0 bo dodano postInstall i naprawiono metadane
+
+findings:
+  - skill_discovery_gap: Skill moze istniec w ~/.claude/skills/ ale bez wpisu w skill-rules.json nie jest wykrywany przez prompt submit hook ani sugerowany automatycznie
+  - version_drift: addon.json mial notes z wersjami v4.4/v2.1/v1.3 ale pliki to v4.5/v2.2/v1.5
+  - implement_plan_already_registered: implement_plan juz byl w skill-rules.json, brakowalo tylko loop i session-init
+
+worked:
+  - Grep po skill-rules.json szybko zidentyfikowal brakujace wpisy
+  - Porownanie wersji addon vs global ujawnilo drift
+
+failed: []
+
+next:
+  - Zweryfikowac w nowej sesji czy /loop verify jest rozpoznawany
+  - Dodac logike postInstall do install.ps1 (merge skillRules do skill-rules.json)
+  - Rozwazyc backup-originals update (maja stare wersje skillow)
+
+files:
+  created: [thoughts/shared/handoffs/general/2026-01-29_08-23_autoinit-skills-rules-fix.yaml]
+  modified: [C:\Users\DELL\.claude\skills\skill-rules.json, addons/autoinit-skills/addon.json]

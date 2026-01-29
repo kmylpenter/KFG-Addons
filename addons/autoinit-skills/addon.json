@@ -1,0 +1,66 @@
+{
+  "name": "autoinit-skills",
+  "displayName": "AutoInit Skills",
+  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /loop",
+  "version": "1.1.0",
+  "author": "KFG",
+  "dependencies": {},
+  "targets": {
+    "files/.claude/skills/session-init/": "~/.claude/skills/session-init/",
+    "files/.claude/skills/implement_plan/": "~/.claude/skills/implement_plan/",
+    "files/.claude/skills/loop/": "~/.claude/skills/loop/",
+    "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/"
+  },
+  "postInstall": {
+    "description": "Register skills in skill-rules.json for auto-discovery",
+    "skillRules": {
+      "loop": {
+        "type": "domain",
+        "enforcement": "suggest",
+        "priority": "high",
+        "description": "Iterative consensus workflow - audit, verify, solve, create with parallel validators",
+        "promptTriggers": {
+          "keywords": [
+            "loop audit", "loop verify", "loop solve", "loop create",
+            "audit code", "audit codebase", "verify implementation",
+            "verify against plan", "solve issues", "fix audit issues",
+            "iterative verification", "consensus verification",
+            "find all bugs", "find all issues", "audit security",
+            "zaudytuj", "zaudytuj kod", "zweryfikuj implementacje",
+            "napraw problemy z audytu", "audyt kodu", "audyt bezpieczenstwa",
+            "znajdz wszystkie bledy", "znajdz wszystkie problemy"
+          ],
+          "intentPatterns": [
+            "(loop|iterative).*?(audit|verify|solve|create)",
+            "(audit|review|check).*?(code|codebase|src|implementation)",
+            "(verify|check).*?(against|vs|versus).*?(plan|spec)",
+            "(solve|fix).*?(issues|problems|bugs).*?(from|audit)",
+            "(find|search|look for).*?(all|every).*?(bug|issue|problem)"
+          ]
+        }
+      },
+      "session-init": {
+        "type": "domain",
+        "enforcement": "suggest",
+        "priority": "high",
+        "description": "Session Architect - prepare autonomous multi-hour sessions with task orchestration",
+        "promptTriggers": {
+          "keywords": [
+            "session init", "session-init", "init session",
+            "plan session", "prepare session", "start session",
+            "new session", "session architect", "autonomous session",
+            "zaplanuj sesje", "przygotuj sesje", "nowa sesja",
+            "rozpocznij sesje", "sesja autonomiczna", "wielogodzinna sesja"
+          ],
+          "intentPatterns": [
+            "(init|start|begin|prepare|plan).*?session",
+            "session.*?(init|setup|architect|prepare)",
+            "(autonomous|long|multi.hour).*?session",
+            "(zaplanuj|przygotuj|rozpocznij).*?sesj"
+          ]
+        }
+      }
+    }
+  },
+  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /loop (v1.5) - iteracja z konsensusem (audit/verify/solve/create)"
+}
