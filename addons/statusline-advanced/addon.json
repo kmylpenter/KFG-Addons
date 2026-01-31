@@ -1,17 +1,25 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced v5.6",
-  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats",
-  "version": "5.6.0",
+  "displayName": "StatusLine Advanced",
+  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats. Node.js (5-7x szybszy niz PS1)",
+  "version": "6.0.0",
   "author": "kmylpenter",
-  "dependencies": {},
+  "dependencies": {
+    "node": {
+      "required": true,
+      "minVersion": "18"
+    }
+  },
   "targets": {
+    "files/.claude/statusline-wrapper.mjs": "~/.claude/",
     "files/.claude/statusline-wrapper.ps1": "~/.claude/",
     "files/.claude/statusline-wrapper.sh": "~/.claude/",
     "files/.claude/analyze-history.ps1": "~/.claude/",
     "files/.claude/kfg-settings.ps1": "~/.claude/",
     "files/.claude/scripts/": "~/.claude/scripts/"
   },
-  "scripts": {},
-  "notes": "v5.6: Performance audit - regex pre-filter (C3), atomic writes (M8), dirty-checking (M3), .NET direct calls (m1/m2), compact counter fix (C7), FileStream safety (C4), partial line handling (M9), session ID sanitization (M11). v5.5: Incremental parsing. v5.4: User name from config."
+  "scripts": {
+    "postinstall": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-statusline.ps1\""
+  },
+  "notes": "v6.0: Przepisanie na Node.js - eliminuje PowerShell cold start (~1500ms -> ~250ms). BOM-safe JSON parsing. PS1 zachowany jako fallback. v5.6: Performance audit - regex pre-filter, atomic writes, dirty-checking. v5.5: Incremental parsing. v5.4: User name from config."
 }
