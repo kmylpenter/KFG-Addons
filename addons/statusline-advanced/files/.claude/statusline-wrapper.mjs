@@ -15,8 +15,7 @@ const c_cyan = `${ESC}[38;5;44m`;
 const c_dim = `${ESC}[38;5;240m`;
 const c_yellow = `${ESC}[38;5;220m`;
 const c_green = `${ESC}[38;5;46m`;
-const c_magenta = `${ESC}[38;5;177m`;
-const c_white_bold = `${ESC}[1;97m`;
+const c_violet = `${ESC}[38;5;135m`;
 
 const SEP = `${c_dim} │ ${reset}`;
 
@@ -30,7 +29,7 @@ function getCtxColor(pct) {
 }
 
 function getEffortColor(level) {
-  if (level === 'high') return c_white_bold;
+  if (level === 'high') return c_violet;
   if (level === 'medium') return c_yellow;
   return c_dim; // low
 }
@@ -134,12 +133,6 @@ try {
   const effortColor = getEffortColor(effort);
   const effortIcon = effort === 'high' ? 'max' : effort;
 
-  // Cost (from CC stdin)
-  let costStr = '';
-  if (data.cost?.total_cost_usd != null && data.cost.total_cost_usd > 0) {
-    costStr = `$${data.cost.total_cost_usd.toFixed(2)}`;
-  }
-
   // Changed files (from PostToolUse hook)
   const sessionId = data.session_id || 'default';
   const trackFile = join(tmpdir(), `claude-changed-files-${sessionId}.json`);
@@ -155,11 +148,8 @@ try {
     `${ctxColor}${ctxStr}${reset}`,
     `${c_blue}${modelName}${reset}`,
     `${effortColor}${effortIcon}${reset}`,
+    `${c_red}${projectName}${reset}`,
   ];
-  if (costStr) {
-    parts.push(`${c_magenta}${costStr}${reset}`);
-  }
-  parts.push(`${c_red}${projectName}${reset}`);
 
   let output = parts.join(SEP);
 
