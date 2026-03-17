@@ -30,7 +30,8 @@ function getEffortColor(level) {
   if (level === 'max') return c_violet;
   if (level === 'high') return c_blue;
   if (level === 'medium') return c_yellow;
-  return c_dim; // low
+  if (level === 'low') return c_dim;
+  return `${ESC}[38;5;252m`; // auto - white/light
 }
 
 function shortModel(model, ctxWindowSize) {
@@ -101,23 +102,9 @@ function readEffortFromTranscript(transcriptPath) {
   return null;
 }
 
-function readEffortFromSettings() {
-  try {
-    const settingsPath = join(homedir(), '.claude', 'settings.json');
-    if (existsSync(settingsPath)) {
-      let raw = readFileSync(settingsPath, 'utf8');
-      if (raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1);
-      const settings = JSON.parse(raw);
-      return settings.effortLevel || null;
-    }
-  } catch {}
-  return null;
-}
-
 function resolveEffort(transcriptPath) {
   return readEffortFromTranscript(transcriptPath)
-    || readEffortFromSettings()
-    || 'medium';
+    || 'auto';
 }
 
 // Smart display names: basename if unique, parent/basename if duplicated
