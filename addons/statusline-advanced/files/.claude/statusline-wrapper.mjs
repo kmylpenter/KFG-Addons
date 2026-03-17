@@ -61,31 +61,40 @@ function stripAnsi(str) {
   return str.replace(/\x1b\[[0-9;]*m/g, '');
 }
 
-// Read effort from transcript JSONL (per-session, same as ccstatusline)
+// Read effort from transcript JSONL (per-session, based on ccstatusline approach)
 // Scans from end for last /model or /effort command output
-const EFFORT_REGEX = /with\s+(low|medium|high|max)\s+effort/i;
+// Two formats:
+//   /model: "<local-command-stdout>Set model to X with Y effort</local-command-stdout>"
+//   /effort: "<local-command-stdout>Set effort level to Y ...</local-command-stdout>"
+const MODEL_EFFORT_REGEX = /with\s+(low|medium|high|max)\s+effort/i;
+const DIRECT_EFFORT_REGEX = /Set effort level to\s+(low|medium|high|max)/i;
 
 function readEffortFromTranscript(transcriptPath) {
   if (!transcriptPath || !existsSync(transcriptPath)) return null;
   try {
-    const content = readFileSync(transcriptPath, 'utf8');
+    let content = readFileSync(transcriptPath, 'utf8');
+    if (content.charCodeAt(0) === 0xFEFF) content = content.substring(1);
     const lines = content.split('\n');
     // Scan from end (most recent first)
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
-      // Quick filter: skip lines without "effort"
-      if (!line.includes('effort')) continue;
+      if (!line.includes('effort') && !line.includes('Set model to')) continue;
       try {
         const entry = JSON.parse(line);
         const text = entry?.message?.content;
         if (typeof text !== 'string') continue;
         const clean = stripAnsi(text);
-        if (!clean.includes('Set model to')) continue;
-        const match = EFFORT_REGEX.exec(clean);
-        if (match) return match[1].toLowerCase();
-        // /model output without effort = effort was reset, fall through to settings
-        if (clean.includes('<local-command-stdout>Set model to')) return null;
+        // /effort command: "Set effort level to X ..."
+        const directMatch = DIRECT_EFFORT_REGEX.exec(clean);
+        if (directMatch) return directMatch[1].toLowerCase();
+        // /model command: "Set model to X with Y effort"
+        if (clean.includes('Set model to')) {
+          const modelMatch = MODEL_EFFORT_REGEX.exec(clean);
+          if (modelMatch) return modelMatch[1].toLowerCase();
+          // /model without effort = effort was reset
+          if (clean.includes('<local-command-stdout>Set model to')) return null;
+        }
       } catch {}
     }
   } catch {}
@@ -96,7 +105,9 @@ function readEffortFromSettings() {
   try {
     const settingsPath = join(homedir(), '.claude', 'settings.json');
     if (existsSync(settingsPath)) {
-      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      let raw = readFileSync(settingsPath, 'utf8');
+      if (raw.charCodeAt(0) === 0xFEFF) raw = raw.substring(1);
+      const settings = JSON.parse(raw);
       return settings.effortLevel || null;
     }
   } catch {}

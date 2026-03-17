@@ -1,4 +1,4 @@
-# Patch settings.json: statusline v7.5 + hooks registration
+# Patch settings.json: statusline v8.1 + hooks registration
 # Wywoływany jako postinstall przez install-addons.ps1
 
 $settingsPath = "$env:USERPROFILE\.claude\settings.json"
@@ -89,7 +89,8 @@ if (-not $hasClearHook) {
 # === Save ===
 if ($changed) {
     $json = $settings | ConvertTo-Json -Depth 10
-    $json | Set-Content $settingsPath -Encoding UTF8 -NoNewline
+    # Write UTF-8 without BOM (PS5 Set-Content -Encoding UTF8 adds BOM which breaks JSON.parse in Node)
+    [System.IO.File]::WriteAllText($settingsPath, $json)
     Write-Host "    [OK] settings.json zapisany" -ForegroundColor Green
 } else {
     Write-Host "    [~] settings.json: brak zmian" -ForegroundColor DarkGray
