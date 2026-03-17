@@ -1,0 +1,128 @@
+{
+	"name": "clipboard-workflow-helper",
+	"displayName": "Clipboard Workflow Helper (for Claude Code)",
+	"description": "Auto unselect after copy, auto timeline entry creation, and shortcuts for Claude Code workflow",
+	"version": "1.1.0",
+	"publisher": "local",
+	"engines": {
+		"vscode": "^1.106.0"
+	},
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./out/extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "clipboardHelper.copyAndUnselect",
+				"title": "Copy and Unselect"
+			},
+			{
+				"command": "clipboardHelper.selectAllWithTimeout",
+				"title": "Select All (with Ctrl+C timeout for timeline)"
+			},
+			{
+				"command": "clipboardHelper.copyAndCreateTimeline",
+				"title": "Copy, Select All and Create Timeline Entry"
+			},
+			{
+				"command": "clipboardHelper.pasteImage",
+				"title": "Paste Screenshot to Terminal (for Claude Code)"
+			},
+			{
+				"command": "clipboardHelper.toggleClipboardMonitor",
+				"title": "Toggle Clipboard Monitor (Auto-detect screenshots)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "clipboardHelper.copyAndUnselect",
+				"key": "ctrl+c",
+				"when": "editorTextFocus && editorHasSelection"
+			},
+			{
+				"command": "clipboardHelper.selectAllWithTimeout",
+				"key": "ctrl+a",
+				"when": "editorTextFocus"
+			},
+			{
+				"command": "clipboardHelper.copyAndCreateTimeline",
+				"key": "ctrl+c",
+				"when": "editorTextFocus && clipboardHelper.awaitingCtrlC"
+			},
+			{
+				"command": "clipboardHelper.pasteImage",
+				"key": "ctrl+shift+v",
+				"when": "terminalFocus"
+			}
+		],
+		"configuration": {
+			"properties": {
+				"clipboardHelper.ctrlACtrlCTimeout": {
+					"type": "number",
+					"default": 2000,
+					"description": "Time in milliseconds to wait for Ctrl+C after Ctrl+A to trigger Copy+Timeline. Set to 0 to disable.",
+					"minimum": 0,
+					"maximum": 10000
+				},
+				"clipboardHelper.backgroundTaskIntervalMinutes": {
+					"type": "number",
+					"default": 10,
+					"description": "Interval in minutes for background task to recover missing titles from cache. Min: 1, Max: 60 minutes.",
+					"minimum": 1,
+					"maximum": 60
+				},
+				"clipboardHelper.screenshotFolder": {
+					"type": "string",
+					"default": "",
+					"description": "Folder for screenshots (empty = workspace root)"
+				},
+				"clipboardHelper.pasteImagePrefix": {
+					"type": "string",
+					"default": "Sprawdz ",
+					"description": "Text prefix before file path when pasting to terminal"
+				},
+				"clipboardHelper.screenshotRetentionDays": {
+					"type": "number",
+					"default": 7,
+					"minimum": 0,
+					"description": "Delete screenshots older than X days. Set to 0 to disable cleanup."
+				},
+				"clipboardHelper.autoDetectScreenshot": {
+					"type": "boolean",
+					"default": false,
+					"description": "Auto-detect new screenshots in clipboard (monitors clipboard in background)"
+				},
+				"clipboardHelper.clipboardCheckIntervalMs": {
+					"type": "number",
+					"default": 500,
+					"minimum": 100,
+					"maximum": 5000,
+					"description": "How often to check clipboard for new images (in milliseconds)"
+				}
+			}
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"lint": "eslint src --ext ts",
+		"test": "node ./out/test/runTest.js"
+	},
+	"devDependencies": {
+		"@types/json-schema": "^7.0.15",
+		"@types/node": "^18.19.130",
+		"@types/vscode": "^1.106.1",
+		"@typescript-eslint/eslint-plugin": "^6.0.0",
+		"@typescript-eslint/parser": "^6.0.0",
+		"eslint": "^8.40.0",
+		"typescript": "^5.9.3"
+	},
+	"__metadata": {
+		"installedTimestamp": 1768072406787,
+		"targetPlatform": "undefined",
+		"size": 138626
+	}
+}

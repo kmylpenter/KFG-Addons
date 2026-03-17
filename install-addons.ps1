@@ -3,6 +3,10 @@
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
 #
+# v2.4: Fix kopiowania pojedynczych plikow do podkatalogow ~/.claude/
+#       - relativePath teraz zawsze zawiera nazwe pliku (nie tylko katalog)
+#       - Naprawia pomijanie plikow jak clear-changed-files.mjs
+#
 # v2.3: Automatyczny backup przed nadpisaniem plikow
 #       - Tworzy backup z timestampem (file.backup-YYYY-MM-DD-HHmm)
 #       - Tylko dla istniejacych plikow (nie dla katalogow)
@@ -36,7 +40,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.3.0"
+$Version = "2.4.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -351,10 +355,15 @@ function Install-Addon {
             # Wyciagnij relatywna sciezke (np. skills/eos/)
             $relativePath = Get-TargetRelativePath -TargetValue $targetValue
 
-            # FIX v2.1: Dla pojedynczych plikow do ~/.claude/ (pusty relativePath)
-            # Uzyj nazwy pliku zamiast pustego stringa
-            if ($isSourceFile -and (-not $relativePath -or $relativePath -eq "")) {
-                $relativePath = $sourceFileName
+            # FIX v2.1+v2.4: Dla pojedynczych plikow - dodaj nazwe pliku do relativePath
+            # v2.1: pusty relativePath -> uzyj nazwy pliku
+            # v2.4: niepusty relativePath (np. hooks/dist/) -> dolacz nazwe pliku
+            if ($isSourceFile) {
+                if (-not $relativePath -or $relativePath -eq "") {
+                    $relativePath = $sourceFileName
+                } elseif (-not $relativePath.EndsWith($sourceFileName)) {
+                    $relativePath = Join-Path $relativePath $sourceFileName
+                }
             }
 
             # FIX v2.2: Dla katalogow kopiowanych DO rodzica (np. skills/np/ -> skills/)

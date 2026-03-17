@@ -1,0 +1,8 @@
+{
+  "description": "Konfiguracja VSCode History dla różnych komputerów. Dodaj więcej komputerów do 'computers'.",
+  "computers": {
+    "DELL": "C:\\Users\\DELL\\AppData\\Roaming\\Code\\User\\History",
+    "Kamil": "C:\\Users\\kamil\\AppData\\Roaming\\Code\\User\\History"
+  },
+  "defaultPath": "C:\\Users\\DELL\\AppData\\Roaming\\Code\\User\\History"
+}
