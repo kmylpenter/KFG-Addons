@@ -131,7 +131,7 @@ try {
   // Effort level (from settings.json)
   const effort = readEffortLevel();
   const effortColor = getEffortColor(effort);
-  const effortIcon = effort === 'high' ? 'max' : effort;
+  const effortIcon = effort;
 
   // Changed files (from PostToolUse hook)
   const sessionId = data.session_id || 'default';
