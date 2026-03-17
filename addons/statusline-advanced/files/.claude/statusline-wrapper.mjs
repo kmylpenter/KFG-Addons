@@ -104,7 +104,7 @@ function readEffortFromTranscript(transcriptPath) {
 
 function resolveEffort(transcriptPath) {
   return readEffortFromTranscript(transcriptPath)
-    || '...';
+    || 'high';
 }
 
 // Smart display names: basename if unique, parent/basename if duplicated
