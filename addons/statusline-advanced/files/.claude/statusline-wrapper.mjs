@@ -29,7 +29,8 @@ function getCtxColor(pct) {
 }
 
 function getEffortColor(level) {
-  if (level === 'high') return c_violet;
+  if (level === 'max') return c_violet;
+  if (level === 'high') return c_blue;
   if (level === 'medium') return c_yellow;
   return c_dim; // low
 }
@@ -58,14 +59,18 @@ function shortModel(model, ctxWindowSize) {
 }
 
 function readEffortLevel() {
+  // Priority: env var > settings.json
+  if (process.env.CLAUDE_CODE_EFFORT_LEVEL) {
+    return process.env.CLAUDE_CODE_EFFORT_LEVEL;
+  }
   try {
     const settingsPath = join(homedir(), '.claude', 'settings.json');
     if (existsSync(settingsPath)) {
       const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      return settings.effortLevel || 'high';
+      return settings.effortLevel || 'max';
     }
   } catch {}
-  return 'high';
+  return 'max';
 }
 
 // Smart display names: basename if unique, parent/basename if duplicated
@@ -131,7 +136,7 @@ try {
   // Effort level (from settings.json)
   const effort = readEffortLevel();
   const effortColor = getEffortColor(effort);
-  const effortIcon = effort === 'high' ? 'max' : effort;
+  const effortIcon = effort;
 
   // Changed files (from PostToolUse hook)
   const sessionId = data.session_id || 'default';
