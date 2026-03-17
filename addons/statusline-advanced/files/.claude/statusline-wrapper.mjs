@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// KFG Statusline v7.5 - ctx% + model/ctx + project + changed files
-// Uses Claude Code's native context_window data + PostToolUse file tracking
+// KFG Statusline v8.0 - ctx% │ model/ctx │ effort │ cost │ project + changed files
+// Uses Claude Code's native statusline data + PostToolUse file tracking
+// effort read from ~/.claude/settings.json (not in stdin)
 
 import { readFileSync, existsSync } from 'fs';
 import { basename, join, relative, isAbsolute } from 'path';
-import { tmpdir } from 'os';
+import { tmpdir, homedir } from 'os';
 
 const ESC = '\x1b';
 const reset = `${ESC}[0m`;
@@ -12,6 +13,11 @@ const c_blue = `${ESC}[38;5;39m`;
 const c_red = `${ESC}[38;5;196m`;
 const c_cyan = `${ESC}[38;5;44m`;
 const c_dim = `${ESC}[38;5;240m`;
+const c_yellow = `${ESC}[38;5;220m`;
+const c_green = `${ESC}[38;5;46m`;
+const c_magenta = `${ESC}[38;5;177m`;
+
+const SEP = `${c_dim} │ ${reset}`;
 
 function getCtxColor(pct) {
   if (pct >= 85) return `${ESC}[38;5;196m`;
@@ -20,6 +26,12 @@ function getCtxColor(pct) {
   if (pct >= 55) return `${ESC}[38;5;226m`;
   if (pct >= 40) return `${ESC}[38;5;154m`;
   return `${ESC}[38;5;46m`;
+}
+
+function getEffortColor(level) {
+  if (level === 'high') return c_green;
+  if (level === 'medium') return c_yellow;
+  return c_dim; // low
 }
 
 function shortModel(model, ctxWindowSize) {
@@ -45,12 +57,21 @@ function shortModel(model, ctxWindowSize) {
   return `${prefix}${ver}${ctxSize}`;
 }
 
+function readEffortLevel() {
+  try {
+    const settingsPath = join(homedir(), '.claude', 'settings.json');
+    if (existsSync(settingsPath)) {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      return settings.effortLevel || 'high';
+    }
+  } catch {}
+  return 'high';
+}
+
 // Smart display names: basename if unique, parent/basename if duplicated
 function smartDisplayNames(fullPaths, cwd) {
-  // Filter legacy bare basenames (no slashes = old hook data)
   const valid = fullPaths.filter(f => f.includes('/') || f.includes('\\'));
 
-  // Deduplicate by full path (keep last occurrence)
   const deduped = [];
   const pathSet = new Set();
   for (let i = valid.length - 1; i >= 0; i--) {
@@ -60,26 +81,23 @@ function smartDisplayNames(fullPaths, cwd) {
     }
   }
 
-  // Count basenames to detect duplicates
   const baseCount = {};
   for (const f of deduped) {
     const b = basename(f);
     baseCount[b] = (baseCount[b] || 0) + 1;
   }
 
-  // Generate display names
   return deduped.map(f => {
     const b = basename(f);
-    if (baseCount[b] <= 1) return b;  // unique → just basename
+    if (baseCount[b] <= 1) return b;
 
-    // Duplicate → parent/basename
     const rel = relative(cwd, f).replace(/\\/g, '/');
     if (!rel.startsWith('..') && !isAbsolute(rel)) {
       const parts = rel.split('/');
       if (parts.length >= 2) return parts.slice(-2).join('/');
       return rel;
     }
-    return '~/' + b;  // external
+    return '~/' + b;
   });
 }
 
@@ -110,6 +128,17 @@ try {
   const projectName = basename(data.cwd || data.workspace?.project_dir || '');
   const cwd = data.cwd || data.workspace?.project_dir || '';
 
+  // Effort level (from settings.json)
+  const effort = readEffortLevel();
+  const effortColor = getEffortColor(effort);
+  const effortIcon = effort === 'high' ? 'max' : effort;
+
+  // Cost (from CC stdin)
+  let costStr = '';
+  if (data.cost?.total_cost_usd != null && data.cost.total_cost_usd > 0) {
+    costStr = `$${data.cost.total_cost_usd.toFixed(2)}`;
+  }
+
   // Changed files (from PostToolUse hook)
   const sessionId = data.session_id || 'default';
   const trackFile = join(tmpdir(), `claude-changed-files-${sessionId}.json`);
@@ -118,20 +147,24 @@ try {
     try { rawFiles = JSON.parse(readFileSync(trackFile, 'utf8')); } catch {}
   }
 
-  // Smart display names: unique basenames short, duplicates with parent
   const fileNames = smartDisplayNames(rawFiles, cwd);
 
-  // Box width
-  const BOX_WIDTH = 45;
+  // Line 1: ctx% │ model │ effort │ $cost │ project
+  const parts = [
+    `${ctxColor}${ctxStr}${reset}`,
+    `${c_blue}${modelName}${reset}`,
+    `${effortColor}${effortIcon}${reset}`,
+  ];
+  if (costStr) {
+    parts.push(`${c_magenta}${costStr}${reset}`);
+  }
+  parts.push(`${c_red}${projectName}${reset}`);
 
-  // Line 1: ctx% model project (padded, project in red)
-  const line1Text = `${ctxStr} ${modelName} ${projectName}`;
-  const pad = ' '.repeat(Math.max(0, BOX_WIDTH - line1Text.length));
-  let output = `${ctxColor}${ctxStr}${reset} ${c_blue}${modelName}${reset} ${c_red}${projectName}${reset}${pad}`;
+  let output = parts.join(SEP);
 
-  // Lines 2-3: changed files (cyan names, dim dot separators)
+  // Lines 2+: changed files (cyan names, dim dot separators)
   if (fileNames.length > 0) {
-    const maxW = BOX_WIDTH - 2;
+    const maxW = 50;
     const recent = fileNames.slice(-10);
     const lines = [''];
     for (const f of recent) {
