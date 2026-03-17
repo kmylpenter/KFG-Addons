@@ -1,8 +1,8 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Minimal",
-  "description": "Minimalna linia statusu: ctx% + model + projekt + zmienione pliki (per-turn). Node.js + PostToolUse/UserPromptSubmit hooks.",
-  "version": "7.5.0",
+  "displayName": "StatusLine Advanced",
+  "description": "Zaawansowana linia statusu: ctx% │ model/ctx │ effort │ $cost │ projekt + zmienione pliki (per-turn). Node.js + PostToolUse/UserPromptSubmit hooks.",
+  "version": "8.0.0",
   "author": "kmylpenter",
   "dependencies": {
     "node": {
@@ -18,5 +18,5 @@
   "scripts": {
     "postinstall": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-statusline.ps1\""
   },
-  "notes": "v7.5: ctx% (natywne z CC) + model/ctx + projekt (red) + zmienione pliki per-turn (cyan). PostToolUse hook trackuje, UserPromptSubmit resetuje. Smart basename dedup."
+  "notes": "v8.0: ctx% (kolor gradient) │ model/ctx │ effort (z settings.json) │ $cost │ projekt (red) + zmienione pliki per-turn (cyan). Separatory │ między wskaźnikami. Kompatybilny z Termux i Windows."
 }
