@@ -16,6 +16,7 @@ const c_dim = `${ESC}[38;5;240m`;
 const c_yellow = `${ESC}[38;5;220m`;
 const c_green = `${ESC}[38;5;46m`;
 const c_magenta = `${ESC}[38;5;177m`;
+const c_white_bold = `${ESC}[1;97m`;
 
 const SEP = `${c_dim} │ ${reset}`;
 
@@ -29,7 +30,7 @@ function getCtxColor(pct) {
 }
 
 function getEffortColor(level) {
-  if (level === 'high') return c_green;
+  if (level === 'high') return c_white_bold;
   if (level === 'medium') return c_yellow;
   return c_dim; // low
 }
