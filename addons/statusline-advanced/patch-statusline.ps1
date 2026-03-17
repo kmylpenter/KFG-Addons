@@ -1,4 +1,4 @@
-# Patch settings.json: statusline PS1 -> Node.js
+# Patch settings.json: statusline v7.5 + hooks registration
 # Wywoływany jako postinstall przez install-addons.ps1
 
 $settingsPath = "$env:USERPROFILE\.claude\settings.json"
@@ -8,26 +8,89 @@ if (-not (Test-Path $settingsPath)) {
 }
 
 $content = Get-Content $settingsPath -Raw
+$settings = $content | ConvertFrom-Json
+$changed = $false
 $userHome = $env:USERPROFILE -replace '\\', '/'
-$newCmd = "node $userHome/.claude/statusline-wrapper.mjs"
 
-# Zamien dowolna komende statusline PS1 na Node.js
-if ($content -match '"command"\s*:\s*"[^"]*statusline-wrapper\.ps1"') {
-    $content = $content -replace '"command"\s*:\s*"[^"]*statusline-wrapper\.ps1"', "`"command`":  `"$newCmd`""
-    $content | Set-Content $settingsPath -Encoding UTF8 -NoNewline
-    Write-Host "    [OK] settings.json: statusline -> Node.js ($newCmd)" -ForegroundColor Green
+# === 1. StatusLine command ===
+$newCmd = "node $userHome/.claude/statusline-wrapper.mjs"
+if (-not $settings.statusLine -or $settings.statusLine.command -ne $newCmd) {
+    $settings.statusLine = @{ type = "command"; command = $newCmd }
+    $changed = $true
+    Write-Host "    [OK] statusLine -> $newCmd" -ForegroundColor Green
+} else {
+    Write-Host "    [~] statusLine juz ustawiony" -ForegroundColor DarkGray
 }
-# Jesli juz jest Node.js - skip
-elseif ($content -match 'statusline-wrapper\.mjs') {
-    Write-Host "    [~] settings.json: juz ustawiony na Node.js" -ForegroundColor DarkGray
+
+# === 2. PostToolUse hook: track-changed-files ===
+$trackCmd = "node $userHome/.claude/hooks/dist/track-changed-files.mjs"
+if (-not $settings.hooks) { $settings.hooks = @{} }
+if (-not $settings.hooks.PostToolUse) { $settings.hooks.PostToolUse = @() }
+
+$hasTrackHook = $false
+foreach ($entry in $settings.hooks.PostToolUse) {
+    if ($entry.hooks) {
+        foreach ($h in $entry.hooks) {
+            if ($h.command -match 'track-changed-files') { $hasTrackHook = $true }
+        }
+    }
 }
-# Jesli ustawiony na capture wrapper - zamien tez
-elseif ($content -match '"command"\s*:\s*"[^"]*statusline-capture\.mjs"') {
-    $content = $content -replace '"command"\s*:\s*"[^"]*statusline-capture\.mjs"', "`"command`":  `"$newCmd`""
-    $content | Set-Content $settingsPath -Encoding UTF8 -NoNewline
-    Write-Host "    [OK] settings.json: statusline capture -> Node.js" -ForegroundColor Green
+
+if (-not $hasTrackHook) {
+    # Find existing Edit|Write entry or create new
+    $editWriteEntry = $settings.hooks.PostToolUse | Where-Object { $_.matcher -eq 'Edit|Write' }
+    if ($editWriteEntry) {
+        $hooksList = [System.Collections.ArrayList]@($editWriteEntry.hooks)
+        $hooksList.Add(@{ type = "command"; command = $trackCmd; timeout = 3 }) | Out-Null
+        $editWriteEntry.hooks = $hooksList.ToArray()
+    } else {
+        $settings.hooks.PostToolUse += @{
+            matcher = "Edit|Write"
+            hooks = @(@{ type = "command"; command = $trackCmd; timeout = 3 })
+        }
+    }
+    $changed = $true
+    Write-Host "    [OK] PostToolUse: track-changed-files registered" -ForegroundColor Green
+} else {
+    Write-Host "    [~] PostToolUse: track-changed-files juz zarejestrowany" -ForegroundColor DarkGray
 }
-else {
-    Write-Host "    [!] settings.json: nie znaleziono komendy statusline do zamiany" -ForegroundColor Yellow
-    Write-Host "    Dodaj recznie: `"command`": `"$newCmd`"" -ForegroundColor Gray
+
+# === 3. UserPromptSubmit hook: clear-changed-files ===
+$clearCmd = "node $userHome/.claude/hooks/dist/clear-changed-files.mjs"
+if (-not $settings.hooks.UserPromptSubmit) { $settings.hooks.UserPromptSubmit = @() }
+
+$hasClearHook = $false
+foreach ($entry in $settings.hooks.UserPromptSubmit) {
+    if ($entry.hooks) {
+        foreach ($h in $entry.hooks) {
+            if ($h.command -match 'clear-changed-files') { $hasClearHook = $true }
+        }
+    }
+}
+
+if (-not $hasClearHook) {
+    # Find existing entry or create new
+    $existingEntry = $settings.hooks.UserPromptSubmit | Select-Object -First 1
+    if ($existingEntry -and $existingEntry.hooks) {
+        $hooksList = [System.Collections.ArrayList]@($existingEntry.hooks)
+        $hooksList.Add(@{ type = "command"; command = $clearCmd; timeout = 2 }) | Out-Null
+        $existingEntry.hooks = $hooksList.ToArray()
+    } else {
+        $settings.hooks.UserPromptSubmit += @{
+            hooks = @(@{ type = "command"; command = $clearCmd; timeout = 2 })
+        }
+    }
+    $changed = $true
+    Write-Host "    [OK] UserPromptSubmit: clear-changed-files registered" -ForegroundColor Green
+} else {
+    Write-Host "    [~] UserPromptSubmit: clear-changed-files juz zarejestrowany" -ForegroundColor DarkGray
+}
+
+# === Save ===
+if ($changed) {
+    $json = $settings | ConvertTo-Json -Depth 10
+    $json | Set-Content $settingsPath -Encoding UTF8 -NoNewline
+    Write-Host "    [OK] settings.json zapisany" -ForegroundColor Green
+} else {
+    Write-Host "    [~] settings.json: brak zmian" -ForegroundColor DarkGray
 }

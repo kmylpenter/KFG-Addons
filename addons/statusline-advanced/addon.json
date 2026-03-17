@@ -1,8 +1,8 @@
 {
   "name": "statusline-advanced",
-  "displayName": "StatusLine Advanced",
-  "description": "Kompaktowa linia statusu 4x3 z parowaniem SESJA/TOTAL i per-user cross-device stats. Node.js (5-7x szybszy niz PS1)",
-  "version": "6.0.0",
+  "displayName": "StatusLine Minimal",
+  "description": "Minimalna linia statusu: ctx% + model + projekt + zmienione pliki (per-turn). Node.js + PostToolUse/UserPromptSubmit hooks.",
+  "version": "7.5.0",
   "author": "kmylpenter",
   "dependencies": {
     "node": {
@@ -12,14 +12,11 @@
   },
   "targets": {
     "files/.claude/statusline-wrapper.mjs": "~/.claude/",
-    "files/.claude/statusline-wrapper.ps1": "~/.claude/",
-    "files/.claude/statusline-wrapper.sh": "~/.claude/",
-    "files/.claude/analyze-history.ps1": "~/.claude/",
-    "files/.claude/kfg-settings.ps1": "~/.claude/",
-    "files/.claude/scripts/": "~/.claude/scripts/"
+    "files/.claude/hooks/dist/track-changed-files.mjs": "~/.claude/hooks/dist/",
+    "files/.claude/hooks/dist/clear-changed-files.mjs": "~/.claude/hooks/dist/"
   },
   "scripts": {
     "postinstall": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-statusline.ps1\""
   },
-  "notes": "v6.0: Przepisanie na Node.js - eliminuje PowerShell cold start (~1500ms -> ~250ms). BOM-safe JSON parsing. PS1 zachowany jako fallback. v5.6: Performance audit - regex pre-filter, atomic writes, dirty-checking. v5.5: Incremental parsing. v5.4: User name from config."
+  "notes": "v7.5: ctx% (natywne z CC) + model/ctx + projekt (red) + zmienione pliki per-turn (cyan). PostToolUse hook trackuje, UserPromptSubmit resetuje. Smart basename dedup."
 }
