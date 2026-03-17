@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// KFG Statusline v8.0 - ctx% │ model/ctx │ effort │ cost │ project + changed files
-// Uses Claude Code's native statusline data + PostToolUse file tracking
-// effort read from ~/.claude/settings.json (not in stdin)
+// KFG Statusline v8.1 - ctx% │ model/ctx │ EFFORT │ project + changed files
+// Effort detection: transcript JSONL > settings.json (same approach as ccstatusline)
 
 import { readFileSync, existsSync } from 'fs';
 import { basename, join, relative, isAbsolute } from 'path';
@@ -14,7 +13,6 @@ const c_red = `${ESC}[38;5;196m`;
 const c_cyan = `${ESC}[38;5;44m`;
 const c_dim = `${ESC}[38;5;240m`;
 const c_yellow = `${ESC}[38;5;220m`;
-const c_green = `${ESC}[38;5;46m`;
 const c_violet = `${ESC}[38;5;135m`;
 
 const SEP = `${c_dim} │ ${reset}`;
@@ -58,19 +56,57 @@ function shortModel(model, ctxWindowSize) {
   return `${prefix}${ver}${ctxSize}`;
 }
 
-function readEffortLevel() {
-  // Priority: env var > settings.json
-  if (process.env.CLAUDE_CODE_EFFORT_LEVEL) {
-    return process.env.CLAUDE_CODE_EFFORT_LEVEL;
-  }
+// Strip ANSI escape codes from text
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+// Read effort from transcript JSONL (per-session, same as ccstatusline)
+// Scans from end for last /model or /effort command output
+const EFFORT_REGEX = /with\s+(low|medium|high|max)\s+effort/i;
+
+function readEffortFromTranscript(transcriptPath) {
+  if (!transcriptPath || !existsSync(transcriptPath)) return null;
+  try {
+    const content = readFileSync(transcriptPath, 'utf8');
+    const lines = content.split('\n');
+    // Scan from end (most recent first)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      // Quick filter: skip lines without "effort"
+      if (!line.includes('effort')) continue;
+      try {
+        const entry = JSON.parse(line);
+        const text = entry?.message?.content;
+        if (typeof text !== 'string') continue;
+        const clean = stripAnsi(text);
+        if (!clean.includes('Set model to')) continue;
+        const match = EFFORT_REGEX.exec(clean);
+        if (match) return match[1].toLowerCase();
+        // /model output without effort = effort was reset, fall through to settings
+        if (clean.includes('<local-command-stdout>Set model to')) return null;
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+function readEffortFromSettings() {
   try {
     const settingsPath = join(homedir(), '.claude', 'settings.json');
     if (existsSync(settingsPath)) {
       const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      return settings.effortLevel || 'max';
+      return settings.effortLevel || null;
     }
   } catch {}
-  return 'max';
+  return null;
+}
+
+function resolveEffort(transcriptPath) {
+  return readEffortFromTranscript(transcriptPath)
+    || readEffortFromSettings()
+    || 'medium';
 }
 
 // Smart display names: basename if unique, parent/basename if duplicated
@@ -133,8 +169,8 @@ try {
   const projectName = basename(data.cwd || data.workspace?.project_dir || '');
   const cwd = data.cwd || data.workspace?.project_dir || '';
 
-  // Effort level (from settings.json)
-  const effort = readEffortLevel();
+  // Effort level: transcript (per-session) > settings.json (global)
+  const effort = resolveEffort(data.transcript_path);
   const effortColor = getEffortColor(effort);
   const effortIcon = `\x1b[1m${effort.toUpperCase()}\x1b[22m`;
 
@@ -148,7 +184,7 @@ try {
 
   const fileNames = smartDisplayNames(rawFiles, cwd);
 
-  // Line 1: ctx% │ model │ effort │ $cost │ project
+  // Line 1: ctx% │ model │ EFFORT │ project
   const parts = [
     `${ctxColor}${ctxStr}${reset}`,
     `${c_blue}${modelName}${reset}`,
