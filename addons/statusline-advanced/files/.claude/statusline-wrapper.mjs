@@ -31,7 +31,7 @@ function getEffortColor(level) {
   if (level === 'high') return c_blue;
   if (level === 'medium') return c_yellow;
   if (level === 'low') return c_dim;
-  return `${ESC}[38;5;252m`; // auto - white/light
+  return c_dim; // unknown/pending
 }
 
 function shortModel(model, ctxWindowSize) {
@@ -104,7 +104,7 @@ function readEffortFromTranscript(transcriptPath) {
 
 function resolveEffort(transcriptPath) {
   return readEffortFromTranscript(transcriptPath)
-    || 'auto';
+    || '...';
 }
 
 // Smart display names: basename if unique, parent/basename if duplicated
