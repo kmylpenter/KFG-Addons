@@ -194,41 +194,16 @@ if (-not (Test-Path $profilePath)) {
 $ccFunctions = @'
 
 # === CC/CCD: Claude Code Launcher (safe-permissions addon) ===
-# cc  = normalny tryb z git sync
-# ccd = YOLO mode z git sync (--dangerously-skip-permissions)
+# cc  = normalny tryb z git pull
+# ccd = YOLO mode (--dangerously-skip-permissions)
 
 function cc {
     param(
         [switch]$SkipGit,
-        [switch]$SkipSync,
-        [switch]$Force,
         [switch]$Dangerous  # Internal: YOLO mode
     )
 
     Write-Host ""
-
-    # === 0. HISTORY SYNC (pull before session) ===
-    $historyRepo = "$env:USERPROFILE\.claude-history"
-    if (Test-Path "$historyRepo\.git") {
-        Write-Host "Syncing history..." -ForegroundColor DarkGray -NoNewline
-        Push-Location $historyRepo
-        try {
-            $localChanges = git status --porcelain 2>$null
-            if ($localChanges) {
-                git add -A 2>&1 | Out-Null
-                git commit -m "Auto-commit before sync $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1 | Out-Null
-            }
-            $pullResult = git pull --rebase 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host " [OK]" -ForegroundColor DarkGray
-            } else {
-                Write-Host " [SKIP]" -ForegroundColor Yellow
-            }
-        } catch {
-            Write-Host " [ERROR]" -ForegroundColor Red
-        }
-        Pop-Location
-    }
 
     # === 1. GIT PULL (current project) ===
     if (-not $SkipGit -and (Test-Path ".git")) {
@@ -242,7 +217,7 @@ function cc {
 
         $pull = Read-Host "   Pull latest? [Y/n]"
         if ($pull -notmatch "^[nN]") {
-            $pullResult = git pull --rebase 2>&1
+            $pullResult = git pull 2>&1
             if ($LASTEXITCODE -eq 0) {
                 if ($pullResult -match "Already up to date") {
                     Write-Host "   [OK] Up to date" -ForegroundColor DarkGray
@@ -268,36 +243,13 @@ function cc {
         Write-Host ""
         claude @args
     }
-
-    # === 3. HISTORY SYNC (push after session) ===
-    if (Test-Path "$historyRepo\.git") {
-        Push-Location $historyRepo
-        $changes = git status --porcelain 2>$null
-        if ($changes) {
-            Write-Host ""
-            Write-Host "Pushing history..." -ForegroundColor DarkGray -NoNewline
-            git add -A 2>&1 | Out-Null
-            git commit -m "Session $(Get-Date -Format 'yyyy-MM-dd HH:mm')" 2>&1 | Out-Null
-            $pushResult = git push 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host " [OK]" -ForegroundColor DarkGray
-            } else {
-                Write-Host " [SKIP]" -ForegroundColor Yellow
-            }
-        }
-        Pop-Location
-    }
 }
 
 function ccd {
-    <#
-    .SYNOPSIS
-    Claude Code w YOLO mode z git sync.
-    #>
     cc -Dangerous @args
 }
 
-function cc-fast { cc -SkipGit -SkipSync }
+function cc-fast { cc -SkipGit }
 # =============================================================
 '@
 
@@ -307,7 +259,7 @@ if (-not $currentProfile) { $currentProfile = "" }
 # Usun stara wersje jesli istnieje
 if ($currentProfile -match "# === CC/CCD:|# === CCD:") {
     Write-Host "  Usuwam stara wersje cc/ccd..." -ForegroundColor Yellow
-    $currentProfile = $currentProfile -replace "(?s)# === CC.*?# ===+", ""
+    $currentProfile = $currentProfile -replace "(?s)# === CC/CCD:.*?# =====+\s*", ""
     Set-Content -Path $profilePath -Value $currentProfile.Trim() -Encoding UTF8
 }
 
@@ -329,10 +281,10 @@ Write-Host "  3. DELETE       - rm/rmdir -> trash" -ForegroundColor Blue
 Write-Host "  4. SUSPICIOUS   - git push --force wymaga potwierdzenia" -ForegroundColor Magenta
 Write-Host ""
 Write-Host "Komendy:" -ForegroundColor White
-Write-Host "  cc      - Claude z git sync (history pull/push, project pull)" -ForegroundColor Cyan
-Write-Host "  ccd     - YOLO mode z git sync (--dangerously-skip-permissions)" -ForegroundColor Yellow
-Write-Host "  cc-fast - cc bez git sync (-SkipGit -SkipSync)" -ForegroundColor Gray
-Write-Host "  claude  - surowy Claude (bez git sync)" -ForegroundColor Gray
+Write-Host "  cc      - Claude z git pull (przed sesja)" -ForegroundColor Cyan
+Write-Host "  ccd     - YOLO mode (--dangerously-skip-permissions)" -ForegroundColor Yellow
+Write-Host "  cc-fast - cc bez git pull (-SkipGit)" -ForegroundColor Gray
+Write-Host "  claude  - surowy Claude (bez git pull)" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Uzyj: trash <plik> zamiast rm <plik>" -ForegroundColor White
 Write-Host ""
