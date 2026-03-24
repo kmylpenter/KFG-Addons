@@ -45,7 +45,7 @@ Po kompakcji kontekstu Claude "zapomina" instrukcję użytkownika "pracuj aż sk
 
 ## Dlaczego to ważne
 
-- Skille jak `/loop solve` mogą trwać 30-60 minut
+- Skille jak `/petla solve` mogą trwać 30-60 minut
 - Kompakcja kontekstu usuwa instrukcje użytkownika
 - User powiedział "pracuj aż skończysz" - szanuj to
 - Przerywanie co 5 minut zabija produktywność

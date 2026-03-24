@@ -1,27 +1,27 @@
 {
   "name": "autoinit-skills",
   "displayName": "AutoInit Skills",
-  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /loop",
-  "version": "1.1.0",
+  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla",
+  "version": "2.0.0",
   "author": "KFG",
   "dependencies": {},
   "targets": {
     "files/.claude/skills/session-init/": "~/.claude/skills/session-init/",
     "files/.claude/skills/implement_plan/": "~/.claude/skills/implement_plan/",
-    "files/.claude/skills/loop/": "~/.claude/skills/loop/",
+    "files/.claude/skills/petla/": "~/.claude/skills/petla/",
     "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/"
   },
   "postInstall": {
     "description": "Register skills in skill-rules.json for auto-discovery",
     "skillRules": {
-      "loop": {
+      "petla": {
         "type": "domain",
         "enforcement": "suggest",
         "priority": "high",
         "description": "Iterative consensus workflow - audit, verify, solve, create with parallel validators",
         "promptTriggers": {
           "keywords": [
-            "loop audit", "loop verify", "loop solve", "loop create",
+            "petla audit", "petla verify", "petla solve", "petla create",
             "audit code", "audit codebase", "verify implementation",
             "verify against plan", "solve issues", "fix audit issues",
             "iterative verification", "consensus verification",
@@ -31,7 +31,7 @@
             "znajdz wszystkie bledy", "znajdz wszystkie problemy"
           ],
           "intentPatterns": [
-            "(loop|iterative).*?(audit|verify|solve|create)",
+            "(petla|iterative).*?(audit|verify|solve|create)",
             "(audit|review|check).*?(code|codebase|src|implementation)",
             "(verify|check).*?(against|vs|versus).*?(plan|spec)",
             "(solve|fix).*?(issues|problems|bugs).*?(from|audit)",
@@ -62,5 +62,5 @@
       }
     }
   },
-  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /loop (v1.5) - iteracja z konsensusem (audit/verify/solve/create)"
+  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /petla (v2.0) - iteracja z konsensusem via Agent Teams (audit/verify/solve/create)"
 }

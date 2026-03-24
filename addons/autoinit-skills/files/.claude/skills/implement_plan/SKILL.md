@@ -761,7 +761,7 @@ User: /implement_plan thoughts/shared/plans/feature.md
    c. Spawn agent for implementation
    d. Agent writes handoff on completion
    e. TaskUpdate(completed)
-5. Final: /loop verify --against plan
+5. Final: /petla verify --against plan
 ```
 
 ### Large Implementation (10+ tasks)
@@ -775,7 +775,7 @@ User: /implement_plan thoughts/shared/plans/big-feature.md
    "Find tasks where owner=backend-dev, implement next pending"
 4. Agents auto-coordinate via TaskList
 5. Monitor with ctrl+t
-6. Final verification: /loop verify
+6. Final verification: /petla verify
 ```
 
 ---
@@ -872,13 +872,13 @@ After completing all phases, verify implementation:
 
 ```
 # Verify implementation matches plan
-/loop verify src/ --against thoughts/shared/plans/auth-feature.md
+/petla verify src/ --against thoughts/shared/plans/auth-feature.md
 
 # If issues found:
-/loop solve --issues thoughts/shared/loop/verify-*.yaml
+/petla solve --issues thoughts/shared/petla/verify-*.yaml
 
 # Final audit for quality
-/loop audit src/ --lenses "bugs,tests,security"
+/petla audit src/ --lenses "bugs,tests,security"
 ```
 
 **Integration chain:**
@@ -887,11 +887,11 @@ session-init → plan
            ↓
 implement_plan → implementation
            ↓
-/loop verify → verify vs plan
+/petla verify → verify vs plan
            ↓
-/loop audit → find new issues
+/petla audit → find new issues
            ↓
-/loop solve → fix issues
+/petla solve → fix issues
 ```
 
 ---
@@ -938,7 +938,7 @@ All tasks completed
 
 # RIGHT
 All tasks completed
-/loop verify --against plan
+/petla verify --against plan
 Fix any gaps
 "Implementation verified ✅"
 ```

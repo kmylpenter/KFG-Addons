@@ -1,0 +1,168 @@
+meta:
+  mode: audit
+  target: "addons/autoinit-skills/files/.claude/skills/petla/SKILL.md"
+  started: "2026-03-24T12:00:00"
+  updated: "2026-03-24T12:30:00"
+  status: completed
+  iterations: 1
+  lenses: [api-correctness, architecture, completeness, consistency, security]
+
+issues:
+  # === CRITICAL ===
+  - id: "C1"
+    severity: critical
+    lens: api-correctness
+    item: "Task() used everywhere for agent spawning - should be Agent()"
+    location: "SKILL.md:6,565-571,1005,1053,1271-1295"
+    suggestion: "Replace all Task() with Agent(). Update allowed-tools: Task→Agent"
+    status: open
+
+  - id: "C2"
+    severity: critical
+    lens: architecture
+    item: "No Agent Teams (TeamCreate/SendMessage) - core architecture missing"
+    location: "SKILL.md:460-485,560-572"
+    suggestion: "Rewrite to use TeamCreate + named validators + SendMessage"
+    status: open
+
+  - id: "C3"
+    severity: critical
+    lens: completeness
+    item: "No error handling for agent failures/timeouts/garbage responses"
+    location: "SKILL.md:1003-1038"
+    suggestion: "Add validator error handling with retry logic"
+    status: open
+
+  - id: "C4"
+    severity: critical
+    lens: security
+    item: "Prompt injection via unescaped state file interpolation in agent prompts"
+    location: "SKILL.md:432-456"
+    suggestion: "Wrap state-file content in <data> delimiters, restrict validators to read-only"
+    status: open
+
+  # === MAJOR ===
+  - id: "M1"
+    severity: major
+    lens: security
+    item: "Validators spawned with full Write/Edit/Bash - violates least-privilege"
+    location: "SKILL.md:6,1289-1295"
+    suggestion: "Validators should be Explore/Plan (read-only) subagent_type or explicit read-only mode"
+    status: open
+
+  - id: "M2"
+    severity: major
+    lens: architecture
+    item: "No worktree isolation for parallel solve operations"
+    location: "SKILL.md:749-833"
+    suggestion: "Add isolation: worktree for independent solve agents"
+    status: open
+
+  - id: "M3"
+    severity: major
+    lens: architecture
+    item: "Architecture diagram outdated - shows flat agents, not Teams"
+    location: "SKILL.md:462-485"
+    suggestion: "Redraw with TeamCreate, named validators, SendMessage"
+    status: open
+
+  - id: "M4"
+    severity: major
+    lens: security
+    item: "Delete confirmation documented but not embedded in solve flow as hard gate"
+    location: "SKILL.md:1129-1139"
+    suggestion: "Inline AskUserQuestion gate in solve flow for delete actions"
+    status: open
+
+  - id: "M5"
+    severity: major
+    lens: security
+    item: "Path validation via basename only in examples, not enforced gate"
+    location: "SKILL.md:650,919"
+    suggestion: "Add GATE step for path validation before state file creation"
+    status: open
+
+  - id: "M6"
+    severity: major
+    lens: completeness
+    item: "Compaction recovery only covers solve mode"
+    location: "SKILL.md:1212-1265"
+    suggestion: "Add recovery for audit and create modes"
+    status: open
+
+  - id: "M7"
+    severity: major
+    lens: security
+    item: "YAML state files consumed as trusted input without validation"
+    location: "SKILL.md:218-283,370-400"
+    suggestion: "Add schema validation step and treat as untrusted"
+    status: open
+
+  - id: "M8"
+    severity: major
+    lens: architecture
+    item: "No mode parameter usage for agent autonomy control"
+    location: "SKILL.md:560-572"
+    suggestion: "Validators: mode auto. Solve agents: mode plan."
+    status: open
+
+  # === MINOR ===
+  - id: "m1"
+    severity: minor
+    lens: security
+    item: "No upper bound on --agents parameter"
+    location: "SKILL.md:500-503"
+    suggestion: "Cap at 10 agents max"
+    status: open
+
+  - id: "m2"
+    severity: minor
+    lens: security
+    item: "max_iter not compaction-resistant"
+    location: "SKILL.md:918,951"
+    suggestion: "Add to AUTONOMY RULES section"
+    status: open
+
+  - id: "m3"
+    severity: minor
+    lens: completeness
+    item: "Verify/create modes lack initialization sections"
+    location: "SKILL.md:596-631"
+    suggestion: "Add state file init for all modes"
+    status: open
+
+  - id: "m4"
+    severity: minor
+    lens: completeness
+    item: "Integration table references /build and /fix not in addon"
+    location: "SKILL.md:1143-1151"
+    suggestion: "Note they are external skills"
+    status: open
+
+  - id: "m5"
+    severity: minor
+    lens: architecture
+    item: "Background agents not mentioned as option"
+    location: "SKILL.md:1269-1297"
+    suggestion: "Document run_in_background for large audits"
+    status: open
+
+  - id: "m6"
+    severity: minor
+    lens: security
+    item: "Stuck detection is prose only, no comparison logic"
+    location: "SKILL.md:1118"
+    suggestion: "Add diff-based stuck detection in main loop"
+    status: open
+
+iterations:
+  - number: 1
+    timestamp: "2026-03-24T12:15:00"
+    new_issues_found: 18
+    consensus: "4/5 issues_found, 1/5 no_issues (consistency clean)"
+
+summary:
+  total: 18
+  critical: 4
+  major: 8
+  minor: 6

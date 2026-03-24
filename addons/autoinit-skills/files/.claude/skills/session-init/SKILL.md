@@ -3906,11 +3906,11 @@ thoughts/shared/handoffs/session-YYYY-MM-DD.yaml
      ↓ creates
 Implementation with handoffs
      ↓ verify with
-/loop verify src/ --against thoughts/shared/plans/session-plan.md
+/petla verify src/ --against thoughts/shared/plans/session-plan.md
      ↓ if issues
-/loop solve --issues thoughts/shared/loop/verify-*.yaml
+/petla solve --issues thoughts/shared/petla/verify-*.yaml
      ↓ quality audit
-/loop audit src/ --lenses "bugs,security,performance"
+/petla audit src/ --lenses "bugs,security,performance"
      ↓ final
 Production-ready code
 ```
