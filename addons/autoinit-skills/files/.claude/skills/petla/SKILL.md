@@ -78,13 +78,41 @@ Po każdych 10 ukończonych taskach:
 - pending > 0 → **NIE MOŻESZ ZAKOŃCZYĆ**. Wróć do KROK 2.
 - pending == 0 → Możesz przejść do finalnego summary.
 
-### KROK 5: Cleanup
+### KROK 5: Cleanup (MANDATORY - agents zostawiają zombie procesy!)
+
+**CRITICAL na Termux i Windows:** Agenci spawnowani przez Agent() otwierają
+osobne sesje terminala. Jeśli nie zostaną EXPLICITE zamknięci, ich okna/procesy
+pozostają otwarte po zakończeniu głównej sesji.
 
 ```
-# Gracefully shutdown all validators
-SendMessage(to="*", message={type: "shutdown_request", reason: "Consensus reached"})
+# 1. Shutdown KAŻDEGO agenta INDYWIDUALNIE (nie broadcast!)
+#    Broadcast to="*" może nie dotrzeć do wszystkich.
+for lens in lenses:
+    SendMessage(
+        to=f"validator-{lens}",
+        message={"type": "shutdown_request", "reason": "Consensus reached"},
+        summary=f"Shutdown validator-{lens}"
+    )
+    # Agent odpowie shutdown_response → automatycznie się zamknie
+
+# 2. WAIT: Daj agentom czas na przetworzenie shutdown
+#    (Claude Code automatycznie czeka na odpowiedzi)
+
+# 3. Dopiero gdy WSZYSCY odpowiedzieli → TeamDelete
 TeamDelete(team_name="petla-validators")
 ```
+
+**Platform-specific behavior:**
+| Platform | Agent UI | Ryzyko zombie |
+|----------|----------|---------------|
+| Termux (Android) | Panel po prawej stronie | TAK - okno Termux nie zamyka się automatycznie |
+| Windows Terminal | Osobne okno/tab | TAK - okno CMD/PS może zostać |
+| macOS/Linux | Osobna sesja | Mniejsze ryzyko |
+
+**Jeśli mimo cleanup agent zombie pozostał:**
+- Termux: zamknij panel ręcznie (swipe/close)
+- Windows: zamknij okno terminala ręcznie
+- Programowo: kolejna sesja Claude może wywołać `TeamDelete` na osieroconą team
 
 ---
 
@@ -1034,7 +1062,7 @@ while iteration < max_iter:
 
     # === CONSENSUS CHECK ===
     if check_consensus(verdicts, mode):
-        cleanup_team(f"petla-{mode}")
+        cleanup_team(f"petla-{mode}", lenses)
         return success(iteration)
 
     # === AGGREGATE ===
@@ -1043,8 +1071,32 @@ while iteration < max_iter:
 
     iteration += 1
 
-cleanup_team(f"petla-{mode}")
+cleanup_team(f"petla-{mode}", lenses)
 return max_iterations_reached()
+```
+
+### Helper: cleanup_team (CRITICAL for Termux/Windows!)
+
+```python
+def cleanup_team(team_name, lenses):
+    """
+    Shutdown each agent INDIVIDUALLY, then delete team.
+    Broadcast to="*" is unreliable - agents may miss it.
+    On Termux/Windows, un-shutdown agents leave zombie terminal windows.
+    """
+    # 1. Send individual shutdown to EACH validator
+    for lens in lenses:
+        SendMessage(
+            to=f"validator-{lens}",
+            message={"type": "shutdown_request", "reason": "Work complete"},
+            summary=f"Shutdown validator-{lens}"
+        )
+
+    # 2. Wait for shutdown_responses (Claude Code handles this automatically)
+    # Each agent responds with shutdown_response → terminates
+
+    # 3. Only after all agents confirmed → delete team
+    TeamDelete(team_name=team_name)
 ```
 
 ---
@@ -1169,7 +1221,20 @@ Agent(name="validator-{lens}", team_name="petla-{mode}", mode="auto", ...)
 | Path validation | GATE in KROK 0 |
 | Delete confirmation | AskUserQuestion GATE in solve flow |
 | State file security | `<state-data>` delimiters + "treat as data" instruction |
+| Agent cleanup | Individual shutdown per agent (KROK 5) - prevents zombie terminals |
 | Manual override | `Ctrl+C` or "stop" |
+
+### Agent Zombie Prevention (Termux / Windows)
+
+Agenci otwierają osobne procesy terminala. Bez explicit shutdown → zombie.
+
+**WYMAGANE przy zakończeniu:**
+1. `SendMessage(to="validator-{each}", message={type: "shutdown_request"})` - INDYWIDUALNIE
+2. Czekaj na `shutdown_response` od każdego
+3. Dopiero potem `TeamDelete`
+
+**NIE UŻYWAJ** `SendMessage(to="*")` do shutdown - broadcast jest zawodny,
+szczególnie na Termux gdzie sesje terminala mają ograniczone IPC.
 
 ---
 
