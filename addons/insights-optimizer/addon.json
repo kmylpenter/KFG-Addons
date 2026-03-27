@@ -1,0 +1,26 @@
+{
+  "name": "insights-optimizer",
+  "displayName": "Insights Optimizer",
+  "description": "Optymalizacja Claude Code na podstawie analizy Insights Report - reguly, hooki, uprawnienia, CLAUDE.md",
+  "version": "1.0.0",
+  "author": "kmylpenter",
+  "dependencies": {
+    "node": {
+      "required": true,
+      "minVersion": "18"
+    },
+    "python": {
+      "required": false,
+      "minVersion": "3.8"
+    }
+  },
+  "targets": {
+    "files/.claude/rules/verify-before-done.md": "~/.claude/rules/",
+    "files/.claude/rules/minimal-change-principle.md": "~/.claude/rules/",
+    "files/.claude/rules/follow-existing-plan.md": "~/.claude/rules/",
+    "files/.claude/hooks/src/gas-html-syntax-check.sh": "~/.claude/hooks/src/",
+    "files/.claude/hooks/src/large-file-read-guard.sh": "~/.claude/hooks/src/",
+    "files/.claude/CLAUDE.md": "~/.claude/"
+  },
+  "notes": "Po instalacji: 1) Skopiuj uprawnienia z settings-insights.json do settings.local.json, 2) Dodaj hooki z hooks-config.json do settings.json, 3) chmod +x ~/.claude/hooks/src/*.sh"
+}

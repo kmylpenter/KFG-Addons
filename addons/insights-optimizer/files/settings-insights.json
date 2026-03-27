@@ -1,0 +1,88 @@
+{
+  "_comment": "Insights Optimizer v1.0 - uprawnienia i hooki",
+  "_instructions": "Skopiuj 'permissions' do settings.local.json, dodaj 'hooks' do settings.json",
+
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developer.mozilla.org)",
+      "WebFetch(domain:npmjs.com)",
+
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git stash list:*)",
+      "Bash(git blame:*)",
+
+      "Bash(node:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(python3:*)",
+      "Bash(uv:*)",
+
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(diff:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(sort:*)",
+      "Bash(jq:*)",
+      "Bash(date:*)",
+      "Bash(stat:*)",
+      "Bash(file:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+      "Bash(realpath:*)",
+      "Bash(chmod:*)",
+      "Bash(tldr:*)",
+      "Bash(docker exec:*)",
+      "Bash(pkg install:*)"
+    ],
+    "deny": [],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(rm:*)",
+      "Bash(curl:*)"
+    ]
+  },
+
+  "hooks_to_add": {
+    "_comment": "Dodaj te wpisy do odpowiednich sekcji w settings.json",
+
+    "PostToolUse_EditWrite": {
+      "matcher": "Edit|Write",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash $HOME/.claude/hooks/src/gas-html-syntax-check.sh",
+          "timeout": 10
+        }
+      ]
+    },
+    "PreToolUse_Read": {
+      "matcher": "Read",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash $HOME/.claude/hooks/src/large-file-read-guard.sh",
+          "timeout": 3
+        }
+      ]
+    }
+  },
+
+  "env_to_add": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "128000",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "CLAUDE_CODE_GLOB_TIMEOUT_SECONDS": "30"
+  }
+}
