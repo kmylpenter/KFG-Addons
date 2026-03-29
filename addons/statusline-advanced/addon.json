@@ -2,7 +2,7 @@
   "name": "statusline-advanced",
   "displayName": "StatusLine Advanced",
   "description": "Zaawansowana linia statusu: ctx% │ model/ctx │ effort │ $cost │ projekt + zmienione pliki (per-turn). Node.js + PostToolUse/UserPromptSubmit hooks.",
-  "version": "8.2.0",
+  "version": "8.3.0",
   "author": "kmylpenter",
   "dependencies": {
     "node": {
@@ -18,5 +18,5 @@
   "scripts": {
     "postinstall": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\patch-statusline.ps1\""
   },
-  "notes": "v8.2: fix effort detection - obsługa /effort command format + BOM strip w settings.json i transcript. Kompatybilny z Termux i Windows."
+  "notes": "v8.3: effort detection - parsuje command-args z /effort (nie tylko stdout), fallback na CLAUDE_CODE_EFFORT_LEVEL env var. Fix: /effort high poprawnie wykrywany nawet gdy env var overriduje stdout."
 }

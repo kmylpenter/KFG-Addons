@@ -69,6 +69,8 @@ function stripAnsi(str) {
 //   /effort: "<local-command-stdout>Set effort level to Y ...</local-command-stdout>"
 const MODEL_EFFORT_REGEX = /with\s+(low|medium|high|max)\s+effort/i;
 const DIRECT_EFFORT_REGEX = /Set effort level to\s+(low|medium|high|max)/i;
+// /effort command entry: <command-name>/effort</command-name>...<command-args>max</command-args>
+const EFFORT_CMD_REGEX = /<command-name>\/effort<\/command-name>[\s\S]*<command-args>(low|medium|high|max)<\/command-args>/i;
 
 function readEffortFromTranscript(transcriptPath) {
   if (!transcriptPath || !existsSync(transcriptPath)) return null;
@@ -86,7 +88,10 @@ function readEffortFromTranscript(transcriptPath) {
         const text = entry?.message?.content;
         if (typeof text !== 'string') continue;
         const clean = stripAnsi(text);
-        // /effort command: "Set effort level to X ..."
+        // /effort command entry (most reliable — parses user's actual command args)
+        const cmdMatch = EFFORT_CMD_REGEX.exec(clean);
+        if (cmdMatch) return cmdMatch[1].toLowerCase();
+        // /effort stdout: "Set effort level to X ..."
         const directMatch = DIRECT_EFFORT_REGEX.exec(clean);
         if (directMatch) return directMatch[1].toLowerCase();
         // /model command: "Set model to X with Y effort"
@@ -104,6 +109,7 @@ function readEffortFromTranscript(transcriptPath) {
 
 function resolveEffort(transcriptPath) {
   return readEffortFromTranscript(transcriptPath)
+    || process.env.CLAUDE_CODE_EFFORT_LEVEL?.toLowerCase()
     || 'high';
 }
 
