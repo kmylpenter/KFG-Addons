@@ -121,9 +121,10 @@ async function pasteImage(outputChannel, extensionPath) {
             terminal = vscode.window.createTerminal('Claude');
             terminal.show();
         }
-        // Send path to terminal (without pressing Enter)
-        const textToSend = `${prefix}${filepath}`;
-        terminal.sendText(textToSend, false);
+        // Use clipboard + paste instead of sendText (sendText breaks with Ink-based terminals like Claude Code)
+        const textToSend = `${prefix}${filepath.replace(/\\/g, '/')}`;
+        await vscode.env.clipboard.writeText(textToSend);
+        await vscode.commands.executeCommand('workbench.action.terminal.paste');
         vscode.window.showInformationMessage(`Screenshot: ${filename}`);
         // Cleanup old screenshots in background (after paste completes)
         const retentionDays = config.get('screenshotRetentionDays') ?? 7;

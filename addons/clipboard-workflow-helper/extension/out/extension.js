@@ -212,7 +212,9 @@ function activate(context) {
                         terminal = vscode.window.createTerminal('Claude');
                         terminal.show();
                     }
-                    terminal.sendText(`${prefix}${pendingPath}`, false);
+                    const textToSend = `${prefix}${pendingPath.replace(/\\/g, '/')}`;
+                    await vscode.env.clipboard.writeText(textToSend);
+                    await vscode.commands.executeCommand('workbench.action.terminal.paste');
                     vscode.window.showInformationMessage(`Screenshot: ${require('path').basename(pendingPath)}`);
                     return;
                 }
