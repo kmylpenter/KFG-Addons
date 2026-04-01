@@ -5,6 +5,9 @@
   "version": "2.0.0",
   "author": "KFG",
   "dependencies": {},
+  "ensureEnv": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "targets": {
     "files/.claude/skills/session-init/": "~/.claude/skills/session-init/",
     "files/.claude/skills/implement_plan/": "~/.claude/skills/implement_plan/",

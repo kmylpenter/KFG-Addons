@@ -3,6 +3,10 @@
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
 #
+# v2.5: ensureEnv - automatyczne ustawianie zmiennych env w settings.json
+#       - Addon moze deklarowac wymagane env vars w addon.json
+#       - Installer sprawdza i dodaje brakujace do settings.json
+#
 # v2.4: Fix kopiowania pojedynczych plikow do podkatalogow ~/.claude/
 #       - relativePath teraz zawsze zawiera nazwe pliku (nie tylko katalog)
 #       - Naprawia pomijanie plikow jak clear-changed-files.mjs
@@ -40,7 +44,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.4.0"
+$Version = "2.5.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -197,6 +201,65 @@ function Get-TargetRelativePath {
 }
 
 # ============================================================
+# SETTINGS.JSON ENV MANAGEMENT (v2.5)
+# ============================================================
+
+function Ensure-SettingsEnv {
+    <#
+    .SYNOPSIS
+    Sprawdza i dodaje zmienne srodowiskowe do settings.json
+    Uzywa addon.json pole "ensureEnv" do deklaracji wymaganych zmiennych
+    #>
+    param(
+        [hashtable]$EnvVars  # np. @{ "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" = "1" }
+    )
+
+    if (-not $EnvVars -or $EnvVars.Count -eq 0) { return }
+
+    $settingsPath = Join-Path $TargetBase ".claude\settings.json"
+
+    if (-not (Test-Path $settingsPath)) {
+        Write-Warn "Brak settings.json: $settingsPath"
+        return
+    }
+
+    try {
+        $settingsRaw = Get-Content $settingsPath -Raw
+        $settings = $settingsRaw | ConvertFrom-Json
+
+        # Upewnij sie ze sekcja env istnieje
+        if (-not $settings.env) {
+            $settings | Add-Member -NotePropertyName "env" -NotePropertyValue ([PSCustomObject]@{})
+        }
+
+        $changed = $false
+        foreach ($key in $EnvVars.Keys) {
+            $value = $EnvVars[$key]
+            $currentValue = $settings.env.$key
+
+            if ($currentValue -eq $value) {
+                Write-OK "Env $key = $value (juz ustawione)"
+            } else {
+                if ($currentValue) {
+                    Write-Info "Env $key: $currentValue -> $value"
+                } else {
+                    Write-Info "Env $key = $value (dodaje)"
+                }
+                $settings.env | Add-Member -NotePropertyName $key -NotePropertyValue $value -Force
+                $changed = $true
+            }
+        }
+
+        if ($changed) {
+            $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding UTF8
+            Write-OK "Zaktualizowano settings.json (env)"
+        }
+    } catch {
+        Write-Err "Blad aktualizacji settings.json: $_"
+    }
+}
+
+# ============================================================
 # ORIGINAL HELPER FUNCTIONS
 # ============================================================
 
@@ -217,6 +280,7 @@ function Get-Addons {
                     Dependencies = $json.dependencies
                     Targets = $json.targets
                     Scripts = $json.scripts
+                    ensureEnv = $json.ensureEnv
                     Path = $folder.FullName
                     Notes = $json.notes
                 }
@@ -439,6 +503,16 @@ function Install-Addon {
             Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
         }
         Write-OK "Skopiowano: $($target.Name) -> $targetPath"
+    }
+
+    # Ensure env vars in settings.json (v2.5)
+    if ($Addon.ensureEnv) {
+        Write-Info "Sprawdzam wymagane zmienne srodowiskowe..."
+        $envHash = @{}
+        foreach ($prop in $Addon.ensureEnv.PSObject.Properties) {
+            $envHash[$prop.Name] = $prop.Value
+        }
+        Ensure-SettingsEnv -EnvVars $envHash
     }
 
     # Run postinstall script if defined
