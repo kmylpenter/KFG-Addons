@@ -1,12 +1,27 @@
 ---
 name: petla
-description: Iteracja z konsensusem via Agent Teams - persistent teammates walidują dopóki nie osiągną consensus. Tryby: create, verify, audit, solve.
-version: "2.0"
+description: Iteracja z konsensusem via Agent Teams - persistent teammates walidują dopóki nie osiągną consensus. Tryby: create, verify, audit, solve. v2.1: walidatory zawsze w tle (run_in_background=True) - naprawia hang Termux.
+version: "2.1"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, SendMessage, TeamCreate, TeamDelete, TaskCreate, TaskUpdate, TaskList, TaskGet, AskUserQuestion
 ---
 
-# /petla v2.0 - Iteracja z Konsensusem (Agent Teams)
+# /petla v2.1 - Iteracja z Konsensusem (Agent Teams, Background by Default)
+
+---
+
+## BACKGROUND AGENTS BY DEFAULT (v2.1+)
+
+**Wszystkie walidatory startują z `run_in_background=True` — ZAWSZE, bez wyjątku.**
+
+Powód: panele teammate na małych ekranach (Termux, Android) zwężają główny
+panel do ~20 kolumn. Scrollowanie przez długie wydruki zawiesza UI. Od v2.1
+panele nie są tworzone — cała koordynacja idzie przez SendMessage + state
+file + TaskList. Nic się nie zmienia w jakości/wyniku — tylko UI jest
+niewidoczny, co jest zamierzone (user i tak nie potrzebuje go widzieć).
+
+Jeśli kiedyś będziesz widzieć w kodzie spawn bez `run_in_background=True`
+→ to BŁĄD, dodaj tę flagę.
 
 ---
 
@@ -42,11 +57,13 @@ Ten skill ma WYMUSZONE kroki. NIE MOŻESZ ich pominąć.
 TeamCreate(team_name="petla-validators")
 
 # Spawn named validator agents (ALL in ONE message!):
+# run_in_background=True ZAWSZE — brak widocznych paneli, brak zawieszenia Termux
 Agent(
   name="validator-{lens}",
   team_name="petla-validators",
   subagent_type="general-purpose",
   mode="auto",
+  run_in_background=True,
   prompt="[VALIDATOR - LENS: {lens}] ..."
 )
 # ... repeat for each lens
@@ -474,9 +491,9 @@ progress:
 3. CREATE TEAM:
    TeamCreate(team_name="petla-audit")
 
-4. SPAWN NAMED VALIDATORS (ALL in ONE message!):
-   Agent(name="validator-bugs", team_name="petla-audit", mode="auto", ...)
-   Agent(name="validator-security", team_name="petla-audit", mode="auto", ...)
+4. SPAWN NAMED VALIDATORS (ALL in ONE message, run_in_background=True!):
+   Agent(name="validator-bugs", team_name="petla-audit", mode="auto", run_in_background=True, ...)
+   Agent(name="validator-security", team_name="petla-audit", mode="auto", run_in_background=True, ...)
    ... one per lens
 
 5. ITERATION 1:
@@ -506,9 +523,9 @@ progress:
 
 3. CREATE solve state file
 
-4. CREATE TEAM:
+4. CREATE TEAM (run_in_background=True w każdym Agent()!):
    TeamCreate(team_name="petla-solve")
-   Agent(name="validator-correctness", team_name="petla-solve", mode="auto", ...)
+   Agent(name="validator-correctness", team_name="petla-solve", mode="auto", run_in_background=True, ...)
    ... one per solve lens
 
 5. FOR each issue (prioritized by severity):
@@ -540,12 +557,15 @@ progress:
 
 ```python
 # CRITICAL: All Agent() calls in ONE message for parallel execution!
+# CRITICAL: run_in_background=True — walidatory działają bez widocznych paneli
+#           (na Termux i małych ekranach panele zawieszają UI przy scrollowaniu)
 
 Agent(
     name="validator-{lens}",
     team_name="petla-{mode}",
     subagent_type="general-purpose",
     mode="auto",
+    run_in_background=True,
     description="Validate {lens} for /petla {mode}",
     prompt="""
 [VALIDATOR AGENT - LENS: {lens}]
@@ -632,7 +652,11 @@ Options:
   --agents N       - Liczba walidatorów (default: 5, max: 10)
   --max-iter N     - Max iteracji (default: 10)
   --lenses "..."   - Custom lenses dla agentów
-  --background     - Walidatory jako background agents (duże audyty)
+
+Uwaga: Walidatory ZAWSZE startują z run_in_background=True (brak widocznych
+paneli teammate, brak zawieszania Termux przy małym ekranie). Stan pracy
+jest widoczny w state file i przez TaskList — panele nigdy nie były
+potrzebne do działania skilla.
 ```
 
 ---
@@ -798,12 +822,12 @@ EOF
 
 ```
 1. TeamCreate(team_name="petla-audit")
-2. Spawn named validators (ALL in ONE message):
-   Agent(name="validator-bugs", team_name="petla-audit", mode="auto", ...)
-   Agent(name="validator-duplicates", ...)
-   Agent(name="validator-security", ...)
-   Agent(name="validator-performance", ...)
-   Agent(name="validator-style", ...)
+2. Spawn named validators (ALL in ONE message, run_in_background=True):
+   Agent(name="validator-bugs", team_name="petla-audit", mode="auto", run_in_background=True, ...)
+   Agent(name="validator-duplicates", run_in_background=True, ...)
+   Agent(name="validator-security", run_in_background=True, ...)
+   Agent(name="validator-performance", run_in_background=True, ...)
+   Agent(name="validator-style", run_in_background=True, ...)
 
 ITERATION 1:
 ├── Validators szukają problemów (równolegle)
@@ -894,12 +918,12 @@ EOF
 1. READ + validate audit YAML schema
 2. CREATE solve state file
 3. TeamCreate(team_name="petla-solve")
-4. Spawn solve validators (ONE message):
-   Agent(name="validator-correctness", team_name="petla-solve", mode="auto", ...)
-   Agent(name="validator-regression", ...)
-   Agent(name="validator-tests", ...)
-   Agent(name="validator-style", ...)
-   Agent(name="validator-completeness", ...)
+4. Spawn solve validators (ONE message, run_in_background=True):
+   Agent(name="validator-correctness", team_name="petla-solve", mode="auto", run_in_background=True, ...)
+   Agent(name="validator-regression", run_in_background=True, ...)
+   Agent(name="validator-tests", run_in_background=True, ...)
+   Agent(name="validator-style", run_in_background=True, ...)
+   Agent(name="validator-completeness", run_in_background=True, ...)
 
 FOR each issue (critical → major → minor):
    a. PROPOSE fix
@@ -926,6 +950,7 @@ for group in independent_groups:
         team_name="petla-solve",
         isolation="worktree",
         mode="auto",
+        run_in_background=True,
         prompt=f"Fix these issues: {group.issues}"
     )
 # Merge results from worktrees after completion
@@ -961,11 +986,11 @@ for group in independent_groups:
 /petla create docs/ --max-iter 5
 ```
 
-### Background mode
-```
-/petla audit src/ --background
-# Validators as background agents (run_in_background: true)
-```
+### Background mode (DEFAULT — ZAWSZE włączony)
+
+Wszystkie walidatory startują z `run_in_background=True`. Brak paneli
+teammate = brak ryzyka zawieszenia Termux przy scrollowaniu. Koordynacja
+odbywa się przez SendMessage + TaskList + state file.
 
 ---
 
@@ -1010,12 +1035,14 @@ lenses = options.lenses or DEFAULT_LENSES[mode][:agents_count]
 TeamCreate(team_name=f"petla-{mode}")
 
 # Spawn ALL validators in ONE message:
+# run_in_background=True jest MANDATORY - brak paneli, zero hang na Termux
 for lens in lenses:
     Agent(
         name=f"validator-{lens}",
         team_name=f"petla-{mode}",
         subagent_type="general-purpose",
         mode="auto",
+        run_in_background=True,
         description=f"Validate {lens}",
         prompt=build_validator_prompt(lens, mode, target)
     )
@@ -1119,12 +1146,12 @@ Agent(name="v2", prompt="...")
 ### CORRECT - Parallel (szybkie)
 
 ```
-# SINGLE MESSAGE with ALL agents:
-Agent(name="validator-bugs", team_name="petla-audit", mode="auto", prompt="...")
-Agent(name="validator-security", team_name="petla-audit", mode="auto", prompt="...")
-Agent(name="validator-performance", team_name="petla-audit", mode="auto", prompt="...")
-Agent(name="validator-style", team_name="petla-audit", mode="auto", prompt="...")
-Agent(name="validator-duplicates", team_name="petla-audit", mode="auto", prompt="...")
+# SINGLE MESSAGE with ALL agents, run_in_background=True na każdym:
+Agent(name="validator-bugs", team_name="petla-audit", mode="auto", run_in_background=True, prompt="...")
+Agent(name="validator-security", team_name="petla-audit", mode="auto", run_in_background=True, prompt="...")
+Agent(name="validator-performance", team_name="petla-audit", mode="auto", run_in_background=True, prompt="...")
+Agent(name="validator-style", team_name="petla-audit", mode="auto", run_in_background=True, prompt="...")
+Agent(name="validator-duplicates", team_name="petla-audit", mode="auto", run_in_background=True, prompt="...")
 ```
 
 ### Re-using validators (SendMessage)
@@ -1197,7 +1224,7 @@ Look for:
 
 ```
 TeamCreate(team_name="petla-{mode}")
-Agent(name="validator-{lens}", team_name="petla-{mode}", mode="auto", ...)
+Agent(name="validator-{lens}", team_name="petla-{mode}", mode="auto", run_in_background=True, ...)
 ```
 
 ### Step 4: Continue

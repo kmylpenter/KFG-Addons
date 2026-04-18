@@ -44,7 +44,24 @@
       "Bash(powershell -NoProfile -Command \". ''$env:USERPROFILE\\\\Documents\\\\WindowsPowerShell\\\\Microsoft.PowerShell_profile.ps1''; Get-Command cc, ccd, cc-fast | Format-Table Name, CommandType\")",
       "Bash(powershell -NoProfile -Command \". ''C:\\\\Users\\\\DELL\\\\Documents\\\\WindowsPowerShell\\\\Microsoft.PowerShell_profile.ps1''; Get-Command cc, ccd, cc-fast | Format-Table Name, CommandType\")",
       "Bash(esbuild:*)",
-      "Bash(then powershell -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")"
+      "Bash(then powershell -ExecutionPolicy Bypass -File \"$USERPROFILE/.claude/scripts/export-device-stats.ps1\")",
+      "Bash(grep -rn /loop /data/data/com.termux/files/home/projekty/KFG-Addons/addons/autoinit-skills/ --include=*.md --include=*.json)",
+      "Bash(grep -rn skills/loop /data/data/com.termux/files/home/projekty/KFG-Addons/addons/autoinit-skills/ --include=*.md --include=*.json)",
+      "Bash(cp:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(python3 -m json.tool)",
+      "WebSearch",
+      "WebFetch(domain:www.zolkos.com)",
+      "WebFetch(domain:www.natemeyvis.com)",
+      "Bash(bash \"$CLAUDE_PROJECT_DIR/.claude/scripts/generate-reasoning.sh\" 72f0002 \"feat: add insights-optimizer addon based on Insights Report analysis\")",
+      "Bash(mkdir -p /data/data/com.termux/files/home/.claude/hooks/src)",
+      "Bash(cp /data/data/com.termux/files/home/projekty/KFG-Addons/addons/insights-optimizer/files/.claude/hooks/src/*.sh /data/data/com.termux/files/home/.claude/hooks/src/)",
+      "Bash(chmod +x /data/data/com.termux/files/home/.claude/hooks/src/*.sh)",
+      "Bash(cp /data/data/com.termux/files/home/projekty/KFG-Addons/addons/autoinit-skills/files/.claude/skills/petla/SKILL.md /data/data/com.termux/files/home/.claude/skills/petla/SKILL.md)",
+      "Read(//data/data/com.termux/files/home/.claude/skills/petla/**)"
     ]
   }
 }
