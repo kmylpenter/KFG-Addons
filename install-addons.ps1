@@ -504,6 +504,8 @@ function Install-Addon {
                 Write-Warn "Wykryto uszkodzona sciezke (katalog zamiast pliku): $expectedFilePath"
                 Remove-Item -Path $expectedFilePath -Recurse -Force
                 Write-OK "Usunieto uszkodzony katalog"
+                # v2.6: cleanup uniewaznia detekcje - po usunieciu traktuj jako nowy plik
+                $existing.Found = $false
             }
         }
 
@@ -512,8 +514,8 @@ function Install-Addon {
             New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
         }
 
-        # Backup przed nadpisaniem (v2.3)
-        if ($existing.Found -and $isSourceFile) {
+        # Backup przed nadpisaniem (v2.3) - tylko gdy istniejacy plik jest faktycznie plikiem
+        if ($existing.Found -and $isSourceFile -and (Test-Path $existing.Path -PathType Leaf)) {
             $backupPath = "$($existing.Path).backup-$(Get-Date -Format 'yyyy-MM-dd-HHmm')"
             Copy-Item -Path $existing.Path -Destination $backupPath -Force
             Write-Info "Backup: $backupPath"
