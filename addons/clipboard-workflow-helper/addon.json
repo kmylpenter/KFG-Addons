@@ -1,12 +1,12 @@
 {
   "name": "clipboard-workflow-helper",
   "displayName": "Clipboard Workflow Helper",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "VS Code extension: Ctrl+C auto-unselect, Ctrl+A+C timeline entry, auto-backup plików (Claude Code compatible)",
   "author": "KFG",
   "targets": {},
   "scripts": {
     "postinstall": "powershell -ExecutionPolicy Bypass -File \"%ADDON_DIR%\\install-extension.ps1\""
   },
-  "notes": "v1.1: lazy-load fix - Ctrl+A dziala natychmiast bez 'Activating Extension'"
+  "notes": "v1.2: removed ClipboardListener.exe (Bitdefender false-positive) + auto-detect screenshot monitor. Ctrl+Shift+V paste screenshot still works via ClipboardToFile.exe."
 }

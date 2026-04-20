@@ -2,7 +2,7 @@
 	"name": "clipboard-workflow-helper",
 	"displayName": "Clipboard Workflow Helper (for Claude Code)",
 	"description": "Auto unselect after copy, auto timeline entry creation, and shortcuts for Claude Code workflow",
-	"version": "1.1.0",
+	"version": "1.2.0",
 	"publisher": "local",
 	"engines": {
 		"vscode": "^1.106.0"
@@ -28,10 +28,6 @@
 			{
 				"command": "clipboardHelper.pasteImage",
 				"title": "Paste Screenshot to Terminal (for Claude Code)"
-			},
-			{
-				"command": "clipboardHelper.toggleClipboardMonitor",
-				"title": "Toggle Clipboard Monitor (Auto-detect screenshots)"
 			}
 		],
 		"keybindings": [
@@ -87,18 +83,6 @@
 					"default": 7,
 					"minimum": 0,
 					"description": "Delete screenshots older than X days. Set to 0 to disable cleanup."
-				},
-				"clipboardHelper.autoDetectScreenshot": {
-					"type": "boolean",
-					"default": false,
-					"description": "Auto-detect new screenshots in clipboard (monitors clipboard in background)"
-				},
-				"clipboardHelper.clipboardCheckIntervalMs": {
-					"type": "number",
-					"default": 500,
-					"minimum": 100,
-					"maximum": 5000,
-					"description": "How often to check clipboard for new images (in milliseconds)"
 				}
 			}
 		}

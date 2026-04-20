@@ -42,7 +42,6 @@ const path = __importStar(require("path"));
 let copyAndUnselect_1;
 let copyAndCreateTimeline_1;
 let pasteImage_1;
-let clipboardMonitor_1;
 let changeTracker_1;
 let timelineManager_1;
 let timelineManifest_1;
@@ -55,7 +54,6 @@ function loadHeavyModules() {
     copyAndUnselect_1 = require("./commands/copyAndUnselect");
     copyAndCreateTimeline_1 = require("./commands/copyAndCreateTimeline");
     pasteImage_1 = require("./commands/pasteImage");
-    clipboardMonitor_1 = require("./utils/clipboardMonitor");
     changeTracker_1 = require("./utils/changeTracker");
     timelineManager_1 = require("./utils/timelineManager");
     timelineManifest_1 = require("./utils/timelineManifest");
@@ -66,7 +64,6 @@ let changeTracker;
 let awaitingCtrlC = false;
 let timeoutHandle = null;
 let outputChannel;
-let clipboardMonitor = null;
 let _managersInitialized = false;
 function ensureManagers(context) {
     if (_managersInitialized) return;
@@ -77,9 +74,6 @@ function ensureManagers(context) {
     timelineManager_1.TimelineManager.initialize(context, outputChannel);
     timelineManifest_1.TimelineManifest.initialize(context.extensionPath, outputChannel);
     autoBackupManager_1.AutoBackupManager.initialize(outputChannel);
-    // Start clipboard monitor
-    clipboardMonitor = new clipboardMonitor_1.ClipboardMonitor(outputChannel, context.extensionPath);
-    clipboardMonitor.start();
     // Track document changes
     let disposable4 = vscode.workspace.onDidChangeTextDocument((event) => {
         const document = event.document;
@@ -201,39 +195,7 @@ function activate(context) {
     context.subscriptions.push(
         vscode.commands.registerCommand('clipboardHelper.pasteImage', async () => {
             ensureManagers(context);
-            if (clipboardMonitor && clipboardMonitor.hasPending()) {
-                const pendingPath = clipboardMonitor.getPendingPath();
-                if (pendingPath) {
-                    outputChannel.appendLine(`[PasteImage] Using pending screenshot: ${pendingPath}`);
-                    const config = vscode.workspace.getConfiguration('clipboardHelper');
-                    const prefix = config.get('pasteImagePrefix') || 'Sprawdz ';
-                    let terminal = vscode.window.activeTerminal;
-                    if (!terminal) {
-                        terminal = vscode.window.createTerminal('Claude');
-                        terminal.show();
-                    }
-                    const textToSend = `${prefix}${pendingPath.replace(/\\/g, '/')}`;
-                    await vscode.env.clipboard.writeText(textToSend);
-                    await vscode.commands.executeCommand('workbench.action.terminal.paste');
-                    vscode.window.showInformationMessage(`Screenshot: ${require('path').basename(pendingPath)}`);
-                    return;
-                }
-            }
             await (0, pasteImage_1.pasteImage)(outputChannel, context.extensionPath);
-        })
-    );
-    // Toggle clipboard monitor
-    context.subscriptions.push(
-        vscode.commands.registerCommand('clipboardHelper.toggleClipboardMonitor', () => {
-            ensureManagers(context);
-            if (clipboardMonitor) {
-                if (clipboardMonitor.getIsRunning()) {
-                    clipboardMonitor.stop();
-                    vscode.window.showInformationMessage('Clipboard monitor zatrzymany.');
-                } else {
-                    clipboardMonitor.start();
-                }
-            }
         })
     );
     // DEFERRED: Initialize heavy managers after commands are registered
@@ -242,7 +204,6 @@ function activate(context) {
 }
 function deactivate() {
     if (timeoutHandle) clearTimeout(timeoutHandle);
-    if (clipboardMonitor) clipboardMonitor.stop();
     if (changeTracker) changeTracker.clear();
     if (_heavyModulesLoaded && timelineManifest_1 && timelineManifest_1.TimelineManifest.hasUpdates()) {
         try {

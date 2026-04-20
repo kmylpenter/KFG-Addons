@@ -74,7 +74,7 @@ if ($cleaned -eq 0) {
 # ============================================================
 Write-Header "Instalacja Extension"
 
-$targetDir = Join-Path $vsCodeExtDir "local.clipboard-workflow-helper-1.1.0"
+$targetDir = Join-Path $vsCodeExtDir "local.clipboard-workflow-helper-1.2.0"
 
 # Kopiuj calosc
 Write-Info "Kopiowanie do $targetDir"
@@ -87,7 +87,7 @@ Write-OK "Extension skopiowana"
 # ============================================================
 Write-Host ""
 Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
-Write-Host "  |    Clipboard Workflow Helper v1.1 - Zainstalowany         |" -ForegroundColor Cyan
+Write-Host "  |    Clipboard Workflow Helper v1.2 - Zainstalowany         |" -ForegroundColor Cyan
 Write-Host "  +-----------------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "    Funkcje:" -ForegroundColor White
