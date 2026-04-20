@@ -38,11 +38,16 @@ foreach ($entry in $settings.hooks.PostToolUse) {
 
 if (-not $hasTrackHook) {
     # Find existing Edit|Write entry or create new
-    $editWriteEntry = $settings.hooks.PostToolUse | Where-Object { $_.matcher -eq 'Edit|Write' }
+    $editWriteEntry = $settings.hooks.PostToolUse | Where-Object { $_.matcher -eq 'Edit|Write' } | Select-Object -First 1
     if ($editWriteEntry) {
-        $hooksList = [System.Collections.ArrayList]@($editWriteEntry.hooks)
-        $hooksList.Add(@{ type = "command"; command = $trackCmd; timeout = 3 }) | Out-Null
-        $editWriteEntry.hooks = $hooksList.ToArray()
+        $newHook = @{ type = "command"; command = $trackCmd; timeout = 3 }
+        if ($editWriteEntry.PSObject.Properties.Name -contains 'hooks' -and $editWriteEntry.hooks) {
+            $hooksList = [System.Collections.ArrayList]@($editWriteEntry.hooks)
+            $hooksList.Add($newHook) | Out-Null
+            $editWriteEntry.hooks = $hooksList.ToArray()
+        } else {
+            $editWriteEntry | Add-Member -NotePropertyName 'hooks' -NotePropertyValue @($newHook) -Force
+        }
     } else {
         $settings.hooks.PostToolUse += @{
             matcher = "Edit|Write"
@@ -71,10 +76,15 @@ foreach ($entry in $settings.hooks.UserPromptSubmit) {
 if (-not $hasClearHook) {
     # Find existing entry or create new
     $existingEntry = $settings.hooks.UserPromptSubmit | Select-Object -First 1
-    if ($existingEntry -and $existingEntry.hooks) {
-        $hooksList = [System.Collections.ArrayList]@($existingEntry.hooks)
-        $hooksList.Add(@{ type = "command"; command = $clearCmd; timeout = 2 }) | Out-Null
-        $existingEntry.hooks = $hooksList.ToArray()
+    if ($existingEntry) {
+        $newHook = @{ type = "command"; command = $clearCmd; timeout = 2 }
+        if ($existingEntry.PSObject.Properties.Name -contains 'hooks' -and $existingEntry.hooks) {
+            $hooksList = [System.Collections.ArrayList]@($existingEntry.hooks)
+            $hooksList.Add($newHook) | Out-Null
+            $existingEntry.hooks = $hooksList.ToArray()
+        } else {
+            $existingEntry | Add-Member -NotePropertyName 'hooks' -NotePropertyValue @($newHook) -Force
+        }
     } else {
         $settings.hooks.UserPromptSubmit += @{
             hooks = @(@{ type = "command"; command = $clearCmd; timeout = 2 })

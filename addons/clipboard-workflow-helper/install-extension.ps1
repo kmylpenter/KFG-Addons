@@ -76,9 +76,26 @@ Write-Header "Instalacja Extension"
 
 $targetDir = Join-Path $vsCodeExtDir "local.clipboard-workflow-helper-1.2.0"
 
-# Kopiuj calosc
+# v1.2.1: Defensywne usuniecie legacy ClipboardListener.exe z source i target
+# (Bitdefender flaguje go jako Trojan - pozostalosc po v1.1.0)
+$legacyExePaths = @(
+    (Join-Path $extensionSourceDir "ClipboardListener.exe"),
+    (Join-Path $targetDir "ClipboardListener.exe")
+)
+foreach ($legacy in $legacyExePaths) {
+    if (Test-Path $legacy) {
+        try {
+            Remove-Item -Path $legacy -Force -ErrorAction Stop
+            Write-Info "Usunieto legacy: $legacy"
+        } catch {
+            Write-Warn "Nie mozna usunac (Bitdefender lock?): $legacy - zostanie pominiety"
+        }
+    }
+}
+
+# Kopiuj calosc (wyklucz legacy ClipboardListener.exe gdyby przetrwal)
 Write-Info "Kopiowanie do $targetDir"
-Copy-Item -Path $extensionSourceDir -Destination $targetDir -Recurse -Force
+Copy-Item -Path $extensionSourceDir -Destination $targetDir -Recurse -Force -Exclude "ClipboardListener.exe" -ErrorAction Continue
 
 Write-OK "Extension skopiowana"
 
