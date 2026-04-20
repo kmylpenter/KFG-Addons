@@ -241,7 +241,7 @@ function Ensure-SettingsEnv {
                 Write-OK "Env $key = $value (juz ustawione)"
             } else {
                 if ($currentValue) {
-                    Write-Info "Env $key: $currentValue -> $value"
+                    Write-Info "Env ${key}: $currentValue -> $value"
                 } else {
                     Write-Info "Env $key = $value (dodaje)"
                 }
