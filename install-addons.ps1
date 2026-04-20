@@ -3,6 +3,11 @@
 # ============================================================
 # Modularny instalator dodatkow dla Claude Code
 #
+# v2.6: Fix: tworzenie katalogu zamiast pliku dla nowych pojedynczych plikow
+#       - Dla plikow targetPath to KATALOG (parent), nie sciezka samego pliku
+#       - Auto-cleanup: jesli poprzednia wersja utworzyla katalog zamiast pliku,
+#         zostaje wykryty i usuniety przed kopiowaniem
+#
 # v2.5: ensureEnv - automatyczne ustawianie zmiennych env w settings.json
 #       - Addon moze deklarowac wymagane env vars w addon.json
 #       - Installer sprawdza i dodaje brakujace do settings.json
@@ -44,7 +49,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2.5.0"
+$Version = "2.6.0"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $addonsDir = Join-Path $scriptDir "addons"
 
@@ -476,12 +481,30 @@ function Install-Addon {
                 # Nie istnieje nigdzie - instaluj do globalnego (domyslnie)
                 $targetPath = $targetValue -replace "~/", "$TargetBase\"
                 $targetPath = $targetPath -replace "~\\", "$TargetBase\"
+                # v2.6: dla pojedynczych plikow targetPath to KATALOG (parent), nie sam plik
+                if ($isSourceFile) {
+                    $targetPath = Split-Path $targetPath -Parent
+                }
                 Write-Info "Nowy: $relativePath -> global"
             }
         } else {
             # Nie-claude target (np. ~/.templates/) - standardowa logika
             $targetPath = $targetValue -replace "~/", "$TargetBase\"
             $targetPath = $targetPath -replace "~\\", "$TargetBase\"
+            if ($isSourceFile) {
+                $targetPath = Split-Path $targetPath -Parent
+            }
+        }
+
+        # v2.6: Wykryj i napraw przypadek gdy poprzednia wersja utworzyla
+        # sciezke pliku jako katalog (bug z v2.5 i wczesniejszych)
+        if ($isSourceFile) {
+            $expectedFilePath = Join-Path $targetPath (Split-Path $sourcePath -Leaf)
+            if ((Test-Path $expectedFilePath) -and (Test-Path $expectedFilePath -PathType Container)) {
+                Write-Warn "Wykryto uszkodzona sciezke (katalog zamiast pliku): $expectedFilePath"
+                Remove-Item -Path $expectedFilePath -Recurse -Force
+                Write-OK "Usunieto uszkodzony katalog"
+            }
         }
 
         # Utworz katalog docelowy jesli nie istnieje
