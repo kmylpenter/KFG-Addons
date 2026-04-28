@@ -1,14 +1,6 @@
 ---
-description: Włącz/wyłącz tryb czytania głosowego odpowiedzi (TTS)
-allowed-tools: Bash(test:*), Bash(touch:*), Bash(rm:*)
+name: czytaj
+description: Toggle voice reading mode
 ---
 
-!`if [ -f ~/.claude/czytaj.flag ]; then rm -f ~/.claude/czytaj.flag; echo "OFF"; else touch ~/.claude/czytaj.flag; echo "ON"; fi`
-
-Powyższa komenda przełączyła tryb czytania głosowego.
-
-Jeśli wynik to **ON** — odpowiedz wyłącznie: "Tryb czytania włączony — odpowiedzi będą krótsze i odczytywane przez TTS."
-
-Jeśli wynik to **OFF** — odpowiedz wyłącznie: "Tryb czytania wyłączony."
-
-Nie wykonuj żadnych innych akcji ani analiz. Tylko jednolinijkowa odpowiedź.
+!`if [ -f ~/.claude/czytaj.flag ]; then rm -f ~/.claude/czytaj.flag; pkill -9 -f piper_server >/dev/null 2>&1; pkill -9 -f piper-daemon >/dev/null 2>&1; pkill -9 -f paplay >/dev/null 2>&1; echo "OFF"; else touch ~/.claude/czytaj.flag; nohup python3 "$HOME/.claude/hooks/czytaj/piper_server.py" serve >/dev/null 2>&1 & disown; echo "ON"; fi`

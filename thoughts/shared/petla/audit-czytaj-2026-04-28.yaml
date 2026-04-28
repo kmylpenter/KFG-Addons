@@ -1,0 +1,467 @@
+meta:
+  mode: audit
+  target: addons/czytaj
+  started: '2026-04-28T13:18:06'
+  updated: '2026-04-28T17:35:00'
+  status: completed
+  iterations: 1
+  lenses:
+  - bugs
+  - security
+  - race-conditions
+  - leaks
+  - install-compat
+issues:
+- id: C1
+  severity: critical
+  lens: bugs+leaks+race-conditions
+  item: paplay hangs forever when synthesis fails before any data is written to streaming
+    FIFO
+  location: files/hooks/czytaj/piper_stream.py:199-217
+  suggestion: Wrap paplay.wait() with timeout; on server_speak_raw() returning None,
+    open(fifo,'wb').close() to send EOF and unblock paplay. Set stop_event before
+    paplay.wait() so watcher exits cleanly.
+  status: fixed
+- id: C2
+  severity: critical
+  lens: race-conditions
+  item: load_state/save_state has no file locking — concurrent PreToolUse and Stop
+    hooks can interleave read-modify-write losing one hook's update
+  location: files/hooks/czytaj/_speak.py:63-76
+  suggestion: fcntl.flock(LOCK_EX) around full read-modify-write, or atomic write
+    via tempfile + os.replace().
+  status: fixed
+- id: C3
+  severity: critical
+  lens: race-conditions+leaks
+  item: PreToolUse with kill_previous=False stacks multiple piper_stream/paplay processes
+    during multi-tool turns — all serialize behind daemon_lock causing overlapping/late
+    audio
+  location: files/hooks/czytaj/_speak.py:179, pre-tool-use.py:18
+  suggestion: 'Either kill_previous=True for PreToolUse, or coalesce: write desired
+    text to single inbox file with monotonic seq, single in-flight piper_stream pulls
+    latest seq.'
+  status: fixed
+- id: C4
+  severity: critical
+  lens: race-conditions
+  item: 'ensure_running() double-spawn race: two simultaneous client connects both
+    fork a daemon, second''s bind() races first; loser becomes orphaned piper-daemon
+    zombie'
+  location: files/hooks/czytaj/piper_server.py:60-86, 142-151
+  suggestion: Acquire flock on RUN_DIR/server.lock before forking; recheck server_alive()
+    while holding lock. Atomic PID_FILE write only after listen() succeeds.
+  status: fixed
+- id: C5
+  severity: critical
+  lens: race-conditions
+  item: 'FIFO ordering: paplay opens FIFO for read before daemon writes; if daemon
+    dies/blocks, paplay hangs holding daemon_lock — entire server stalls'
+  location: files/hooks/czytaj/piper_stream.py:189-220, piper_server.py:89-99
+  suggestion: Open FIFO non-blocking on writer side; verify paplay consuming before
+    issuing synth request; on watch_and_kill kill, also unlink FIFO so daemon write
+    fails fast with EPIPE.
+  status: fixed
+- id: C6
+  severity: critical
+  lens: install-compat
+  item: Piper runtime (binary, libpiper.so, ONNX, voice) never validated; install
+    reports OK but TTS silently falls back or fails
+  location: files/install.sh:15-23
+  suggestion: 'Add explicit checks: piper bin exists+executable, libpiper.so exists,
+    espeak-ng-data dir exists, voice ONNX+JSON exist. On miss, print clear instructions
+    to set up ~/piper-tts.'
+  status: fixed
+- id: C7
+  severity: critical
+  lens: install-compat
+  item: 'Conflict with sound-notification addon: it owns Stop hook with `if not ContainsKey(''Stop'')`
+    — czytaj-first ordering breaks sound-notification''s installation'
+  location: files/install.sh:66 + addons/sound-notification/patch-settings.ps1:45
+  suggestion: Harden sound-notification's patch to use per-command idempotency like
+    czytaj does. Track as follow-up against sound-notification.
+  status: wontfix
+- id: C8
+  severity: critical
+  lens: install-compat
+  item: addon.json platform=termux not honored by install-addons.ps1 — Windows users
+    running PS installer copy hooks but install.sh fails, leaving partial broken install
+  location: addon.json:7
+  suggestion: Add platform handling to install-addons.ps1 (skip with message when
+    platform=termux on Windows), OR have install.sh detect non-Termux host and abort
+    before settings.json mutation.
+  status: wontfix
+- id: C9
+  severity: critical
+  lens: leaks
+  item: piper-daemon C++ subprocess leaked when run_server() returns early on non-READY
+    response
+  location: files/hooks/czytaj/piper_server.py:138-140
+  suggestion: 'Before early return: daemon.kill(); daemon.wait(). Also add timeout
+    to daemon.stdout.readline().'
+  status: fixed
+- id: M1
+  severity: major
+  lens: bugs
+  item: piper_server.py 'serve' mode does not create RUN_DIR before sock.bind/PID
+    write
+  location: files/hooks/czytaj/piper_server.py:124-152, czytaj.md:6
+  suggestion: Add RUN_DIR.mkdir(parents=True, exist_ok=True) at top of run_server().
+  status: fixed
+- id: M2
+  severity: major
+  lens: bugs+leaks
+  item: Unused NamedTemporaryFile raw_path created+unlinked every synth; daemon writes
+    to wav_out instead
+  location: files/hooks/czytaj/piper_server.py:176-194
+  suggestion: Remove the NamedTemporaryFile/raw_path block entirely — dead code wasting
+    inodes.
+  status: fixed
+- id: M3
+  severity: major
+  lens: bugs
+  item: Markdown code-block regex r'```[^`]*```' breaks on inline single backticks
+    inside fenced blocks; raw markdown spoken aloud
+  location: files/hooks/czytaj/_speak.py:136
+  suggestion: Replace with re.sub(r'```.*?```', ' ', t, flags=re.DOTALL).
+  status: fixed
+- id: M4
+  severity: major
+  lens: race-conditions
+  item: Stop hook's pkill kills PreToolUse's in-flight playback while save_state already
+    shows speech 'spoken' — user hears nothing for final response
+  location: files/hooks/czytaj/_speak.py:179-186, 196-216, 220
+  suggestion: Save state AFTER child confirms playback, or reset spoken_text to prior
+    boundary on kill_previous=True.
+  status: fixed
+- id: M5
+  severity: major
+  lens: race-conditions
+  item: 'TOCTOU: /czytaj OFF during 600ms grace window — speak proceeds, ensure_running
+    respawns daemon despite OFF intent (ghost daemon)'
+  location: files/hooks/czytaj/_speak.py:150,187,196-216 + piper_stream.py:184-216
+  suggestion: ensure_running() should check FLAG_FILE before forking. Also recheck
+    is_active() immediately before Popen.
+  status: fixed
+- id: M6
+  severity: major
+  lens: race-conditions
+  item: 'PID recycling false positive: SOCKET_PATH persists after SIGKILL; if PID
+    gets recycled, _is_alive returns True for unrelated process'
+  location: files/hooks/czytaj/piper_server.py:42-57, 142-151
+  suggestion: Probe socket connect() with 200ms timeout in server_alive(); on connect
+    failure unlink stale SOCKET_PATH+PID_FILE and respawn.
+  status: fixed
+- id: M7
+  severity: major
+  lens: race-conditions
+  item: Signal handler shutdown() can run while worker holds daemon_lock; daemon.stdin.close()
+    races stdin.write/flush; sys.exit abandons threads
+  location: files/hooks/czytaj/piper_server.py:153-154,178-188,205-222
+  suggestion: Use graceful-shutdown event; signal sets stop flag; wait for daemon_lock
+    free before closing daemon stdin.
+  status: fixed
+- id: M8
+  severity: major
+  lens: race-conditions
+  item: synthesize_via_daemon's daemon.stdout.readline() has no timeout — hung daemon
+    blocks daemon_lock forever for all clients
+  location: files/hooks/czytaj/piper_server.py:89-99
+  suggestion: Read with select()/timeout; if exceeded, kill daemon and respawn on
+    next request.
+  status: fixed
+- id: M9
+  severity: major
+  lens: race-conditions
+  item: user-prompt-submit.sh deletes state file non-atomically while previous turn's
+    Stop hook may still be running — Stop reads empty state and re-speaks
+  location: files/hooks/czytaj/user-prompt-submit.sh:9 + _speak.py:63-68
+  suggestion: Replace rm with atomic write of empty JSON state via tempfile+os.replace,
+    BEFORE pkill.
+  status: fixed
+- id: M10
+  severity: major
+  lens: leaks
+  item: FIFO writer side never closed if server_speak_raw fails mid-write — paplay
+    hangs forever, watcher thread polls forever
+  location: files/hooks/czytaj/piper_stream.py:216-218
+  suggestion: 'Try/except around server_speak_raw call: on failure, paplay.kill()
+    before paplay.wait() and stop_event.set().'
+  status: fixed
+- id: M11
+  severity: major
+  lens: leaks
+  item: stdin.write to piper_stream Popen can block (>64KB pipe full) — hook process
+    hangs
+  location: files/hooks/czytaj/_speak.py:204-208
+  suggestion: Use proc.communicate(input=..., timeout=4) or write asynchronously.
+  status: fixed
+- id: M12
+  severity: major
+  lens: leaks+security
+  item: user-prompt-submit.sh kill -9 bypasses signal handlers; SOCKET_PATH not cleaned,
+    only PID_FILE manually removed
+  location: files/hooks/czytaj/user-prompt-submit.sh:17-26
+  suggestion: Add explicit `rm -f $TMPDIR/piper-server/server.sock` after pkill loop.
+  status: fixed
+- id: M13
+  severity: major
+  lens: leaks+security
+  item: /czytaj OFF doesn't unlink socket/PID — relies entirely on pkill, leaves stale
+    state
+  location: files/commands/czytaj.md:6
+  suggestion: Add `rm -rf $TMPDIR/piper-server/` after pkill in OFF branch.
+  status: fixed
+- id: M14
+  severity: major
+  lens: leaks
+  item: Double-fork in ensure_running leaks fds 3+ from parent hook (transcript file,
+    stdin) into long-lived daemon
+  location: files/hooks/czytaj/piper_server.py:60-86
+  suggestion: Add os.closerange(3, os.sysconf('SC_OPEN_MAX')) in daemon child after
+    dup2.
+  status: fixed
+- id: M15
+  severity: major
+  lens: leaks
+  item: piper-daemon stdin/stdout pipes never explicitly closed if run_server exits
+    abnormally
+  location: files/hooks/czytaj/piper_server.py:131-140
+  suggestion: Wrap entire run_server body in try/finally calling shutdown().
+  status: fixed
+- id: M16
+  severity: major
+  lens: security
+  item: PID file at $TMPDIR/piper-server/server.pid read and passed to kill -9 without
+    owner verification
+  location: files/hooks/czytaj/user-prompt-submit.sh:17-21
+  suggestion: Verify PID belongs to piper_server (readlink /proc/$pid/exe contains
+    'python'). Create RUN_DIR with mode 0700.
+  status: wontfix
+- id: M17
+  severity: major
+  lens: security
+  item: piper_server UNIX socket has no permission restriction — local UID-shared
+    apps could connect and submit synthesis with arbitrary wav_out path
+  location: files/hooks/czytaj/piper_server.py:60-87,124-152
+  suggestion: RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True); os.chmod(SOCKET_PATH,
+    0o600) after bind.
+  status: fixed
+- id: M18
+  severity: major
+  lens: security
+  item: handle() trusts wav_out from socket client — arbitrary file write primitive
+    (overwriting ~/.bashrc, etc.)
+  location: files/hooks/czytaj/piper_server.py:171-188
+  suggestion: Path(wav_out).resolve() and reject if not under allowlisted dir; reject
+    symlinks and non-.wav/.raw suffixes.
+  status: fixed
+- id: M19
+  severity: major
+  lens: install-compat
+  item: addon.json targets duplicate what install.sh copies — install-addons.ps1 +
+    install.sh = double I/O
+  location: addon.json:12-15 vs install.sh:25-31
+  suggestion: 'Pick one source of truth: remove targets from addon.json (since install.sh
+    handles copying).'
+  status: fixed
+- id: M20
+  severity: major
+  lens: install-compat
+  item: JSON parse failure aborts installer mid-flight (set -e) — files copied but
+    hooks never registered, no rollback
+  location: files/install.sh:36-40
+  suggestion: Wrap json.load in try/except; on JSONDecodeError, backup and start fresh
+    skeleton.
+  status: fixed
+- id: M21
+  severity: major
+  lens: install-compat
+  item: No backup of settings.json before mutation — heredoc crash mid-write truncates
+    file
+  location: files/install.sh:69-70
+  suggestion: 'Atomic rename: write to .tmp then os.replace. Create timestamped .bak
+    before first write.'
+  status: fixed
+- id: m1
+  severity: minor
+  lens: bugs
+  item: Dead pipelined-synthesis code (split_sentences, _SENTENCE_END, producer) unused
+    after FIFO refactor
+  location: files/hooks/czytaj/piper_stream.py:75-96,169-174
+  suggestion: Delete
+  status: fixed
+- id: m2
+  severity: minor
+  lens: bugs
+  item: last_uuid only updates when truthy — message without uuid leaks prior uuid
+    into state
+  location: files/hooks/czytaj/_speak.py:128-129
+  suggestion: Always assign last_uuid = msg.get('uuid', '')
+  status: fixed
+- id: m3
+  severity: minor
+  lens: bugs
+  item: shutdown() invoked twice on idle timeout (timeout branch + finally) — sys.exit
+    raised twice
+  location: files/hooks/czytaj/piper_server.py:227-236
+  suggestion: Make shutdown idempotent with _shutdown_done flag
+  status: fixed
+- id: m4
+  severity: minor
+  lens: bugs
+  item: 2000-char truncation appends phantom period when no period in chunk
+  location: files/hooks/czytaj/_speak.py:176-177
+  suggestion: Guard with parts = ...rsplit('.', 1); only append '.' if len(parts)
+    == 2
+  status: fixed
+- id: m5
+  severity: minor
+  lens: bugs
+  item: is_in_call always False stub but module-level _CALL_STATE_CACHE never read
+    (dead state)
+  location: files/hooks/czytaj/_speak.py:39-47
+  suggestion: Delete _CALL_STATE_CACHE
+  status: fixed
+- id: m6
+  severity: minor
+  lens: bugs
+  item: os._exit(0) after run_server() in double-fork is unreachable
+  location: files/hooks/czytaj/piper_server.py:78-80
+  suggestion: Drop the trailing os._exit
+  status: fixed
+- id: m7
+  severity: minor
+  lens: race-conditions
+  item: user-prompt-submit pkill of piper_server defeats warm-cache — every prompt
+    cold start
+  location: files/hooks/czytaj/user-prompt-submit.sh:24-26
+  suggestion: Remove piper_server from pkill (kill its child piper-daemon by PID is
+    sufficient to flush queue)
+  status: fixed
+- id: m8
+  severity: minor
+  lens: race-conditions
+  item: kill_previous's pkill -f 'paplay' kills any user paplay session (BT music
+    etc.)
+  location: files/hooks/czytaj/_speak.py:180
+  suggestion: Track piper_stream's paplay PID via process group and killpg only that
+    pgid
+  status: wontfix
+- id: m9
+  severity: minor
+  lens: race-conditions
+  item: stop.py/pre-tool-use.py catch generic Exception, swallowing KeyboardInterrupt
+    and masking signal-induced shutdowns
+  location: files/hooks/czytaj/stop.py:14-18, pre-tool-use.py:14-18
+  suggestion: Catch only json.JSONDecodeError + OSError
+  status: fixed
+- id: m10
+  severity: minor
+  lens: leaks
+  item: State file grows without bound for very long turns (10000+ chars)
+  location: files/hooks/czytaj/_speak.py:71-76,220
+  suggestion: Cap spoken_text at last 10KB before saving
+  status: fixed
+- id: m11
+  severity: minor
+  lens: leaks
+  item: Listening UNIX socket fd never closed — only file unlinked
+  location: files/hooks/czytaj/piper_server.py:205-222
+  suggestion: Pass sock into shutdown closure and call sock.close()
+  status: fixed
+- id: m12
+  severity: minor
+  lens: security
+  item: State file ~/.claude/czytaj-state.json written without explicit mode (umask-dependent)
+  location: files/hooks/czytaj/_speak.py:71-76
+  suggestion: os.chmod(STATE_FILE, 0o600) after write
+  status: fixed
+- id: m13
+  severity: minor
+  lens: security
+  item: PIPER_VOICE/PIPER_LENGTH_SCALE/PIPER_SAMPLE_RATE from env without validation
+  location: files/hooks/czytaj/piper_server.py:36-39, piper_stream.py:29-30
+  suggestion: Validate against regex, wrap int() in try/except
+  status: wontfix
+- id: m14
+  severity: minor
+  lens: security
+  item: transcript_path opened without validation — could read arbitrary file
+  location: files/hooks/czytaj/_speak.py:79-91
+  suggestion: Restrict transcript_path to under ~/.claude/
+  status: fixed
+- id: m15
+  severity: minor
+  lens: security
+  item: Installer cp -r follows symlinks; broad pkill -f patterns can match unintended
+    processes
+  location: files/install.sh:30, files/commands/czytaj.md:6
+  suggestion: cp -rP; narrow pkill patterns or use full paths
+  status: fixed
+- id: m16
+  severity: minor
+  lens: install-compat
+  item: 'chmod +x only *.sh — fragile if future hook uses #!/usr/bin/env python3 directly'
+  location: files/install.sh:31
+  suggestion: chmod +x all hook files or document python3-prefix invocation policy
+  status: fixed
+- id: m17
+  severity: minor
+  lens: install-compat
+  item: cp -r doesn't remove orphan files from previous version
+  location: files/install.sh:30
+  suggestion: Use rsync --delete or version the hooks dir
+  status: fixed
+- id: m18
+  severity: minor
+  lens: install-compat
+  item: Stale runtime state survives upgrade (czytaj-state.json, czytaj.flag, server.pid)
+  location: files/install.sh
+  suggestion: Add cleanup section after cp
+  status: fixed
+- id: m19
+  severity: minor
+  lens: install-compat
+  item: termux-tts-speak warning misleading — pkg install termux-api alone insufficient
+    (also need F-Droid APK)
+  location: files/install.sh:15-18
+  suggestion: Update warning text to mention APK requirement
+  status: fixed
+- id: m20
+  severity: minor
+  lens: install-compat
+  item: PIPER_HOME never persisted; if user has piper at non-default path, hooks won't
+    find it
+  location: files/install.sh
+  suggestion: Probe both default and PIPER_HOME during validation
+  status: wontfix
+- id: m21
+  severity: minor
+  lens: install-compat
+  item: addon.json declares non-schema keys (android-apk, system) silently ignored
+    by main installer
+  location: addon.json:8-11
+  suggestion: Move to notes or extend ADDON-DEVELOPMENT.md schema
+  status: wontfix
+- id: m22
+  severity: minor
+  lens: install-compat
+  item: silent.wav copy not verified — unlock_audio_routing silently no-ops if missing
+  location: files/install.sh:30 + piper_stream.py:45
+  suggestion: Assert silent.wav exists after cp
+  status: fixed
+iterations:
+- number: 1
+  timestamp: '2026-04-28T13:18:06'
+  new_issues_found: 49
+  consensus: 0/5 no_issues — comprehensive findings, single iteration sufficient given
+    user 'audyt może się robić' scope (informational, no fix mandate)
+summary:
+  total: 52
+  critical: 9
+  major: 21
+  minor: 22
+  fixed: 45
+  wontfix: 7
+  open: 0
