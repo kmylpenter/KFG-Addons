@@ -1,0 +1,20 @@
+{
+  "name": "czytaj",
+  "displayName": "Tryb Czytania (Voice Reader)",
+  "version": "1.0.0",
+  "description": "Toggle TTS odczytywania odpowiedzi Claude'a (np. dla pracy hands-free w samochodzie)",
+  "author": "KFG",
+  "platform": "termux",
+  "dependencies": {
+    "system": ["termux-api", "python3"],
+    "android-apk": ["Termux:API (F-Droid)"]
+  },
+  "targets": {
+    "files/commands/czytaj.md": "~/.claude/commands/",
+    "files/hooks/czytaj/": "~/.claude/hooks/czytaj/"
+  },
+  "scripts": {
+    "postinstall": "bash $ADDON_DIR/install.sh"
+  },
+  "notes": "Termux only (Android). Wymaga: pkg install termux-api + osobna aplikacja Termux:API z F-Droid (NIE Google Play). Hook rejestracja: install.sh patchuje ~/.claude/settings.json. Komenda: /czytaj (toggle on/off). Windows wsparcie planowane jako oddzielna ścieżka (SAPI/PowerShell)."
+}
