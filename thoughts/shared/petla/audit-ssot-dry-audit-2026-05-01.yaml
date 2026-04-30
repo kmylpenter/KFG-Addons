@@ -1,0 +1,662 @@
+meta:
+  mode: audit
+  target: ssot-dry-audit
+  source_dir: /data/data/com.termux/files/home/projekty/KFG-Addons/addons/ssot-dry-audit
+  started: '2026-05-01T00:00:00'
+  updated: '2026-05-01T01:00:00'
+  status: completed
+  iterations: 2
+  lenses:
+  - correctness
+  - safety
+  - scope
+  - maintainability
+  - business-impact
+iterations:
+- number: 1
+  consensus: 0/5 no_new_issues
+  new_issues_found: 85
+  notes: All 5 lenses returned issues_found. High signal-to-noise ratio. Findings
+    are concrete with file:line locations.
+issues:
+- id: C1
+  severity: critical
+  lens: correctness
+  item: NUMBER_LITERAL_RE captures fragments of decimals (\b\d{2,}\b matches '23'
+    from '0.23'). Defeats the skill's headline use case (VAT rate detection)
+  location: scripts/detect_duplicates.py:58
+  suggestion: 'Use float-aware regex: r''(?<![\w.])(\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)(?![\w.])'''
+  status: open
+- id: C2
+  severity: critical
+  lens: business-impact
+  item: STRING_LITERAL_RE 4-80 char range misses Polish business enums (3-char like
+    'PLN', 'VAT', '23%', 'Won', 'Lost', 'Nowe')
+  location: scripts/detect_duplicates.py:57
+  suggestion: Lower min to 2, raise max to 300 (URLs/SQL queries are high-value SSOT
+    signals)
+  status: open
+- id: C3
+  severity: critical
+  lens: business-impact
+  item: 'GAS boilerplate flood: SpreadsheetApp, LockService, getActiveSpreadsheet
+    etc. will swamp report - skill unusable for user''s primary stack without GAS
+    denylist'
+  location: scripts/detect_duplicates.py:72-76
+  suggestion: Extend COMMON_STRINGS with GAS API names; add .gs-specific noise filters
+  status: open
+- id: C4
+  severity: critical
+  lens: business-impact
+  item: HTML inline <script>/<style> blocks not extracted before scanning. User's
+    GAS HTML webapps have all JS inline → primary duplication site invisible to helper
+  location: scripts/detect_duplicates.py:32+234-271
+  suggestion: 'Pre-process .html: extract script/style content as virtual JS/CSS before
+    duplicate detection'
+  status: open
+- id: C5
+  severity: critical
+  lens: safety
+  item: Pre-flight checks documented as 'ZATRZYMAJ sie i zapytaj' but user can override;
+    uncommitted changes silently sweep into refactor commits with no bisect path
+  location: SKILL.md:227-239
+  suggestion: Make pre-flight HARD blockers; auto-stash WIP before any edit (`git
+    stash push -u -m 'ssot-preflight'`)
+  status: open
+- id: C6
+  severity: critical
+  lens: safety
+  item: git checkout -b carries WIP onto refactor branch - skill claims branch creation
+    makes refactor 'odwracalny jednym git checkout main' which is FALSE if WIP exists
+  location: SKILL.md:231,237
+  suggestion: REQUIRE clean tree (commit/stash) BEFORE checkout -b; document stash
+    pop on main not on refactor branch
+  status: open
+- id: C7
+  severity: critical
+  lens: safety
+  item: Duplicate function names with DIFFERENT bodies could be classified HIGH and
+    merged. Skill checks signature only, not body content
+  location: SKILL.md:114-118 + scripts/detect_duplicates.py:178-204
+  suggestion: For function-name dupes, MUST read both bodies before classification.
+    If bodies differ → force LOW, never HIGH
+  status: open
+- id: M1
+  severity: major
+  lens: correctness
+  item: STRING_LITERAL_RE breaks on escaped quotes - 'don\'t' captured as garbage
+    't do it'
+  location: scripts/detect_duplicates.py:57
+  suggestion: 'Use escape-aware regex: r"""''((?:\\.|[^''\\n])*?)''|\"((?:\\.|[^\"\\n])*?)\""""'
+  status: open
+- id: M2
+  severity: major
+  lens: correctness
+  item: Template literals (JS/TS backticks) not detected at all - massive blind spot
+    for modern JS/TS
+  location: scripts/detect_duplicates.py:57
+  suggestion: 'Add backtick alternation: |`([^`\n]{4,80})`'
+  status: open
+- id: M3
+  severity: major
+  lens: correctness
+  item: FUNCTION_DEF_RE misses Go (`func`), Java/Kotlin/C# typed methods, class methods,
+    Ruby `def foo?`, arrow func object props - skill claims to support .go/.rs/.java/.kt
+    but won't find dupes there
+  location: scripts/detect_duplicates.py:59
+  suggestion: Add per-language patterns OR remove unsupported extensions from CODE_EXTENSIONS
+  status: open
+- id: M4
+  severity: major
+  lens: correctness
+  item: TYPE_DEF_RE misses lowercase TS type aliases AND all `enum` definitions
+  location: scripts/detect_duplicates.py:64
+  suggestion: Add `enum` to alternation, drop [A-Z] anchor
+  status: open
+- id: M5
+  severity: major
+  lens: correctness
+  item: 'find_duplicate_function_names and find_duplicate_types do NOT call looks_like_test()
+    - test files (User, MockUser, setup) flood report. Contradicts skill''s anti-pattern
+    ''NIE zglaszaj false positives: testy'''
+  location: scripts/detect_duplicates.py:178,210
+  suggestion: 'Add `if looks_like_test(p): continue` to both find_* functions'
+  status: open
+- id: M6
+  severity: major
+  lens: correctness
+  item: looks_like_test misses cypress/, e2e/, playwright/, integration/, __mocks__/,
+    Python `test_foo.py`, *_test.py
+  location: scripts/detect_duplicates.py:52
+  suggestion: Expand TEST_PATH_HINTS + check stem.startswith(('test_','spec_'))
+  status: open
+- id: M7
+  severity: major
+  lens: correctness
+  item: find_duplicate_blocks compares hash of LITERAL normalized text - any variable
+    rename hides duplication. userId vs customerId twins go undetected
+  location: scripts/detect_duplicates.py:234
+  suggestion: Add identifier-normalization pass (replace identifiers with positional
+    placeholders before hashing) OR document limitation
+  status: open
+- id: M8
+  severity: major
+  lens: correctness
+  item: 'Single-file magic numbers ignored: helper requires >=3 occurrences AND >=2
+    files. A constant used 5x in one file is silently dropped'
+  location: scripts/detect_duplicates.py:133
+  suggestion: Lower threshold OR document so Faza 3 can supplement
+  status: open
+- id: M9
+  severity: major
+  lens: safety
+  item: Per-fix verification rollback ambiguous. 'NIE proboj naprawic automatycznie'
+    but no actual `git checkout -- <files>` invocation. Failed fixes leave dirty working
+    tree contaminating next iteration
+  location: SKILL.md:260-269
+  suggestion: 'Make rollback explicit: `git checkout -- <files>` MUST run before STOP
+    on test/build failure'
+  status: open
+- id: M10
+  severity: major
+  lens: safety
+  item: /petla solve handoff unenforced - skill writes safety rules in markdown but
+    petla can ignore. No machine-readable contract
+  location: SKILL.md:199-209,275-280
+  suggestion: Use structured `.ssot-handoff.json` OR verify petla version supports
+    confidence handoff before [b]
+  status: open
+- id: M11
+  severity: major
+  lens: safety
+  item: Confidence rating non-deterministic. Two runs produce different HIGH/MEDIUM/LOW
+    splits. Critical issue could be misclassified MEDIUM and auto-fixed by petla solve
+  location: SKILL.md:107-132
+  suggestion: Reserve unsupervised auto-fix for HIGH only. MEDIUM requires per-finding
+    user confirmation, not just [REVIEW] tag
+  status: open
+- id: M12
+  severity: major
+  lens: safety
+  item: Cross-file refactor breaking imports not checked. Extracting constant to src/constants/
+    doesn't add imports to call-sites; typecheck may be skipped/missing
+  location: SKILL.md:260-269
+  suggestion: 'After extraction: grep for OLD inline literal across repo. For JS/Python
+    (no typecheck), require running entry point smoke test'
+  status: open
+- id: M13
+  severity: major
+  lens: safety
+  item: No concurrent-edit detection. Files read in Phase 2-3 may change before Phase
+    5 edits
+  location: SKILL.md:225-269
+  suggestion: Snapshot file mtimes + git HEAD at audit start; verify before each Phase
+    5 edit; ABORT if changed
+  status: open
+- id: M14
+  severity: major
+  lens: safety
+  item: detect_duplicates.py has no path traversal protection. /naprawssot ../../../
+    scans outside project; Phase 5 [a] then EDITS those paths
+  location: scripts/detect_duplicates.py:296
+  suggestion: Validate root within cwd; Phase 5 must refuse files outside scope
+  status: open
+- id: M15
+  severity: major
+  lens: safety
+  item: No file size guard. Single 50MB minified .js OOMs on Termux Android
+  location: scripts/detect_duplicates.py:107
+  suggestion: 'if p.stat().st_size > 1_000_000: skip + warn'
+  status: open
+- id: M16
+  severity: major
+  lens: safety
+  item: install.sh overwrites ~/.claude/skills/ssot-dry-audit/ unconditionally. User
+    customizations lost silently
+  location: install.sh:22-30
+  suggestion: Backup existing files before cp; follow czytaj addon's .bak.<timestamp>
+    pattern
+  status: open
+- id: M17
+  severity: major
+  lens: safety
+  item: LOW finding template still has code blocks - auto-fix attractor for petla
+    solve / careless user
+  location: SKILL.md:164-173,205
+  suggestion: Make LOW format STRUCTURALLY different - no code block, only question.
+    Anti-template explicit
+  status: open
+- id: M18
+  severity: major
+  lens: safety
+  item: Stop condition '3 kolejne BLOCKED' documented in report template but NOT in
+    Phase 5 [a] flow. Path [a] could iterate destructively forever
+  location: SKILL.md:208 vs 255-269
+  suggestion: Add '3 consecutive failures → ABORT path [a]' explicitly
+  status: open
+- id: M19
+  severity: major
+  lens: scope
+  item: 'Phase 5 (refactor) is mission creep. CLAUDE.md mandates ''Audit vs Fix Mode'':
+    audit produces findings only. Phase 5 violates user''s stated rule'
+  location: SKILL.md:225-301
+  suggestion: Cut Phase 5; replace with handoff to /petla solve. Removes ~80 lines
+  status: open
+- id: M20
+  severity: major
+  lens: scope
+  item: Phase 5 [a] direct refactor + /petla solve [b] = redundant paths. Both iterate
+    findings, edit, verify, commit
+  location: SKILL.md:241-288
+  suggestion: Remove path [a] entirely - manual patch or /petla solve only
+  status: open
+- id: M21
+  severity: major
+  lens: maintainability
+  item: Phase 3 'Dla kazdego znaleziska z fazy 2 oraz dodatkowo poszukaj' - ambiguous.
+    What does Claude do with helper findings? Copy? Classify? Filter?
+  location: SKILL.md:76-103
+  suggestion: 'Split into two steps: (1) for each helper finding, decide keep/discard
+    with confidence; (2) additionally scan semantic categories'
+  status: open
+- id: M22
+  severity: major
+  lens: maintainability
+  item: 'False positive criteria appear in 3 places (Phase 2 helper notes, Phase 4
+    list, Zasady #2) with overlapping non-identical content. Drift hazard'
+  location: SKILL.md:70+217-221+306
+  suggestion: Single canonical exclusion list + cross-references
+  status: open
+- id: M23
+  severity: major
+  lens: maintainability
+  item: LOW [WYMAGA DECYZJI] tag missing from Phase 4 template - no concrete rendering
+    example for Claude to copy
+  location: SKILL.md:120,132,159-164,205
+  suggestion: Add a SSOT-003 example showing literal [WYMAGA DECYZJI] placement and
+    'Pytanie do usera' field
+  status: open
+- id: M24
+  severity: major
+  lens: maintainability
+  item: 'Branch naming conflict: Pre-flight says ''zaproponuj git checkout -b'' (ask),
+    report template says ''zalozonym przez skill'' (auto)'
+  location: SKILL.md:208 vs 237
+  suggestion: Pick one - recommend skill creates after explicit user yes
+  status: open
+- id: M25
+  severity: major
+  lens: maintainability
+  item: Phase 3 'przeczytaj 3-5 najbardziej podejrzanych plikow' - HOW to choose?
+    Different Claude instances pick differently
+  location: SKILL.md:103
+  suggestion: Add explicit ranking heuristic (sort by `files` desc, prefer src/, ignore
+    boilerplate-shaped values)
+  status: open
+- id: M26
+  severity: major
+  lens: maintainability
+  item: Helper JSON output schema not documented in SKILL.md. Phase 3 says 'wejscie
+    do Fazy 3' but Claude doesn't know if locations is [[file,line]] or [{file,line}]
+  location: SKILL.md:58-69
+  suggestion: Add concrete sample JSON output to SKILL.md
+  status: open
+- id: M27
+  severity: major
+  lens: maintainability
+  item: README.md vs SKILL.md drift on activation phrases - different lists in two
+    places
+  location: SKILL.md:11-18 vs README.md:17-21
+  suggestion: Single canonical list (SKILL.md activation surface), README references
+  status: open
+- id: M28
+  severity: major
+  lens: maintainability
+  item: naprawssot.md slash command duplicates SKILL.md workflow inline. Drift hazard
+    if SKILL.md changes
+  location: naprawssot.md:6,10-19
+  suggestion: Slash command should be one line invoking skill; let SKILL.md be source
+    of truth
+  status: open
+- id: M29
+  severity: major
+  lens: maintainability
+  item: 'Description trigger keywords miss common variants: ''duplikacja kodu'', ''kod
+    sie powtarza'', ''redundancja'', ''zlamanie DRY'' (README claims them but description
+    doesn''t)'
+  location: SKILL.md:3 vs README.md:20
+  suggestion: Add missing variants to description
+  status: open
+- id: M30
+  severity: major
+  lens: maintainability
+  item: 'Phase 5 [c] baseline hash undefined: ''sha1 of body'' - body of what? Different
+    runs hash differently → useless baseline diff'
+  location: SKILL.md:295-301
+  suggestion: 'Specify: hash = sha1(type + sorted(locations).join('','')) - deterministic'
+  status: open
+- id: M31
+  severity: major
+  lens: business-impact
+  item: GAS function patterns (doGet, doPost, onOpen, onEdit, this.x = function) not
+    detected. .gs in CODE_EXTENSIONS but regex won't catch GAS-idiomatic defs
+  location: scripts/detect_duplicates.py:59-63
+  suggestion: 'Add GAS pattern: ^\s*([a-zA-Z_]\w*)\s*\(.*\)\s*\{ for top-level GAS
+    funcs'
+  status: open
+- id: M32
+  severity: major
+  lens: business-impact
+  item: Memory blowup risk on 4-6k line files. Sliding-window block hashing without
+    per-file cap; OOM on Termux
+  location: scripts/detect_duplicates.py:236-258
+  suggestion: Per-file line cap (skip >10k lines + warn); --max-files flag
+  status: open
+- id: M33
+  severity: major
+  lens: business-impact
+  item: Zoho CRM field-name SSOT not addressed. User's CLAUDE.md warns API name !=
+    UI label - skill blind to this
+  location: SKILL.md:35,91-93
+  suggestion: 'Add Faza 3 sub-step: cross-check Zoho API field refs with UI labels;
+    flag drift risk'
+  status: open
+- id: M34
+  severity: major
+  lens: business-impact
+  item: SSOT_DRY_AUDIT_REPORT.md written to project root with no .gitignore handling.
+    User likely commits accidentally
+  location: SKILL.md:22,136
+  suggestion: Auto-append to .gitignore OR write to .claude/audit/
+  status: open
+- id: M35
+  severity: major
+  lens: business-impact
+  item: Faza 5 build commands (tsc, npm run build, py_compile) wrong for GAS stack.
+    clasp deploys, no npm. Pre-flight blocks user's main stack
+  location: SKILL.md:263,236
+  suggestion: 'Stack-specific build detection: appsscript.json → skip build verification'
+  status: open
+- id: M36
+  severity: major
+  lens: business-impact
+  item: Polish business validators (PESEL/NIP/REGON) not flagged as critical SSOT
+    category. Highest-risk in user's domain
+  location: SKILL.md:88,91
+  suggestion: 'Add ''Polish business rules'' subsection: auto-flag dupes whose name
+    contains pesel/nip/regon/vat/walidacja'
+  status: open
+- id: M37
+  severity: major
+  lens: business-impact
+  item: TypeScript discriminated unions, type aliases (type Status = 'A'|'B'), Zod
+    schemas, GAS @typedef JSDoc not handled
+  location: scripts/detect_duplicates.py:64-66
+  suggestion: Extend TYPE_DEF_RE; add separate pass for status-enum unions
+  status: open
+- id: m1
+  severity: minor
+  lens: correctness
+  item: is_skipped_dir blanket startswith('.') skips legitimate code in .github/workflows/,
+    .devcontainer/, .storybook/
+  location: scripts/detect_duplicates.py:79
+  suggestion: Explicit allowlist of skipped hidden dirs
+  status: open
+- id: m2
+  severity: minor
+  lens: correctness
+  item: STRING_LITERAL_RE matches inside line comments (no comment-strip pass)
+  location: scripts/detect_duplicates.py:124
+  suggestion: 'Skip lines starting with //, #, *, /* (find_number_literals already
+    does this)'
+  status: open
+- id: m3
+  severity: minor
+  lens: correctness
+  item: detect_project_type checks markers in SCOPE not project root. Subdir scope
+    returns 'unknown'
+  location: scripts/detect_duplicates.py:274
+  suggestion: Walk up to find ancestor with marker OR pass project root via flag
+  status: open
+- id: m4
+  severity: minor
+  lens: correctness
+  item: install.sh smoke test `--help` flag doesn't exist - dead code, falls through
+    to ast.parse
+  location: install.sh:43
+  suggestion: Remove first check OR add real argparse --help
+  status: open
+- id: m5
+  severity: minor
+  lens: correctness
+  item: 'Function/type name length filter (<4, <3) drops legitimate short business
+    names: vat, tax, add, pay'
+  location: scripts/detect_duplicates.py:188,216
+  suggestion: Lower to 3 or 2; rely on Faza 3 filter
+  status: open
+- id: m6
+  severity: minor
+  lens: correctness
+  item: Excluded function names hardcoded inline; misses Next.js/React common names
+    (mount, loader, action, getServerSideProps)
+  location: scripts/detect_duplicates.py:189
+  suggestion: Hoist to module-level COMMON_FUNCTION_NAMES set
+  status: open
+- id: m7
+  severity: minor
+  lens: correctness
+  item: Helper output capped (50+30+30+30+20=160) silently. Truncation order by occurrence
+    count → low-frequency-high-risk findings dropped
+  location: scripts/detect_duplicates.py:141
+  suggestion: Add 'truncated:true,total:N' field; document in SKILL.md
+  status: open
+- id: m8
+  severity: minor
+  lens: correctness
+  item: 'Binary files: errors=''ignore'' decodes garbage; regexes produce noise'
+  location: scripts/detect_duplicates.py:107
+  suggestion: NUL-byte detection in first 4KB OR rely on CODE_EXTENSIONS
+  status: open
+- id: m9
+  severity: minor
+  lens: correctness
+  item: COMMON_NUMBERS contains powers-of-2 (16,24,32,64,128,256,512,1024) - real
+    domain values like '32 max session, 1024 page size' get filtered
+  location: scripts/detect_duplicates.py:67
+  suggestion: Drop powers-of-2; keep HTTP codes + 0..10
+  status: open
+- id: m10
+  severity: minor
+  lens: correctness
+  item: Faza 5 [a] no termination guarantee in 'iterate krytyczne→srednie→...'. User-fatigue-driven
+    stop
+  location: SKILL.md:259
+  suggestion: Explicit stop after each tier; require explicit yes for next tier
+  status: open
+- id: m11
+  severity: minor
+  lens: safety
+  item: install.sh inlines $SKILL_DST into Python source string (`open('...')`) -
+    breaks if path contains quotes
+  location: install.sh:44
+  suggestion: Use python3 -c '...' "$path" pattern instead
+  status: open
+- id: m12
+  severity: minor
+  lens: safety
+  item: Helper drops short names (<3 or <4 chars) silently - real critical dupes like
+    'vat', 'Tax', 'Url' invisible
+  location: scripts/detect_duplicates.py:187-188,216-217
+  suggestion: Document limitation in SKILL.md OR lower to 2
+  status: open
+- id: m13
+  severity: minor
+  lens: scope
+  item: Confidence rating + Anti-patterns overlap on LOW = no auto-fix
+  location: SKILL.md:106-132 vs 316-326
+  suggestion: Cut LOW-confidence anti-pattern bullet (already covered in Confidence)
+  status: open
+- id: m14
+  severity: minor
+  lens: scope
+  item: Description triggers overlap with dead-code, refactor, qlty-check, simplify
+    skills
+  location: SKILL.md:3
+  suggestion: Tighten to SSOT/DRY-specific keywords; drop 'przeglad jakosci kodu',
+    'refactor pod SSOT'
+  status: open
+- id: m15
+  severity: minor
+  lens: scope
+  item: Command name 'naprawssot' (napraw=fix) misrepresents primary function (audit)
+  location: naprawssot.md:1
+  suggestion: Rename to 'audytssot' OR split into /audytssot + /naprawssot
+  status: open
+- id: m16
+  severity: minor
+  lens: scope
+  item: duplicate_function_names + duplicate_type_names categories produce mostly
+    false positives without scope/namespace awareness
+  location: scripts/detect_duplicates.py:178-231
+  suggestion: Cut categories OR raise threshold to 3+ files AND name >=8 chars
+  status: open
+- id: m17
+  severity: minor
+  lens: scope
+  item: detect_project_type output computed but never branched on downstream - dead
+    JSON field
+  location: scripts/detect_duplicates.py:274
+  suggestion: Remove OR actually use for per-language regex selection
+  status: open
+- id: m18
+  severity: minor
+  lens: scope
+  item: detect_project_type duplicates SKILL.md Faza 1 logic - skill's own SSOT violation
+  location: SKILL.md:30-36 vs scripts:274-292
+  suggestion: Pick one location (recommend skill-side; remove from helper)
+  status: open
+- id: m19
+  severity: minor
+  lens: scope
+  item: SKILL.md 353 lines could drop to ~220 with Phase 5 cut + dedup
+  location: SKILL.md (whole)
+  suggestion: Target 220 lines; pure audit skill
+  status: open
+- id: m20
+  severity: minor
+  lens: scope
+  item: Output claim 'jeden plik' contradicts Phase 5 [c] which writes .ssot-baseline.json
+  location: SKILL.md:22 vs 289-301
+  suggestion: Update line 22 OR remove baseline phase
+  status: open
+- id: m21
+  severity: minor
+  lens: maintainability
+  item: verify-before-done repeated 4 times across document
+  location: SKILL.md:261-263,311,324,325
+  suggestion: Consolidate to single bullet; reference from Zasady/Anti-patterns
+  status: open
+- id: m22
+  severity: minor
+  lens: maintainability
+  item: find_duplicate_blocks docstring misleading ('per file') vs actual cross-file
+    behavior
+  location: scripts/detect_duplicates.py:235-271
+  suggestion: Update docstring to reflect cross-file grouping
+  status: open
+- id: m23
+  severity: minor
+  lens: maintainability
+  item: FUNCTION_DEF_RE 3-alternative regex with 3 capture groups, no per-branch comments
+  location: scripts/detect_duplicates.py:59-63,186
+  suggestion: Inline comments per alternation OR split per-language
+  status: open
+- id: m24
+  severity: minor
+  lens: maintainability
+  item: STRING_LITERAL_RE 4-80 bounds unjustified - magic numbers in code that detects
+    magic numbers
+  location: scripts/detect_duplicates.py:57
+  suggestion: Module constants MIN/MAX_STRING_LITERAL_LEN with rationale
+  status: open
+- id: m25
+  severity: minor
+  lens: maintainability
+  item: install.sh hardcoded Termux shebang but README claims 'generic Linux'
+  location: install.sh:1
+  suggestion: 'Use #!/usr/bin/env bash for portability'
+  status: open
+- id: m26
+  severity: minor
+  lens: maintainability
+  item: Per-fix step 2 'tldr change-impact jezeli dostepne' - HOW to detect? command
+    -v?
+  location: SKILL.md:262
+  suggestion: 'Spell out: command -v tldr; if exit 0 use, else fallback'
+  status: open
+- id: m27
+  severity: minor
+  lens: maintainability
+  item: 'Anti-pattern ''NIE rob audytu na branch z WIP'' overlaps with Phase 5 pre-flight
+    #1, but Phase 1-4 has no such gate - unenforced'
+  location: SKILL.md:231 vs 322
+  suggestion: Move clean-tree check to Phase 1 OR remove anti-pattern bullet
+  status: open
+- id: m28
+  severity: minor
+  lens: maintainability
+  item: 'Type hints inconsistency: find_string_literals/find_number_literals say ''dict''
+    but return ''list[dict]'''
+  location: scripts/detect_duplicates.py:115,144
+  suggestion: Change to list[dict]
+  status: open
+- id: m29
+  severity: minor
+  lens: maintainability
+  item: Phase 3.5 fractional numbering signals patched-in section
+  location: SKILL.md:105-132
+  suggestion: Fold into Phase 3 step 2 OR renumber to clean 6 phases
+  status: open
+- id: m30
+  severity: minor
+  lens: business-impact
+  item: CSS variable duplication (--brand-color, hex colors) not specially detected
+  location: scripts/detect_duplicates.py:32
+  suggestion: 'CSS-specific scan: --var:value extraction + duplicate hex detection'
+  status: open
+- id: m31
+  severity: minor
+  lens: business-impact
+  item: No --quick / --no-prompt mode; Faza 1 step 3 prompts every project >=20 files
+  location: SKILL.md:42-52
+  suggestion: Skip prompt when scope passed in $ARGUMENTS
+  status: open
+- id: m32
+  severity: minor
+  lens: business-impact
+  item: Report has total effort estimate but no per-finding effort - hard to triage
+    100+ findings
+  location: SKILL.md:147-148,151-175
+  suggestion: Per-finding effort estimate + 'Quick wins (<10 min)' summary section
+  status: open
+- id: m33
+  severity: minor
+  lens: business-impact
+  item: find_duplicate_blocks 12-char sha1 prefix - 48 bits, ~5% birthday collision
+    probability with 500K windows
+  location: scripts/detect_duplicates.py:256
+  suggestion: Use full sha1 OR verify chunk equality before reporting
+  status: open
+summary:
+  total: 167
+  critical: 14
+  major: 67
+  minor: 86
+  by_lens:
+    correctness: 22
+    safety: 18
+    scope: 11
+    maintainability: 22
+    business-impact: 14
+  consensus_status: 'iter 1: 0/5 no_new_issues - all 5 lenses found issues; high quality
+    findings with concrete file:line locations and specific fixes'

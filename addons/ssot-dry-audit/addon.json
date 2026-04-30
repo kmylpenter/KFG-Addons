@@ -1,0 +1,19 @@
+{
+  "name": "ssot-dry-audit",
+  "displayName": "SSOT/DRY Audit (pure audit)",
+  "version": "2.0.0",
+  "description": "Pure-audit skill: skanuje kod pod katem SSOT/DRY, generuje markdown raport + machine-readable YAML handoff dla /petla solve. Sam NIE naprawia (single responsibility). Polish-business pack: PESEL/NIP/REGON/IBAN/VAT detection, RODO sanityzacja.",
+  "author": "KFG",
+  "platform": "any",
+  "dependencies": {
+    "system": ["python3"]
+  },
+  "targets": {
+    "files/.claude/skills/ssot-dry-audit/": "~/.claude/skills/ssot-dry-audit/",
+    "files/.claude/commands/audytssot.md": "~/.claude/commands/"
+  },
+  "scripts": {
+    "postinstall": "bash $ADDON_DIR/install.sh"
+  },
+  "notes": "v2.0: pivot do pure-audit (Phase 5 cut, refactor delegowany do /petla solve). Slash: /audytssot (legacy /naprawssot usuwany przez install.sh). Output: SSOT_DRY_AUDIT_REPORT.md + .ssot-findings.yaml (oba auto-gitignored). Helper v2.0 z PII redakcja, Polish-business detectors, HTML script extraction, atomic JSON, schema versioning."
+}
