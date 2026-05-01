@@ -1,0 +1,112 @@
+meta:
+  mode: solve
+  target: "addons/czytaj"
+  audit_file: "thoughts/shared/petla/audit-czytaj-2026-04-28.yaml"
+  tier: 1
+  started: "2026-04-28T19:50:00"
+  status: in_progress
+fixes: []
+progress:
+  total_issues: 6
+  proposed: 0
+  applied: 0
+  verified: 0
+  rejected: 0
+
+# ============================================================================
+# FIXES APPLIED — Tier 1
+# ============================================================================
+fixes:
+  - issue_id: "R1"
+    summary: "Retry loop on empty-turn-text (Anthropic #15813 workaround)"
+    file: "files/hooks/czytaj/_speak.py"
+    change: "Split current_turn_text into _parse_current_turn() (returns 3-tuple with reason) + outer retry wrapper with exponential backoff (100ms→200ms→400ms→800ms = 1.5s budget). Differentiates no-transcript / no-user-msg / all-tool-only / ok."
+    status: applied
+    verified: true
+  - issue_id: "X2"
+    summary: "Drop termux-tts-speak fallback (hangs on Android 14+)"
+    file: "files/hooks/czytaj/_speak.py"
+    change: "Removed else-branch with termux-tts-speak Popen. Added loud _log('ENGINE', 'missing-piper') when Piper unavailable. Use sys.executable instead of bare 'python3'. Added 'import sys'."
+    status: applied
+    verified: true
+  - issue_id: "R2+X3"
+    summary: "Delete is_mic_busy() (always returns busy=True without RECORD_AUDIO permission)"
+    file: "files/hooks/czytaj/_speak.py"
+    change: "Removed function definition + call site comment. Added explanatory comment in its place documenting the permission constraint."
+    status: applied
+    verified: true
+  - issue_id: "U1+A1"
+    summary: "Single toggle surface — command delegates to toggle.sh"
+    file: "files/commands/czytaj.md"
+    change: "Replaced inline pkill bash with `!\\`bash $HOME/.claude/hooks/czytaj/toggle.sh\\``. Skill (SKILL.md) was already calling toggle.sh — both surfaces now converge."
+    status: applied
+    verified: true
+  - issue_id: "NEW-pause"
+    summary: "Manual pause flag + composite is_other_audio_playing"
+    files:
+      - "files/hooks/czytaj/_speak.py (new functions)"
+      - "files/commands/pauza.md (new)"
+      - "install.sh (copy pauza.md, preserve czytaj.flag on reinstall, clean pause.flag)"
+      - "README.md (document /pauza, rozwin, audio coordination)"
+    change: "Added is_paused_by_user() (epoch-expiry pause flag), is_device_silenced() (termux-volume), is_self_already_speaking() (pactl). Composite is_other_audio_playing() takes check_self parameter."
+    status: applied
+    verified: true
+  - issue_id: "A8"
+    summary: "Register PreToolUse czytaj hook in settings.json"
+    file: "~/.claude/settings.json"
+    change: "Added PreToolUse entry with command 'bash $HOME/.claude/hooks/czytaj/pre-tool-use.sh', timeout 10s, empty matcher. Backup at settings.json.czytaj.bak.precmd."
+    status: applied
+    verified: true
+  - issue_id: "REGRESSION-FIX"
+    summary: "Critical regression found by validator: is_self_already_speaking blocked Stop hook from interrupting stale playback"
+    file: "files/hooks/czytaj/_speak.py"
+    change: "is_other_audio_playing now takes check_self=True parameter. When kill_previous=True (Stop and PreToolUse hooks), pass check_self=False so we don't refuse to override our own in-flight TTS."
+    status: applied
+    verified: true
+
+progress:
+  total_issues: 6
+  proposed: 6
+  applied: 7  # 6 + regression fix
+  verified: 7
+  rejected: 0
+
+minor_remaining:
+  - "errno/signal imports unused in _speak.py (pre-existing, not a regression)"
+  - "pauza.md is inline bash instead of wrapper to a script (cosmetic)"
+
+deployment_required: |
+  USER MUST RUN: cd /data/data/com.termux/files/home/projekty/KFG-Addons/addons/czytaj && bash install.sh
+  
+  Reason: deployed copies at ~/.claude/ are still the OLD versions. Source files
+  have been updated but install.sh has not been re-run. Until then:
+    - czytaj.md: still has inline kill bash, NOT the toggle.sh wrapper
+    - _speak.py: still has is_mic_busy(), no PAUSE_FLAG, no retry loop
+    - pauza.md: NOT INSTALLED (file missing from ~/.claude/commands/)
+  
+  After re-running install.sh, all Tier-1 fixes will be live.
+
+meta_final:
+  status: completed
+  finished: "2026-04-28T20:15:00"
+  validators_run: 3
+  consensus: "3/3 — correctness PASSED, regression FAILED then FIXED, completeness TIER_1_COMPLETE"
+  next_step: "User runs install.sh to deploy. Then test: /czytaj ON, ask question, /pauza, ask another, /pauza (resume)."
+
+# ============================================================================
+# TIER-1 EXTENSION: Screen unlock detection via Wireless ADB (2026-04-29)
+# ============================================================================
+tier_1_extension:
+  motivation: "User scenario: telefon w kieszeni na stacji benzynowej, TTS zaczął gadać. /pauza wymaga klikania, music==0 wymaga znalezienia telefonu — żadne nie chroni. Detekcja ekranu zablokowanego = absolutna cisza gdy nieaktywne."
+  fixes_added:
+    - id: "screen-unlock"
+      summary: "is_screen_unlocked() via ADB-over-localhost dumpsys window"
+      files:
+        - "files/hooks/czytaj/setup-adb-pairing.sh (new — interactive pair script)"
+        - "files/hooks/czytaj/_speak.py (new functions + composite integration)"
+        - "install.sh (file list + post-install hint)"
+        - "README.md (new section: detection, setup, risks, disable)"
+      change: "Opt-in mechanism. Sentinel file ~/.claude/czytaj-adb.flag enables. Fails OPEN: missing sentinel OR adb errors → return True (don't suppress). 2s cache to avoid spamming adb on PreToolUse hook bursts."
+      status: applied
+      verified_local: "syntax checks all pass; fail-open semantics verified by code reading"
+      verified_e2e: "PENDING — requires user to run setup-adb-pairing.sh after enabling Wireless Debugging"
