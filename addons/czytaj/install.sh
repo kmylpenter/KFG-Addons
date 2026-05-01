@@ -54,14 +54,10 @@ if ! ls "$PIPER_HOME/voices/"*.onnx >/dev/null 2>&1; then
   WARN_PIPER=1
 fi
 if [ "$WARN_PIPER" = "1" ]; then
-  echo "  [!] Piper niekompletny — TTS będzie próbować fallback przez termux-tts-speak."
+  echo "  [X] Piper niekompletny — addon NIE BĘDZIE czytał głosem dopóki Piper"
+  echo "      nie zostanie zbudowany (fallback termux-tts-speak został usunięty"
+  echo "      bo zawiesza się na Android 14+)."
   echo "      Aby zbudować Piper: zobacz README addonu czytaj."
-fi
-
-if ! command -v termux-tts-speak >/dev/null 2>&1; then
-  echo "  [!] BRAK: termux-tts-speak"
-  echo "      Wymaga: pkg install termux-api ORAZ aplikacji Termux:API z F-Droid"
-  echo "      (nie z Google Play — to musi być wersja F-Droid)"
 fi
 
 if ! command -v paplay >/dev/null 2>&1; then
@@ -75,12 +71,19 @@ cp "$ADDON_DIR/files/commands/czytaj.md" "$CLAUDE_DIR/commands/"
 chmod 644 "$CLAUDE_DIR/commands/czytaj.md"
 echo "  [OK] commands/czytaj.md"
 
+if [ -f "$ADDON_DIR/files/commands/pauza.md" ]; then
+  cp "$ADDON_DIR/files/commands/pauza.md" "$CLAUDE_DIR/commands/"
+  chmod 644 "$CLAUDE_DIR/commands/pauza.md"
+  echo "  [OK] commands/pauza.md"
+fi
+
 # Use cp -P (no symlink follow) and explicit file list to avoid orphan files
 # from previous installs surviving. We sync a clean snapshot.
 HOOK_SRC="$ADDON_DIR/files/hooks/czytaj"
 HOOK_DST="$CLAUDE_DIR/hooks/czytaj"
 for f in _speak.py piper_server.py piper_stream.py pre-tool-use.py pre-tool-use.sh \
-         stop.py stop.sh user-prompt-submit.sh toggle.sh silent.wav preheat.wav; do
+         stop.py stop.sh user-prompt-submit.sh toggle.sh silent.wav preheat.wav \
+         setup-adb-pairing.sh; do
   if [ -f "$HOOK_SRC/$f" ]; then
     cp -P "$HOOK_SRC/$f" "$HOOK_DST/$f"
   fi
@@ -98,11 +101,20 @@ if [ -f "$ADDON_DIR/files/skills/czytaj/SKILL.md" ]; then
 fi
 
 # --- Stale state cleanup (allow safe re-install) ---
-rm -f "$HOME/.claude/czytaj.flag" "$HOME/.claude/czytaj-state.json"
+# Preserve the user's mode (ON/OFF) across reinstall — wiping the flag
+# silently flipped a driving user's TTS off mid-session before this fix.
+WAS_ON=0
+[ -f "$HOME/.claude/czytaj.flag" ] && WAS_ON=1
+rm -f "$HOME/.claude/czytaj-state.json" "$HOME/.claude/czytaj-pause.flag"
 PIPER_RUN="${TMPDIR:-/tmp}/piper-server"
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f piper_server >/dev/null 2>&1 || true
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true
+if [ "$WAS_ON" = "1" ]; then
+  echo "  [--] tryb był ON — pozostawiono flagę (daemon respawnuje przy pierwszym hooku)"
+else
+  rm -f "$HOME/.claude/czytaj.flag"
+fi
 
 # --- settings.json patch (atomic, with backup) ---
 if [ -f "$SETTINGS" ]; then
@@ -171,8 +183,14 @@ PY
 echo ""
 echo "==> Gotowe"
 echo ""
-echo "Komenda:"
-echo "  /czytaj   — toggle trybu czytania (skill)"
+echo "Komendy:"
+echo "  /czytaj   — toggle trybu czytania"
+echo "  /pauza    — pauza 60s (drugie wywołanie wznawia)"
+echo ""
+echo "Detekcja odblokowania ekranu (opcjonalna, zalecana):"
+echo "  bash $CLAUDE_DIR/hooks/czytaj/setup-adb-pairing.sh"
+echo "  Po jednorazowym sparowaniu TTS milknie gdy telefon zablokowany —"
+echo "  rozwiązuje problem 'odłożony telefon zaczął gadać w kieszeni'."
 echo ""
 if [ "$WARN_PIPER" = "1" ]; then
   echo "  Uwaga: Piper niekompletny. Patrz README/audyt jak go zbudować."
