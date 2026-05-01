@@ -1,0 +1,21 @@
+meta:
+  mode: audit
+  target: petla
+  source: ~/.claude/skills/petla/SKILL.md
+  started: '2026-05-01T02:00:00'
+  status: in_progress
+  iterations: 0
+  user_hypothesis: |
+    Re-running /petla audit on the same target reveals new issues each time.
+    Implies one of:
+    (a) Insufficient iterations (stops before exhaustion)
+    (b) False consensus (agents say no_new_issues but there are)
+    (c) Flawed validator prompts (miss aspects, agree too easily)
+  lenses:
+    - prompt-quality
+    - consensus-logic
+    - iteration-termination
+    - prompt-coverage
+    - state-handoff
+issues: []
+iterations: []
