@@ -1,0 +1,73 @@
+meta:
+  mode: audit
+  iteration: 3
+  target: "petla-smoke-extension-plan-2026-05-01.md (rev 3 → rev 4 post-fixes)"
+  status: completed
+  exit_confidence: HIGH (after rev 4 critical fixes applied)
+  exit_reason: "iter 3 found 2 NEW critical (Termux env bugs) + 2 NEW major + 3 medium + ~10 minors; criticals resolved in rev 4 inline; remaining minors non-blocking polish"
+
+iter2_resolution_iter3_verification:
+  architecture: { resolved: 3, partial: 1, unresolved: 0, regressed: 0, status: PROCEED_F1 }
+  naming: { resolved: 6, partial: 2, unresolved: 0, regressed: 0, new_major: 1 (N_NAME3 — fixed in rev 4) }
+  scope: { resolved: 6, partial: 0, unresolved: 0, regressed: 0, status: APPROVE_FOR_M1 }
+  risks: { resolved: 8, partial: 1, unresolved: 0, regressed: 0, new_critical: 2, new_major: 1, status: NEEDS_REVISION_RESOLVED_IN_REV4 }
+  completeness: { resolved: 12, partial: 0, unresolved: 0, regressed: 0, status: CONVERGED_HIGH }
+
+iter3_new_findings_addressed_in_rev4:
+  critical:
+    - id: N3_R3
+      lens: risks
+      item: "KROK 0 /tmp/orphans violates Termux global rule"
+      fix_in_rev4: "Replaced with $TMPDIR/dym-orphans + writability precondition check"
+      status: RESOLVED
+    - id: N3_R4
+      lens: risks
+      item: "pgrep over-match user chromium + under-match our launches"
+      fix_in_rev4: "Added --user-data-dir=$TMPDIR/dym-chromium-${runId} to chromiumArgs; pgrep matches that specific pattern"
+      status: RESOLVED
+  major:
+    - id: N3_R5
+      lens: risks
+      item: "Defense-in-depth claim wrong — page.evaluate fetch exfil bypass"
+      fix_in_rev4: "Corrected layer count to 4 with chromium network egress as layer 4 (M2 MUST-FIX); --host-resolver-rules template added commented out for M2 activation; page.evaluate bypass explicitly documented"
+      status: RESOLVED_IN_M2
+      note: "M1 not blocked since M1 has no AI generator; layer 4 activated when M2 ships"
+    - id: N_NAME3
+      lens: naming
+      item: "Glossary doesn't distinguish .dym-config.yaml (project root, tracked) vs .dym-server.pid (thoughts/, gitignored)"
+      fix_in_rev4: "Added 4 path-scope rows + Path-scope rule paragraph"
+      status: RESOLVED
+
+iter3_minor_findings_deferred:
+  count: ~10
+  examples:
+    - "Glossary completeness: INCONCLUSIVE/SETUP_ERROR/fix_id terms could be in glossary"
+    - "Migration path: ~/smoke-test/ disposition unclear (delete? archive?)"
+    - "Lockfile baseline hash explicit"
+    - "npm audit offline mode"
+    - "Single-file adapters/ subdir M1"
+    - "F3 phase density (5 deliverables)"
+    - "Lens numbering ambiguity (audit + solve both '6th lens')"
+  blocking: NONE
+  recommendation: "address during F1-F3 implementation or rev 5 cleanup pass — non-blocking"
+
+m1_ship_status:
+  blockers_remaining: 0
+  must_fix_8_iter2_blockers: ALL_RESOLVED_IN_REV3
+  iter3_critical_blockers: ALL_RESOLVED_IN_REV4
+  ready_for_F1: YES
+
+m2_ship_status:
+  blockers_documented:
+    - "N3_R5 chromium network egress (--host-resolver-rules) — template ready, activate when AI generator ships"
+    - "TEST_TEMPLATE content — define before F6 PoC kickoff"
+  ready_for_F5: PENDING_M1_SOAK_FEEDBACK
+
+trajectory:
+  iter1_findings: 49 (5C + 24M + 20m)
+  iter2_findings: ~30 (1C + 9M + 20m)  
+  iter3_findings: ~17 (2C + 2M + 3 medium + ~10 m)
+  iter4_estimate: <5 (post-rev4 fixes; only minors)
+  discovery_decay_rate: "49 → 30 → 17 = converging; iter 3 criticals were Termux-env-specific bugs caught only because risks lens enumerated environment constraints"
+
+final_verdict: "Plan rev 4 jest READY for M1 F1-F4 implementation. Confidence HIGH. Iter 4 verification optional (only ~5 minors remaining + rev 4 spot-check). User decyduje czy iter 4 czy F1 start."

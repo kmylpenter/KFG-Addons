@@ -61,7 +61,17 @@
       "Bash(cp /data/data/com.termux/files/home/projekty/KFG-Addons/addons/insights-optimizer/files/.claude/hooks/src/*.sh /data/data/com.termux/files/home/.claude/hooks/src/)",
       "Bash(chmod +x /data/data/com.termux/files/home/.claude/hooks/src/*.sh)",
       "Bash(cp /data/data/com.termux/files/home/projekty/KFG-Addons/addons/autoinit-skills/files/.claude/skills/petla/SKILL.md /data/data/com.termux/files/home/.claude/skills/petla/SKILL.md)",
-      "Read(//data/data/com.termux/files/home/.claude/skills/petla/**)"
+      "Read(//data/data/com.termux/files/home/.claude/skills/petla/**)",
+      "Bash(timeout 8 bash ~/.claude/hooks/czytaj/stop.sh)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(mkdir -p /data/data/com.termux/files/home/projekty/KFG-Addons/.claude/commands)",
+      "Bash(cp ~/.claude/commands/czytaj.md /data/data/com.termux/files/home/projekty/KFG-Addons/.claude/commands/czytaj.md)",
+      "Bash(cat)",
+      "Bash(chmod 644 ~/.claude/commands/czytaj.md)",
+      "Bash(cp ~/.claude/commands/czytaj.md /data/data/com.termux/files/home/projekty/KFG-Addons/addons/czytaj/files/commands/czytaj.md)",
+      "Read(//data/data/com.termux/files/home/.claude/**)",
+      "Bash(mkdir -p ~/.claude/lib/browser-smoke/adapters)",
+      "Read(//data/data/com.termux/files/home/.claude/lib/**)"
     ]
   }
 }

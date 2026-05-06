@@ -1,0 +1,266 @@
+meta:
+  mode: audit
+  target: "petla-smoke-extension-plan-2026-05-01.md"
+  target_path: "/data/data/com.termux/files/home/projekty/KFG-Addons/thoughts/shared/petla-smoke-extension-plan-2026-05-01.md"
+  started: "2026-05-01T13:00:00"
+  updated: "2026-05-01T14:30:00"
+  status: completed_iter_1
+  iterations: 1
+  lenses: [architecture, naming, scope, risks, completeness]
+  exit_confidence: MEDIUM
+  exit_reason: "iter_1_findings_sufficient_to_drive_plan_revision; iter_2_skipped_by_orchestrator_judgment"
+
+iterations:
+  - number: 1
+    timestamp: "2026-05-01T14:00:00"
+    new_issues_found: 49
+    consensus: "5/5 issues_found"
+    verdicts:
+      architecture: 7_items_1C_3M_3m
+      naming: 10_items_0C_3M_7m
+      scope: 10_items_0C_6M_4m
+      risks: 10_items_1C_7M_2m
+      completeness: 12_items_3C_5M_4m
+
+issues:
+  # CRITICAL (5)
+  - id: C1
+    severity: critical
+    lens: completeness
+    item: "smoke-launcher.js runTest() return value schema undefined"
+    location: "plan sec 4.1 lines 142-158"
+    suggestion: "inline result-schema.yaml content in plan or define JSON Schema for evidence/logs/errors/bonusBugs"
+  - id: C2
+    severity: critical
+    lens: completeness
+    item: "AI test-generator subagent contract missing — only one informal sentence"
+    location: "plan sec 4.2 line 200"
+    suggestion: "add 'Test Generator Subagent Protocol' subsection mirroring SKILL.md validator template (allowed-tools, input contract, output contract, FORBIDDEN actions)"
+  - id: C3
+    severity: critical
+    lens: completeness
+    item: "smoke-coverage audit lens has no rubric — only 4 vague hints vs 5-10 patterns for existing lenses"
+    location: "plan sec 4.3 point 4"
+    suggestion: "define LENS_INSTRUCTIONS entry with 7 patterns (silent try/catch, async untested, late globals, mock-only coverage, regex/parsers, _state singletons, etc.)"
+  - id: C4
+    severity: critical
+    lens: architecture
+    item: "INCONCLUSIVE smoke verdict not handled in flow — risk of silent PASS bypass of v3.0 'silence ≠ clean' invariant"
+    location: "plan sec 4.3 / Flow extension"
+    suggestion: "add explicit branch: INCONCLUSIVE → treat as failed, count toward 2-retry budget, tag separately for flaky-vs-real differentiation"
+  - id: C5
+    severity: critical
+    lens: risks
+    item: "AI test generation prompt injection — generated test executes as node, RCE vector"
+    location: "plan sec 4.2 KROK 4a (subagent prompt)"
+    suggestion: "test template with whitelist API; generated test passes static linter (eslint-no-restricted-syntax) before run; sandbox via vm.runInContext; audit redlist words (child_process, fs.unlink, exec, spawn) before run"
+
+  # MAJOR (24)
+  - id: M1
+    severity: major
+    lens: naming
+    item: "Mode name 'smoke' is English — violates user's locked Polish-naming policy from memory"
+    location: "plan sec 1, 4.2"
+    suggestion: "rename to 'dym' (literal smoke) — matches /petla Polish identity, prevents collision with potential future Anthropic /smoke"
+  - id: M2
+    severity: major
+    lens: naming
+    item: "Library path '~/.claude/lib/petla-smoke/' couples to petla, contradicts plan's own future-proofing rationale (sec 8.1)"
+    location: "plan sec 3, 4.1, 8.1"
+    suggestion: "rename to '~/.claude/lib/browser-smoke/' or '~/.claude/lib/dym/' — capability-based, not consumer-coupled"
+  - id: M3
+    severity: major
+    lens: naming
+    item: "smoke-config.yaml glob-collides with state file pattern smoke-<target>-<date>.yaml in same dir"
+    location: "plan sec 4.1"
+    suggestion: "move config to thoughts/shared/petla/config/smoke.yaml or rename to .smoke-config.yaml"
+  - id: M4
+    severity: major
+    lens: scope
+    item: "v1 scope creep — 4 independent deliverables (standalone smoke + solve smoke lens + audit smoke flagging + 8-file shared lib) glued into one release"
+    location: "plan sec 4.1-4.3"
+    suggestion: "split into M1 (standalone smoke, F1+F3+F5, 3 files) and M2 (integration F6+F7+F8); ship M1 first, use 1-2 weeks, then M2"
+  - id: M5
+    severity: major
+    lens: scope
+    item: "Empirical alignment — half of plan is speculation: AI test generation NOT validated empirically (Terminator-Umowy used hand-written iterative tests), INCONCLUSIVE detection NOT validated as programmatic logic, retry-2 logic NOT validated"
+    location: "plan vs empirical context"
+    suggestion: "v1 manual mode (user/Claude write tests in conversation); add proof-of-concept gate for AI generation before locking; deferred features = v2"
+  - id: M6
+    severity: major
+    lens: scope
+    item: "8 new files violates minimal-change-principle (rule: 6+ = stop, re-read original); empirically only 4 files were used in Terminator-Umowy"
+    location: "plan sec 4.1, sec 5"
+    suggestion: "v1-MIN: 3-4 files (smoke-launcher.js + gas-shim.py + SKILL.md section + MEMORY.md). Defer README, package.json, templates, schema yaml, static-server.py to v1.5"
+  - id: M7
+    severity: major
+    lens: scope
+    item: "Premature abstraction — project-detector.sh handles 7 types but v1 only supports 2 (gas-web, plain-web)"
+    location: "plan sec 4.4"
+    suggestion: "v1 detector: only gas-web detection + 'other' fallback; add types when needed"
+  - id: M8
+    severity: major
+    lens: scope
+    item: "Phase sequencing wrong — F5 (smoke standalone) is shippable alone; F6+F7 are multipliers, not blockers"
+    location: "plan sec 6"
+    suggestion: "M1=F1+F3+F5; M2=F6+F7+F8 with 1-2 week soak between"
+  - id: M9
+    severity: major
+    lens: scope
+    item: "AI test quality is core v1 dependency but unvalidated — risk of >50% INCONCLUSIVE rate"
+    location: "plan sec 9 risk row 3"
+    suggestion: "v1 manual OR require >70% PASS rate on Wycena.html re-run as F1 acceptance gate"
+  - id: M10
+    severity: major
+    lens: architecture
+    item: "Port 8080 hardcoded — cross-session collision (user runs multiple projekty in parallel terminals)"
+    location: "plan sec 4.1, 4.5"
+    suggestion: "find_free_port() — socket.bind(0); write chosen port to state file"
+  - id: M11
+    severity: major
+    lens: architecture
+    item: "State file schema drift — solve mode stores embedded smoke results (sec 4.3) but standalone uses tests[] schema (sec 4.2). Two different formats for same data."
+    location: "plan sec 4.2 vs 4.3"
+    suggestion: "define SmokeResult schema fragment, embed both in tests[] and fixes[].smoke_verifications[]; reference from result-schema.yaml"
+  - id: M12
+    severity: major
+    lens: architecture
+    item: "Subagent tool allowlist ambiguous — KROK 4a 'spawn subagent: napisz test' followed by KROK 4b 'RUN: node ...'. Who runs node? Subagent (violates v3.0 invariant) or main?"
+    location: "plan sec 4.2 KROK 4"
+    suggestion: "make explicit: 'Subagent role = test author only. Returns test.js as text. Main context (orchestrator) executes node and parses JSON.'"
+  - id: M13
+    severity: major
+    lens: risks
+    item: "Chromium auto-update drift — Termux pkg manager updates without warning, may break compat"
+    location: "missing from sec 9"
+    suggestion: "add chromium_version_expected to smoke-config; warn on major version mismatch"
+  - id: M14
+    severity: major
+    lens: risks
+    item: "puppeteer-core supply chain — unpinned in plan; npm chain attacks real (cf archived MCP advisory)"
+    location: "plan sec 5"
+    suggestion: "pin exact version; npm audit in F1 verification; lock file committed"
+  - id: M15
+    severity: major
+    lens: risks
+    item: "State file concurrent-writer race — main context + smoke runner may both write"
+    location: "plan sec 4.2 KROK 4 + 4.3 flow"
+    suggestion: "atomic write (tmp + os.rename); fcntl.flock; OR single-writer model (smoke runner returns JSON to stdout, main aggregates)"
+  - id: M16
+    severity: major
+    lens: risks
+    item: "'Test on 3 GAS projects' mitigation unrealistic — only Wycena.html empirically validated"
+    location: "plan sec 9"
+    suggestion: "concretize: name actual projects (Wycena ✓ confirmed; KFG-Addons TBD; TimeTrackingApp TBD) or admit 'tested only on 1 codebase, plan for hotfix iteration'"
+  - id: M17
+    severity: major
+    lens: risks
+    item: "Backward-compat solve auto-flagging side-effect — adding smoke-coverage lens to audit means existing /petla solve old-audit.yaml may suddenly run smoke unexpectedly"
+    location: "plan sec 4.3"
+    suggestion: "audit YAML schema_version field; solve mode reads version: <3.1 → smoke OFF default; CLI flag --smoke=auto|always|never|opt-in"
+  - id: M18
+    severity: major
+    lens: completeness
+    item: "Exit code semantics for smoke-launcher.js missing — CI/CD impossible without"
+    location: "plan sec 4.1, 6"
+    suggestion: "table: 0=PASS, 1=FAIL, 2=INCONCLUSIVE, 3=SETUP_ERROR, 4=CRASH"
+  - id: M19
+    severity: major
+    lens: completeness
+    item: "Dev server lifecycle / orphan-process handling unspecified"
+    location: "plan sec 3 (lifecycle), 4.5"
+    suggestion: "PID file in thoughts/shared/petla/.smoke-server.pid; trap EXIT/INT/TERM; check lsof -i :PORT and kill stale on startup"
+  - id: M20
+    severity: major
+    lens: completeness
+    item: "Rollback / opt-out missing — no --no-smoke flag, no master switch in config"
+    location: "plan sec 4.3 + 6"
+    suggestion: "--no-smoke CLI flag; smoke-config.yaml `enabled: true|false`; document global disable in README"
+  - id: M21
+    severity: major
+    lens: completeness
+    item: "Fan-out semantics missing — one fix can break N smoke tests, plan treats each as separate retry"
+    location: "plan sec 4.3 + decision 4"
+    suggestion: "group failures by fix-id; consume retry budget per fix-id, not per test-id"
+  - id: M22
+    severity: major
+    lens: scope
+    item: "Section 1 OOS missing operational concerns — tablet RAM, zombie cleanup, cross-session, version migration, opt-in mechanism"
+    location: "plan sec 1"
+    suggestion: "explicit OOS for: zombie cleanup (v2), cross-session locking (v2), backward compat audit YAML (must-have v1), opt-in/opt-out flag definition"
+  - id: M23
+    severity: major
+    lens: scope
+    item: "Acceptance criteria not measurable — F1-F8 'green' is tautology; '/petla solve przechodzi e2e' is subjective"
+    location: "plan sec 10"
+    suggestion: "3 measurable: smoke runs <90s on Wycena replay; <20% INCONCLUSIVE rate; zero zombie chromium after SIGINT"
+  - id: M24
+    severity: major
+    lens: risks
+    item: "Section 9 captures only ~50% of empirical risk classes — missing supply chain, prompt injection, race conditions, port collision, schema versioning"
+    location: "plan sec 9"
+    suggestion: "expand premortem table by 8 entries; add 2 acceptance criteria (npm audit clean; generated test passes lint)"
+
+  # MINOR (20+, abbreviated)
+  - id: m1
+    severity: minor
+    lens: architecture
+    item: "smoke-launcher.js claims 'universal' but hardcodes Termux args (--no-zygote, --no-sandbox)"
+    suggestion: "accept chromiumArgs option; document 'universal == Termux Android' for v1"
+  - id: m2
+    severity: minor
+    lens: architecture
+    item: "AI-generated test cleanup unspecified — silent disk bloat over months"
+    suggestion: "auto-prune <date>/ older than 14 days OR document manual cleanup"
+  - id: m3
+    severity: minor
+    lens: architecture
+    item: "bonus_bug priority/severity rule missing"
+    suggestion: "bonus_bug inherits severity from smoke verdict; insert at end of current tier; count toward MAX_ITERATIONS"
+  - id: m4
+    severity: minor
+    lens: naming
+    item: "Test file naming T1.js non-descriptive — duplicates id field"
+    suggestion: "use <feature>-<id>.js (e.g., login-flow-T1.js)"
+  - id: m5
+    severity: minor
+    lens: naming
+    item: "gas-shim.py vs static-server.py mixes naming axes (role vs architecture)"
+    suggestion: "gas-server.py + static-server.py OR gas-shim-server.py + static-shim-server.py"
+  - id: m6
+    severity: minor
+    lens: naming
+    item: "Audit lens 'smoke-coverage' uses kebab-case; existing lenses single-word lowercase"
+    suggestion: "rename to 'coverage', 'testability', or Polish 'pokrycie'"
+  - id: m7
+    severity: minor
+    lens: naming
+    item: "smoke-tests/<date>/ subdir convention differs from flat <mode>-<target>-<date>.yaml"
+    suggestion: "flatten to smoke-tests/<date>-<feature>.js"
+  # ... additional minors omitted for brevity
+
+summary:
+  total: 49
+  critical: 5
+  major: 24
+  minor: 20
+  by_lens:
+    architecture: 7
+    naming: 10
+    scope: 10
+    risks: 10
+    completeness: 12
+
+recommendation_to_user: |
+  Plan ma solid empirical foundation ALE narusza minimal-change-principle i ma
+  5 KRYTYCZNYCH gaps które uniemożliwiają implementację bez wymyślania na
+  bieżąco. Zalecenie: REVISE plan zanim ruszysz F1.
+
+  Najwyższy priorytet (must-fix przed F1):
+  1. Rename mode na Polish (dym) + lib path na capability-based (browser-smoke)
+  2. Split scope: M1=standalone smoke (3 pliki, ship-able alone), M2=integration
+  3. Specify all contract gaps: runTest() schema, exit codes, smoke-coverage lens
+     rubric, AI test-generator subagent prompt
+  4. Add security mitigations: prompt injection (RCE risk), supply chain pin
+  5. Add operational concerns: port discovery, dev server cleanup, INCONCLUSIVE
+     handling, fan-out semantics

@@ -1,0 +1,92 @@
+meta:
+  mode: audit
+  iteration: 2
+  target: "petla-smoke-extension-plan-2026-05-01.md (rev 2, 830L)"
+  started: "2026-05-01T15:00:00"
+  completed: "2026-05-01T16:00:00"
+  status: completed
+  exit_confidence: MEDIUM
+  exit_reason: "iter1 49 findings → iter2 ~30 new (1C/9M/20m); discovery rate 0.61 (<0.7 unbounded threshold); no fundamental architecture/scope flaws remaining; mostly polish + M2 edge cases"
+
+iter1_resolution:
+  architecture: { resolved: 6, partial: 1, unresolved: 0, regressed: 0 }
+  naming: { resolved: 6, partial: 0, unresolved: 0, regressed: 0, caveat: "literal renames only — half-rebrand inside lib persists" }
+  scope: { resolved: 6, partial: 0, unresolved: 0, regressed: 0 }
+  risks: { resolved: 6, partial: 1, unresolved: 0, regressed: 0, partial_id: "M16 — 2nd GAS project still TBD" }
+  completeness: { resolved: 7, partial: 1, unresolved: 0, regressed: 0, partial_id: "C3 — TEST_TEMPLATE placeholder" }
+  total_iter1_addressed: "32/33 (97%)"
+
+iter2_new_findings:
+  critical:
+    - id: N1
+      lens: risks
+      item: "Linter forbidden-list incomplete — dynamic import, globalThis.process, Function reflection, worker_threads, fs.readFile, fetch exfil bypass vectors"
+      blocks: "M2 only (M1 manual mode no AI generator)"
+  major:
+    - id: A_NEW1
+      lens: architecture
+      item: "JSON streaming truncation safety — single-writer model unspecified end-marker; truncated stdout silently treated as PASS risk"
+      blocks: "M1 (sec 10 schema validation criterion silent on truncation)"
+    - id: N_NAME1
+      lens: naming
+      item: "Half-rebrand persistence — 38 'smoke' refs inside browser-smoke/ library (smoke-launcher.js, smoke-base.js refs, 'smoke verdict/phase' wording) vs 86 'dym' refs"
+      blocks: "M1 readability — implementer confusion"
+    - id: N_NAME2
+      lens: naming
+      item: "Lens registry mixed-language — internal LENS_INSTRUCTIONS keys all English (correctness/regression/etc); adding Polish 'pokrycie'/'dym' breaks convention"
+      blocks: "M2 only (lens additions are M2)"
+    - id: S1
+      lens: scope
+      item: "Sec 4.2 has ~67 lines M2-only content (test generator subagent + sandbox + linter) inside M1 mode section — pollutes scope boundary"
+      blocks: "M1 readability"
+    - id: S2
+      lens: scope
+      item: ".dym.lock cross-session lock — sec 4.7 includes it, OOS line 44 says deferred. Internal contradiction."
+      blocks: "M1 (1-line edit fix)"
+    - id: N2
+      lens: risks
+      item: "Transitive deps not pinned in package.json — npm install drift; F1 acceptance lacks `npm ci` enforcement"
+      blocks: "M1 supply chain integrity"
+    - id: N3
+      lens: risks
+      item: "Termux port TOCTOU — find_free_port → close → python launches with reused port; race window"
+      blocks: "M1 reliability"
+    - id: N4
+      lens: risks
+      item: "Android OOM killer SIGKILLs bypass trap — orphan chromium guaranteed on tablet idle"
+      blocks: "M1 cleanup reliability"
+    - id: N6
+      lens: risks
+      item: ".dym.lock stale lock semantics — fcntl.flock auto-released by kernel BUT undocumented; future maintainer could break with file-based lock"
+      blocks: "M1 (acceptance line 798 lifecycle)"
+  minor:
+    architecture: ["chromium drift major-bump policy ambiguous", "schema_version dual placement (.dym-config.yaml + audit YAML)", "stale PID cleanup beyond fcntl.flock not implemented"]
+    naming: ["state file dot-segment edge case", "single-file adapters/ subdir M1", "opt-in CLI value hyphen quoting", "project_type kebab-case mix", "gas-server vs gas-shim semantic loss", "dym_ prefix vs bonus_bugs missing prefix", "gas-server.py docstring needed"]
+    scope: ["full TypeScript schema not M1/M2 annotated", "M2 6-phase count vs M1 4 — split possible", "pokrycie rubric draft sibling doc better", "9-item M1 acceptance vs 8 ideal", "15-risk count borderline", "empirical-vs-speculation table doesn't gate F1"]
+    risks: ["RAM monitoring method unspecified", "schema_version trivial bypass via manual edit", "subagent prompt construction injection (M2)", "dym-tests/ commit accident — .gitignore missing", "empirical n=1 false confidence calibration"]
+    completeness: ["acceptance verification commands ambiguous (N1, N3, N4)", "M2 PoC features cherry-picking (N2)", "self-test definition placeholder (N3)", "Test Author API undefined for evidence (N6)", "fix_id hash function unspecified (N7)", "schema_version absent legacy fallback (N8)", "README content outline missing (N9)", "wycena-helpers.js provenance (N10)", "empirical uplift procedure (N11)", "Wycena replay scope ambiguity (N12)"]
+
+m1_ship_blockers:
+  must_fix:
+    - "Architecture A_NEW1: JSON streaming end-marker protocol (sec 4.7)"
+    - "Scope S2: drop .dym.lock from M1 (sec 4.7) OR remove from OOS line 44 — pick one"
+    - "Risks N2: document `npm ci` (not `npm install`) in F1 acceptance"
+    - "Risks N9: add .gitignore entry for thoughts/shared/petla/dym-tests/"
+    - "Completeness N3: define --self-test 4-5 concrete tests"
+    - "Completeness N4: F2 acceptance command explicit (test SIGTERM cleanup)"
+    - "Completeness N6: Test Author API for evidence (snapshot/assertDom/recordCustom)"
+    - "Completeness N10: wycena-helpers.js provenance — port from ~/smoke-test/smoke-base.js"
+  should_fix:
+    - "Naming N_NAME1: commit to full rebrand OR glossary section"
+    - "Architecture: chromium major-bump hard-fail policy"
+
+m2_ship_blockers:
+  must_fix_before_M2_starts:
+    - "Risks N1 (CRITICAL): linter completeness — eslint-plugin-security, allow-list imports, vm.createContext sandboxing"
+    - "Risks N3, N4, N6: port TOCTOU, OOM killer, stale lock semantics documented"
+    - "Naming N_NAME2: pokrycie/dym lens names → English (coverage, runtime/e2e)"
+
+verdict:
+  m1_status: "READY_WITH_8_MUST_FIX (~30 min revision work)"
+  m2_status: "BLOCKED on N1 + N3 + N4 + N6 + N_NAME2"
+  recommendation: "Apply M1 must-fix list, optional iter 3 to verify, then F1 start"
