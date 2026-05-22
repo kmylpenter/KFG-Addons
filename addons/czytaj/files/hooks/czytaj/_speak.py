@@ -21,8 +21,14 @@ LOG_FILE = os.path.expanduser("~/.claude/czytaj.log")
 PAUSE_FLAG = os.path.expanduser("~/.claude/czytaj-pause.flag")
 PAUSE_DEFAULT_S = 60.0
 ADB_FLAG = os.path.expanduser("~/.claude/czytaj-adb.flag")
+SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
 SCREEN_CACHE = os.path.expanduser("~/.claude/czytaj-screen.cache")
 SCREEN_CACHE_TTL_S = 2.0
+# Multi-pane coordination: UPS hook writes the active session's transcript
+# ID here; Stop hook reads it and SKIPS if its own transcript doesn't match.
+# Prevents the X4 bug where 4 panes all read aloud when user prompts in one.
+ACTIVE_SESSION_FILE = os.path.expanduser("~/.claude/czytaj-active-session.txt")
+ACTIVE_SESSION_TTL_S = 300.0
 
 
 def _log(*parts: object) -> None:
@@ -51,6 +57,59 @@ def preheat_audio() -> None:
 
 def is_active() -> bool:
     return os.path.isfile(FLAG_FILE)
+
+
+def _transcript_id(transcript_path: str) -> str:
+    """Stable identifier for a Claude session — the transcript jsonl basename."""
+    if not transcript_path:
+        return ""
+    return os.path.basename(transcript_path)
+
+
+def mark_active_session(transcript_path: str) -> None:
+    """UPS hook calls this when a user prompt arrives in this session. Writes
+    transcript_id + timestamp so only THIS pane will speak the resulting reply.
+    Multi-pane fix (X4): without this gate, every Claude pane's Stop hook
+    fires on its own transcript and they overlap audibly."""
+    tid = _transcript_id(transcript_path)
+    if not tid:
+        return
+    try:
+        tmp = ACTIVE_SESSION_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(f"{tid}\n{time.time():.3f}\n")
+        os.replace(tmp, ACTIVE_SESSION_FILE)
+        os.chmod(ACTIVE_SESSION_FILE, 0o600)
+    except OSError:
+        pass
+
+
+def is_active_session(transcript_path: str) -> bool:
+    """True iff this session is the one that most recently received a user
+    prompt (within ACTIVE_SESSION_TTL_S). When False, Stop hook should SKIP —
+    a different pane is the active one and will read aloud for the user.
+
+    Fail open: if the active-session file is missing or unparseable, treat
+    every session as active (preserves single-pane behaviour for users who
+    never run multiple Claude instances)."""
+    tid = _transcript_id(transcript_path)
+    if not tid:
+        return True
+    try:
+        with open(ACTIVE_SESSION_FILE) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return True
+    if len(lines) < 2:
+        return True
+    active_tid = lines[0].strip()
+    try:
+        marked_at = float(lines[1].strip())
+    except ValueError:
+        return True
+    if time.time() - marked_at > ACTIVE_SESSION_TTL_S:
+        return True
+    return tid == active_tid
 
 
 def is_recording() -> bool:
@@ -141,34 +200,56 @@ def _write_screen_cache(unlocked: bool) -> None:
         pass
 
 
+def _shell_cmd_prefix() -> list[str] | None:
+    """Return the prefix that runs the next args with shell uid via Shizuku
+    (preferred) or Wireless ADB (fallback). Returns None if neither is
+    available — callers should fail open."""
+    if os.path.isfile(SHIZUKU_FLAG):
+        return ["rish", "-c"]
+    if os.path.isfile(ADB_FLAG):
+        return ["adb", "shell"]
+    return None
+
+
+def _run_shell(shell_cmd: str, timeout_s: float = 2.0) -> tuple[bool, str]:
+    """Execute a single shell command via Shizuku/ADB. Returns (ok, stdout).
+    ok==False means the helper isn't available or the call errored — caller
+    must fail OPEN (don't suppress TTS just because a probe broke)."""
+    prefix = _shell_cmd_prefix()
+    if prefix is None:
+        return False, ""
+    if prefix[0] == "rish":
+        cmd = prefix + [shell_cmd]
+    else:
+        cmd = prefix + shell_cmd.split()
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout_s,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False, ""
+    if r.returncode != 0:
+        return False, r.stdout or ""
+    return True, r.stdout
+
+
 def is_screen_unlocked() -> bool:
     """True iff the phone screen is on AND not on the lock screen.
 
-    Mechanism: ADB-over-localhost (configured one-time via
-    setup-adb-pairing.sh, sentinel at ~/.claude/czytaj-adb.flag). If the
-    sentinel is absent, returns True — feature is opt-in, missing setup
-    must NOT silence TTS. If adb fails for any reason (daemon dead, paplay
-    timing out, dumpsys denied), also returns True (fail open).
-
-    Cached for 2s to avoid spawning an adb shell on every PreToolUse hook
-    fire when /petla pumps several tools per turn."""
-    if not os.path.isfile(ADB_FLAG):
+    Mechanism: Shizuku rish (preferred, instant) or Wireless ADB
+    (fallback). When neither is configured, returns True — feature is
+    opt-in, missing setup must NOT silence TTS. Cached for 2s to avoid
+    spawning a shell on every PreToolUse hook fire when /petla pumps
+    several tools per turn."""
+    if _shell_cmd_prefix() is None:
         return True
     cached = _read_screen_cache()
     if cached is not None:
         return cached
-    try:
-        r = subprocess.run(
-            ["adb", "shell", "dumpsys", "window"],
-            capture_output=True, text=True, timeout=2.0,
-        )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    ok, out = _run_shell("dumpsys window", timeout_s=2.0)
+    if not ok:
         _write_screen_cache(True)
         return True
-    if r.returncode != 0:
-        _write_screen_cache(True)
-        return True
-    out = r.stdout
     locked_signals = (
         "mDreamingLockscreen=true",
         "mShowingDream=true",
@@ -182,6 +263,88 @@ def is_screen_unlocked() -> bool:
             return False
     _write_screen_cache(True)
     return True
+
+
+def is_mic_recording_global() -> bool:
+    """True iff any non-Termux app currently holds the microphone (e.g.
+    Voice Typer Keyboard, WhatsApp recording, etc.). Replaces the dead
+    Voice Typer flag mechanism that depended on the keyboard writing a
+    file we can't enforce.
+
+    Requires Shizuku or Wireless ADB. Fails open. Cached briefly because
+    a quick burst of PreToolUse hooks would otherwise spawn many dumpsys
+    calls in a row."""
+    if _shell_cmd_prefix() is None:
+        return False
+    cache = os.path.expanduser("~/.claude/czytaj-mic.cache")
+    try:
+        if time.time() - os.stat(cache).st_mtime < 1.0:
+            return open(cache).read().strip() == "1"
+    except OSError:
+        pass
+    ok, out = _run_shell(
+        "dumpsys media.audio_flinger | grep -iE 'active.*1|recordtrack.*active|started' | head -20",
+        timeout_s=2.0,
+    )
+    if not ok:
+        ok, out = _run_shell(
+            "dumpsys audio | grep -iE 'recordclient.*active|active.*record' | head -20",
+            timeout_s=2.0,
+        )
+    recording = False
+    if ok and out.strip():
+        # We exclude lines that mention 'com.termux' / 'piper' so our own
+        # mic activity (if any) doesn't suppress our own TTS.
+        for line in out.splitlines():
+            if "com.termux" in line or "piper" in line:
+                continue
+            if "active" in line.lower() or "started" in line.lower():
+                recording = True
+                break
+    try:
+        with open(cache, "w") as f:
+            f.write("1" if recording else "0")
+        os.chmod(cache, 0o600)
+    except OSError:
+        pass
+    return recording
+
+
+def is_external_media_playing() -> bool:
+    """True iff a foreign app (WhatsApp, Spotify, Messenger, YouTube...)
+    has an active MediaSession in PLAYING state. Finally enables the
+    'wait until WhatsApp voice msg finishes' behaviour the user asked
+    about in the original audit.
+
+    Requires Shizuku or Wireless ADB. Fails open. Cached for 1.5s."""
+    if _shell_cmd_prefix() is None:
+        return False
+    cache = os.path.expanduser("~/.claude/czytaj-media.cache")
+    try:
+        if time.time() - os.stat(cache).st_mtime < 1.5:
+            return open(cache).read().strip() == "1"
+    except OSError:
+        pass
+    ok, out = _run_shell(
+        "cmd media_session list-sessions",
+        timeout_s=2.0,
+    )
+    playing = False
+    if ok and out:
+        for line in out.splitlines():
+            low = line.lower()
+            if "state=playback_state_playing" in low or "state=3" in low:
+                if "com.termux" in low or "piper" in low:
+                    continue
+                playing = True
+                break
+    try:
+        with open(cache, "w") as f:
+            f.write("1" if playing else "0")
+        os.chmod(cache, 0o600)
+    except OSError:
+        pass
+    return playing
 
 
 def is_self_already_speaking() -> bool:
@@ -202,27 +365,35 @@ def is_self_already_speaking() -> bool:
 
 def is_other_audio_playing(check_self: bool = True) -> bool:
     """Composite skip-decision. Despite the historical name, this answers
-    'should I suppress this TTS?' — NOT 'is foreign audio playing?'.
-    Foreign-app detection (WhatsApp, Spotify) is unreachable from non-root
-    Termux on Android 16: cmd media_session, dumpsys, AudioPlaybackConfig
-    all require signature permissions; termux-notification-list hangs
-    without consent and is broken on Android 14+ (issue #621).
+    'should I suppress this TTS?'.
 
-    The signals we DO have:
-      1. Phone screen locked (ADB-over-localhost dumpsys window) — opt-in
-         via setup-adb-pairing.sh; targets the 'phone in pocket / on
-         table' case where the user isn't actively using the device.
-      2. User-controlled pause flag (/pauza command).
-      3. Device music-stream muted (termux-volume music==0).
-      4. Self-coordination (already streaming via PulseAudio) — only
+    When Shizuku (preferred) or Wireless ADB is configured, we get
+    real foreign-app detection — the long-standing 'TTS gada w trakcie
+    WhatsApp voicemsg' bug finally goes away. Without those helpers we
+    fall back to the user-controlled signals only (pause flag, music
+    volume, self-speaking).
+
+    The signals we have, in order of evaluation:
+      1. User-controlled pause flag (/pauza command).
+      2. Phone screen locked (Shizuku/ADB dumpsys window) — kieszeń case.
+      3. Foreign app holds microphone (Shizuku dumpsys audio) — don't
+         talk over the user's voice typer recording.
+      4. Foreign app actively plays media (Shizuku cmd media_session) —
+         don't talk over WhatsApp voice message / Spotify / etc.
+      5. Device music-stream muted (termux-volume music==0).
+      6. Self-coordination (already streaming via PulseAudio) — only
          consulted when check_self=True. Callers that intend to
          interrupt a still-playing turn (kill_previous=True) MUST pass
          check_self=False, otherwise the new turn would skip itself
          instead of killing the stale one.
     """
+    if is_paused_by_user():
+        return True
     if not is_screen_unlocked():
         return True
-    if is_paused_by_user():
+    if is_mic_recording_global():
+        return True
+    if is_external_media_playing():
         return True
     if is_device_silenced():
         return True
@@ -478,6 +649,9 @@ def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
     # When kill_previous is True the caller intends to override any
     # in-flight TTS — skip the self-speaking check, otherwise we'd refuse
     # to interrupt our own stale playback and the new turn would be lost.
+    if not is_active_session(transcript_path):
+        _log("SKIP", caller, "reason=not-active-session")
+        return 0
     if is_other_audio_playing(check_self=not kill_previous):
         _log("SKIP", caller, "reason=other-audio")
         return 0

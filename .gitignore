@@ -15,3 +15,4 @@ test-*/
 # /petla smoke mode artifacts (browser smoke tests)
 thoughts/shared/petla/smoke-tests/
 thoughts/shared/petla/.smoke-server.pid
+addons/czytaj/files/hooks/czytaj/__pycache__/

@@ -83,7 +83,7 @@ HOOK_SRC="$ADDON_DIR/files/hooks/czytaj"
 HOOK_DST="$CLAUDE_DIR/hooks/czytaj"
 for f in _speak.py piper_server.py piper_stream.py pre-tool-use.py pre-tool-use.sh \
          stop.py stop.sh user-prompt-submit.sh toggle.sh silent.wav preheat.wav \
-         setup-adb-pairing.sh; do
+         setup-adb-pairing.sh setup-shizuku.sh; do
   if [ -f "$HOOK_SRC/$f" ]; then
     cp -P "$HOOK_SRC/$f" "$HOOK_DST/$f"
   fi
@@ -187,10 +187,16 @@ echo "Komendy:"
 echo "  /czytaj   — toggle trybu czytania"
 echo "  /pauza    — pauza 60s (drugie wywołanie wznawia)"
 echo ""
-echo "Detekcja odblokowania ekranu (opcjonalna, zalecana):"
-echo "  bash $CLAUDE_DIR/hooks/czytaj/setup-adb-pairing.sh"
-echo "  Po jednorazowym sparowaniu TTS milknie gdy telefon zablokowany —"
-echo "  rozwiązuje problem 'odłożony telefon zaczął gadać w kieszeni'."
+echo "Detekcja kontekstu — wybierz JEDNĄ:"
+echo ""
+echo "  PREFEROWANA — Shizuku (jeśli zainstalowane i aktywne):"
+echo "    bash $CLAUDE_DIR/hooks/czytaj/setup-shizuku.sh"
+echo "    Daje 3 mechanizmy: blokada ekranu, nagrywanie mikrofonu,"
+echo "    detekcja WhatsApp/Spotify. Bez ADB pairing."
+echo ""
+echo "  ALTERNATYWNA — Wireless Debugging:"
+echo "    bash $CLAUDE_DIR/hooks/czytaj/setup-adb-pairing.sh"
+echo "    Tylko detekcja blokady ekranu. Wymaga pairing w Developer Options."
 echo ""
 if [ "$WARN_PIPER" = "1" ]; then
   echo "  Uwaga: Piper niekompletny. Patrz README/audyt jak go zbudować."

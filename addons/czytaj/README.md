@@ -32,18 +32,34 @@ Dodatkowo TTS sam się wstrzyma gdy:
   bo tryb "nie przeszkadzaj" często ścisza notification a TTS przez music gra dalej)
 - już mówimy (kolejne hooki czekają na zakończenie obecnego TTS)
 
-## Detekcja odblokowania ekranu (zalecane)
+## Detekcja kontekstu (zalecane) — Shizuku lub Wireless ADB
 
-Najbardziej niezawodny "wyłącznik": TTS gra TYLKO gdy ekran jest odblokowany.
-Telefon w kieszeni / odłożony / na blokadzie = absolutna cisza. Gdy aktywnie
-korzystasz z urządzenia (np. kodujesz na pasku narzędzi w aucie) = czyta.
+Bez specjalnego setupu czytaj polega tylko na ręcznej pauzie i ścieszeniu
+music. To za mało, gdy telefon jest w kieszeni albo nagrywasz głosówkę.
+Dlatego dodajemy dostęp do uprawnień shell (uid 2000) — jedną z dwóch
+dróg, bez roota.
 
-Ponieważ Android non-root nie udostępnia stanu blokady przez żadne CLI,
-korzystamy z **Wireless Debugging** Androida — Termux paruje się sam ze
-sobą przez localhost ADB i wywołuje `dumpsys window`. Brzmi groźnie, ale
-to standardowy mechanizm developerski, nie root, daje tylko shell uid.
+### Opcja preferowana: Shizuku
 
-### Jednorazowy setup
+Jeśli masz apkę Shizuku zainstalowaną i aktywną, użyj:
+```bash
+bash ~/.claude/hooks/czytaj/setup-shizuku.sh
+```
+
+Skrypt wypakuje rish z APK Shizuku, ustawi w PATH, przetestuje dumpsys.
+Odblokowuje TRZY mechanizmy:
+- detekcja blokady ekranu (telefon w kieszeni / na biurku → cisza)
+- detekcja nagrywania mikrofonu (Voice Typer Keyboard, dyktafon → cisza)
+- detekcja WhatsApp/Spotify/Messenger (gra inna apka → cisza)
+
+Shizuku to legalny non-root mechanizm — Apka działa jako zwykła aplikacja
+ale po aktywacji przez ADB udostępnia uprawnienia shell innym aplikacjom.
+
+### Opcja alternatywna: Wireless Debugging
+
+Jeśli nie chcesz instalować Shizuku, można użyć wbudowanego Wireless
+Debugging Androida — Termux paruje się sam ze sobą przez localhost ADB.
+Daje tylko detekcję blokady ekranu (bez mic i media):
 
 ```bash
 bash ~/.claude/hooks/czytaj/setup-adb-pairing.sh
