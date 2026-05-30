@@ -50,6 +50,7 @@ Helper produkuje JSON ze `schema_version: "2.0"`. Zwaliduj kontrakt:
   "files_scanned": N,
   "files_skipped": N,
   "project": {"types": [...], "project_root": "..."},
+  "notes": [...],   # informacyjne stringi (RAW-output disclaimer) — skill ich nie konsumuje
   "findings": {
     "duplicate_strings": [{"value", "secret_kind", "occurrences", "files", "locations"}],
     "duplicate_numbers": [{"value", "is_float", "occurrences", "files", "locations"}],
@@ -162,6 +163,8 @@ User'owi powiedz: "Raporty dodane do .gitignore — nie zostana zaccommitowane."
 
 Atomic write: zapis najpierw do `SSOT_DRY_AUDIT_REPORT.md.tmp`, potem `mv` na finalne (zabezpiecza przed corrupted output przy interruption).
 
+<!-- <<< SZABLON FORMATU — zastap KAZDA wartosc rzeczywistymi wynikami skanu. TAX_RATE/0.23/SSOT-001/PESEL/'admin' to ILUSTRACJE struktury, NIE findingi do skopiowania. >>> -->
+
 ```markdown
 # SSOT/DRY Audit Report
 
@@ -254,6 +257,7 @@ Stack: <project.types>
 
 #### 4d. Machine-readable handoff (`.ssot-findings.yaml`)
 
+# <<< SZABLON — wszystkie id/wartosci ponizej to PRZYKLAD struktury; wypelnij realnymi findingami ze skanu >>>
 ```yaml
 schema_version: "1.0"
 audit_date: "YYYY-MM-DD"
@@ -293,7 +297,8 @@ findings:
         line: 88
     description: "'admin' w roznych warstwach"
     user_question: "Czy 'admin' w auth.ts i styles.css to ten sam koncept?"
-    # NIE zawiera 'refactor' field — petla solve sprawdza obecnosc field i pomija jezeli brak
+    # LOAD-BEARING: `confidence: LOW` → petla solve POMIJA (gating po WARTOSCI confidence, nie po obecnosci pola).
+    # Omijanie `refactor` to defense-in-depth (LOW nie ma code-blocku), NIE mechanizm skip.
 
   - id: PII-001
     severity: critical
@@ -308,17 +313,20 @@ findings:
       action: remove_hardcoded_pii
       replacement: "process.env.TEST_PESEL or pytest fixture"
 
+# petla solve READS: preflight.require_clean_tree + branch (i confidence per-finding powyzej).
+# Pozostale klucze sa ADVISORY/dokumentacyjne — petla ma wlasna logike verify/rollback (per-fix
+# subagent verdicts), nie czyta on_test_or_build_failure/max_consecutive_blocked/require_passing_*.
 petla_solve_rules:
   HIGH: auto_fix
   MEDIUM: per_finding_confirmation
   LOW: skip
-  on_test_or_build_failure: rollback_and_block
-  max_consecutive_blocked: 3
-  branch: "refactor/ssot-fix-<YYYY-MM-DD>"
+  on_test_or_build_failure: rollback_and_block   # advisory (petla rollback jest verdict-driven)
+  max_consecutive_blocked: 3                      # advisory
+  branch: "refactor/ssot-fix-<YYYY-MM-DD>"        # READ by petla
   preflight:
-    require_clean_tree: true
-    require_passing_tests: warn
-    require_passing_build: warn
+    require_clean_tree: true                      # READ by petla
+    require_passing_tests: warn                    # advisory
+    require_passing_build: warn                    # advisory
 ```
 
 Atomic write: tmp + mv.
@@ -342,7 +350,7 @@ Naprawa: /petla solve .ssot-findings.yaml
 
 1. Sortuj po ryzyku biznesowym, nie liczbie wystapien
 2. Filtruj false positives (kanoniczna lista w Fazie 4)
-3. HIGH/MEDIUM majy refactor field, LOW ma tylko user_question (nigdy code block)
+3. `confidence` jest POLEM NOSNYM: petla solve gatuje po jego WARTOSCI (HIGH→auto-fix, MEDIUM→confirm, LOW→skip). HIGH/MEDIUM majy refactor field, LOW ma tylko user_question (nigdy code block — defense-in-depth, nie mechanizm skip)
 4. Polish PII zawsze critical, wartosci zredagowane przed zapisem
 5. Confidence obowiazkowy; przy watpliwosci → downgrade do LOW
 6. `duplicate_function_names`: czytaj OBA ciala przed klasyfikacja

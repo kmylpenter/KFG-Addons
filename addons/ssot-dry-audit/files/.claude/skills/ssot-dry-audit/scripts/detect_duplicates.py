@@ -134,7 +134,7 @@ SECRET_PATTERNS = [
 # Polish business identifiers — flagged as their own category.
 POLISH_PATTERNS = [
     (re.compile(r"\bPL\d{26}\b"), "iban-pl"),
-    (re.compile(r"(?<!\d)\d{11}(?!\d)"), "pesel-or-regon11"),  # PESEL 11 / REGON 14 (handled separately)
+    (re.compile(r"(?<!\d)\d{11}(?!\d)"), "pesel-or-regon11"),  # PESEL 11 / REGON 11 (14-digit REGON not matched — rare, intentionally out of scope)
     (re.compile(r"(?<!\d)\d{10}(?!\d)"), "nip-or-regon"),       # NIP 10 / REGON 9 ambiguous
     (re.compile(r"\b\d{3}-\d{3}-\d{2}-\d{2}\b"), "nip-formatted"),
 ]
