@@ -15,7 +15,11 @@ def main() -> int:
         data = json.load(sys.stdin)
     except Exception:
         return 0
-    return speak_new_text(data.get("transcript_path", ""), kill_previous=True)
+    return speak_new_text(
+        data.get("transcript_path", ""),
+        kill_previous=True,
+        cwd=data.get("cwd", ""),
+    )
 
 
 if __name__ == "__main__":

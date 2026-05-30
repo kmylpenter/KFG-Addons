@@ -6,6 +6,7 @@ read the new suffix instead of repeating earlier content.
 """
 import errno
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,14 @@ PROBE_CACHE_TTL_S = 5.0  # mic + media probes
 # Prevents the X4 bug where 4 panes all read aloud when user prompts in one.
 ACTIVE_SESSION_FILE = os.path.expanduser("~/.claude/czytaj-active-session.txt")
 ACTIVE_SESSION_TTL_S = 300.0
+# Cross-window TTS arbitration (the "X4" bug: N open Claude windows each read the
+# same reply, N times). A content-hash ledger guarantees a message is spoken at
+# most ONCE across all panes; a shared last-folder file drives the spoken
+# project-name announcement ("Utility. <tekst>") so the user knows which window.
+SPOKEN_LEDGER = os.path.expanduser("~/.claude/czytaj-spoken-ledger.json")
+SPOKEN_LEDGER_TTL_S = 45.0      # sliding window; refreshed on every repeat attempt
+LAST_FOLDER_FILE = os.path.expanduser("~/.claude/czytaj-last-folder.txt")
+FOLDER_REANNOUNCE_S = 30.0      # re-say the folder name after this much channel idle
 
 
 def _log(*parts: object) -> None:
@@ -668,7 +677,119 @@ def _kill_audio_chain() -> None:
         pass
 
 
-def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
+def _project_label(cwd: str, transcript_path: str) -> str:
+    """Human-friendly project name for the spoken folder announcement.
+    Prefers the hook-provided cwd basename (exact, dash-safe); falls back to
+    decoding the transcript's parent dir (~/.claude/projects/<encoded-cwd>/).
+    Returns '' when nothing usable — caller then speaks with no prefix."""
+    if cwd:
+        base = os.path.basename(cwd.rstrip("/"))
+        if base:
+            return base
+    try:
+        parent = os.path.basename(os.path.dirname(transcript_path))
+    except Exception:
+        parent = ""
+    if parent and parent != "projects":
+        # encoded form: -data-data-...-projekty-Utility → last dash segment
+        return parent.rstrip("-").rsplit("-", 1)[-1]
+    return ""
+
+
+def _ledger_claim(content_hash: str) -> bool:
+    """Atomically claim a content hash in the cross-window spoken-ledger.
+    Returns True if THIS caller may speak (nobody spoke this exact content
+    within the sliding TTL), False if another pane/fire already spoke it.
+
+    The timestamp is ALWAYS refreshed to now (even on a suppressed repeat),
+    so a burst of N identical reads staggered over time stays suppressed as
+    long as each gap is < TTL — this is what kills the X4 duplicate-read bug.
+
+    Fails OPEN (returns True) if the ledger can't be accessed — a broken
+    ledger must never silence TTS entirely. Self-contained flock, so it is
+    correct even on the rare path where SPEAK_LOCK failed to open."""
+    now = time.time()
+    try:
+        fd = os.open(SPOKEN_LEDGER, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError:
+        return True
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            pass
+        raw = b""
+        try:
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                raw += chunk
+        except OSError:
+            pass
+        try:
+            data = json.loads(raw.decode("utf-8")) if raw else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (ValueError, UnicodeDecodeError):
+            data = {}
+        prev = data.get(content_hash)
+        fresh = False
+        if prev is not None:
+            try:
+                fresh = (now - float(prev)) < SPOKEN_LEDGER_TTL_S
+            except (TypeError, ValueError):
+                fresh = False
+        pruned = {h: t for h, t in data.items()
+                  if isinstance(t, (int, float)) and (now - t) < SPOKEN_LEDGER_TTL_S}
+        pruned[content_hash] = now  # always refresh → sliding window
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, 0)
+            os.write(fd, json.dumps(pruned).encode("utf-8"))
+        except OSError:
+            pass
+        return not fresh
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _maybe_folder_prefix(label: str) -> str:
+    """Return 'Label. ' when the reading channel switches project context
+    (different folder than last spoken, or after FOLDER_REANNOUNCE_S idle),
+    else ''. The last-folder file is shared across panes, so switching to a
+    different window re-announces, but a burst of suffixes within one turn
+    (PreToolUse → Stop) does not repeat the name."""
+    if not label:
+        return ""
+    now = time.time()
+    last_label, last_ts = "", 0.0
+    try:
+        with open(LAST_FOLDER_FILE) as f:
+            lines = f.read().splitlines()
+        if lines:
+            last_label = lines[0]
+        if len(lines) > 1:
+            last_ts = float(lines[1])
+    except (OSError, ValueError):
+        pass
+    announce = label != last_label or (now - last_ts) > FOLDER_REANNOUNCE_S
+    try:
+        tmp = LAST_FOLDER_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(f"{label}\n{now:.3f}\n")
+        os.replace(tmp, LAST_FOLDER_FILE)
+        os.chmod(LAST_FOLDER_FILE, 0o600)
+    except OSError:
+        pass
+    return f"{label}. " if announce else ""
+
+
+def speak_new_text(transcript_path: str, kill_previous: bool, cwd: str = "") -> int:
     caller = "Stop" if kill_previous else "PreToolUse"
     _log("ENTER", caller, "transcript=", os.path.basename(transcript_path or ""))
     if not is_active():
@@ -680,12 +801,18 @@ def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
     if is_in_call():
         _log("SKIP", caller, "reason=in-call")
         return 0
-    # When kill_previous is True the caller intends to override any
-    # in-flight TTS — skip the self-speaking check, otherwise we'd refuse
-    # to interrupt our own stale playback and the new turn would be lost.
+    # Multi-window channel arbitration (replaces the old hard
+    # not-active-session SKIP, which never caught the real X4 bug: repeated
+    # reads of the SAME active transcript). Now:
+    #   active pane → priority: may interrupt stale audio (kill_previous as given)
+    #   other pane  → may speak ONLY if the channel is free, and never interrupts
+    # Cross-window same-message dedup is enforced by the ledger in _speak_inner,
+    # so a message is spoken at most once no matter how many panes/fires occur.
     if not is_active_session(transcript_path):
-        _log("SKIP", caller, "reason=not-active-session")
-        return 0
+        if is_self_already_speaking():
+            _log("SKIP", caller, "reason=channel-busy-nonactive")
+            return 0
+        kill_previous = False  # a background pane must never cut off the active one
     if is_other_audio_playing(check_self=not kill_previous):
         _log("SKIP", caller, "reason=other-audio")
         return 0
@@ -697,7 +824,7 @@ def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
         lock_fd = os.open(SPEAK_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
     except OSError:
         _log("LOCK", caller, "open-fail")
-        return _speak_inner(transcript_path, kill_previous, caller)
+        return _speak_inner(transcript_path, kill_previous, caller, cwd)
     try:
         deadline = time.monotonic() + 2.0
         attempt = 0
@@ -713,7 +840,7 @@ def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
                 time.sleep(0.05)
         if attempt:
             _log("LOCK", caller, "acquired-after", attempt, "tries")
-        return _speak_inner(transcript_path, kill_previous, caller)
+        return _speak_inner(transcript_path, kill_previous, caller, cwd)
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -722,7 +849,7 @@ def speak_new_text(transcript_path: str, kill_previous: bool) -> int:
             pass
 
 
-def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?") -> int:
+def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", cwd: str = "") -> int:
 
     uuid, full_text = current_turn_text(transcript_path)
     if not full_text.strip():
@@ -762,13 +889,33 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?") -
     if wait_for_recording_grace() or is_in_call() or not is_active():
         return 0
 
+    # Cross-window dedup CLAIM: hash (folder + content) so the same reply can't
+    # be read by another pane/fire. Hashing the label too keeps identical text
+    # in two different projects distinct. Claim BEFORE playback; on a lost claim
+    # still advance local state so this pane won't retry the same suffix.
+    label = _project_label(cwd, transcript_path)
+    content_hash = hashlib.sha1(
+        (label + "\x00" + speakable).encode("utf-8")
+    ).hexdigest()
+    if not _ledger_claim(content_hash):
+        _log("SKIP", caller, "reason=already-spoken-elsewhere", content_hash[:8])
+        save_state({"last_uuid": uuid, "spoken_text": full_text})
+        return 0
+
     # Mark this suffix as "already spoken" BEFORE we kick off playback. If a
     # new user message arrives mid-speech and aborts the player, this suffix
     # is intentionally lost (the new turn is more important than re-reading
     # the previous one — the user can ask again if needed). Without this,
     # interrupted playback caused the same message to be re-spoken next turn.
     save_state({"last_uuid": uuid, "spoken_text": full_text})
-    _log("SPEAK", caller, "len=", len(speakable), "first40=", repr(speakable[:40]))
+
+    # Folder announcement: prepend the project name when the reading channel
+    # switches context (different folder, or after a pause), so the user hears
+    # e.g. "Utility. <tekst>" and knows which window is talking.
+    prefix = _maybe_folder_prefix(label)
+    audio_text = prefix + speakable if prefix else speakable
+    _log("SPEAK", caller, "label=", label or "-", "len=", len(audio_text),
+         "first40=", repr(audio_text[:40]))
 
     preheat_audio()
 
@@ -795,7 +942,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?") -
         return 0
 
     try:
-        proc.communicate(input=speakable.encode("utf-8"), timeout=2)
+        proc.communicate(input=audio_text.encode("utf-8"), timeout=2)
     except subprocess.TimeoutExpired:
         # Hand-off to piper_stream done; child runs in own session and
         # owns playback lifecycle. Don't kill — would interrupt the audio
