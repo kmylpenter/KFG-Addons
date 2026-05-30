@@ -409,19 +409,30 @@ def is_external_media_playing() -> bool:
 
 
 def is_self_already_speaking() -> bool:
-    """Already streaming TTS via PulseAudio — let it finish. Counts active
-    sink-inputs; ours appear there during paplay playback. Returns False on
-    any failure."""
+    """Is TTS audio currently playing? Checks BOTH backends so the multi-window
+    'channel busy' gate (X4 fix) works everywhere:
+      - PulseAudio (old Termux-app install): any active sink-input.
+      - termux-media-player (native PRoot): `info` reports Status: Playing.
+    Returns False on any failure (don't block a turn because a probe broke)."""
     try:
         r = subprocess.run(
             ["pactl", "list", "short", "sink-inputs"],
             capture_output=True, text=True, timeout=1,
         )
+        if r.returncode == 0 and any(line.strip() for line in r.stdout.splitlines()):
+            return True
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return False
-    if r.returncode != 0:
-        return False
-    return any(line.strip() for line in r.stdout.splitlines())
+        pass
+    try:
+        r = subprocess.run(
+            ["termux-media-player", "info"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if "Playing" in (r.stdout or ""):
+            return True
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return False
 
 
 def is_other_audio_playing(check_self: bool = True) -> bool:

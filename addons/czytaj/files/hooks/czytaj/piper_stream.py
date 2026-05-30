@@ -163,8 +163,72 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             pass
 
 
+def _pulse_available() -> bool:
+    """Is a PulseAudio server reachable? The old Termux-app install had one;
+    native PRoot/Debian has none (no pulse/ALSA/pipewire) — only the Termux:API
+    bridge. `pactl info` returncode 0 = server up. Any failure -> unavailable."""
+    try:
+        r = subprocess.run(
+            ["pactl", "info"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _wav_duration_s(audio: Path) -> float:
+    """Length of a wav in seconds; 0 on any error (best-effort poll bound)."""
+    try:
+        with wave.open(str(audio), "rb") as wf:
+            rate = wf.getframerate() or PIPER_SAMPLE_RATE
+            return wf.getnframes() / float(rate) if rate else 0.0
+    except (wave.Error, OSError):
+        return 0.0
+
+
+def _play_via_termux_blocking(audio: Path) -> None:
+    """Play a wav through termux-media-player (Termux:API -> Android
+    MediaPlayer) and BLOCK until it finishes. This is the ONLY working route on
+    native PRoot Debian and keeps playing with the screen off / phone locked.
+    termux-media-player returns immediately, so poll `info` until not Playing
+    (bounded by wav duration) to preserve the one-utterance-at-a-time contract
+    and stop the caller from deleting the temp wav mid-playback. Raw float32
+    can't be fed to MediaPlayer, so this path is wav-only."""
+    try:
+        subprocess.run(
+            ["termux-media-player", "play", str(audio)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return
+    deadline = time.monotonic() + _wav_duration_s(audio) + 3.0
+    time.sleep(0.3)  # let `info` flip to Playing before we poll
+    while time.monotonic() < deadline:
+        try:
+            r = subprocess.run(
+                ["termux-media-player", "info"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            break
+        if "Playing" not in (r.stdout or ""):
+            break
+        time.sleep(0.3)
+
+
 def play_blocking(audio: Path, raw_rate: int | None = None) -> None:
-    """Block until paplay finishes. raw_rate is set when audio is raw float32."""
+    """Block until playback finishes. Uses paplay when a PulseAudio server is
+    up (old Termux-app install; supports the raw float32 stream path), else
+    falls back to termux-media-player (native PRoot). The Termux path needs a
+    real wav file — raw float32 isn't playable there, so raw_rate audio only
+    plays when pulse is present."""
+    if not _pulse_available():
+        if raw_rate is None:
+            _play_via_termux_blocking(audio)
+        # raw float32 + no pulse: nothing can play it; caller's wav fallback
+        # (synthesize_one_shot -> play_blocking(wav)) covers the native path.
+        return
     try:
         if raw_rate:
             subprocess.run(
@@ -213,8 +277,13 @@ def main() -> int:
         server_speak_raw = None
         ensure_running = None
 
+    # Audio backend: the server-FIFO + raw streaming paths both feed paplay,
+    # which needs a PulseAudio server. Native PRoot/Debian has none, so when
+    # pulse is absent skip straight to file synth + termux-media-player.
+    pulse = _pulse_available()
+
     with tempfile.TemporaryDirectory(prefix="piper-single-") as td:
-        if server_speak_raw is not None and ensure_running is not None and ensure_running():
+        if pulse and server_speak_raw is not None and ensure_running is not None and ensure_running():
             fifo = Path(td) / "stream.fifo"
             try:
                 os.mkfifo(str(fifo))
@@ -265,7 +334,7 @@ def main() -> int:
                 if got_rate:
                     return 0
 
-        if server_speak_raw is not None and ensure_running is not None:
+        if pulse and server_speak_raw is not None and ensure_running is not None:
             out = Path(td) / "out.raw"
             rate = server_speak_raw(text, out)
             if rate:
