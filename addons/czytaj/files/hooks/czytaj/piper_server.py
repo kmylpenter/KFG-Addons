@@ -27,7 +27,22 @@ import time
 import wave
 from pathlib import Path
 
-PIPER_HOME = Path(os.environ.get("PIPER_HOME", str(Path.home() / "piper-tts")))
+def _resolve_piper_home() -> Path:
+    """Locate the piper-tts install. Order: $PIPER_HOME, then ~/piper-tts,
+    then the old Termux home (piper may have been built under
+    /data/data/com.termux/files/home before a native/PRoot switch moved HOME
+    to /root). First layout that actually contains the binary wins."""
+    env = os.environ.get("PIPER_HOME")
+    if env:
+        return Path(env)
+    for home in (Path.home() / "piper-tts",
+                 Path("/data/data/com.termux/files/home/piper-tts")):
+        if (home / "piper1-gpl" / "libpiper" / "piper").exists():
+            return home
+    return Path.home() / "piper-tts"
+
+
+PIPER_HOME = _resolve_piper_home()
 PIPER_DAEMON = PIPER_HOME / "piper1-gpl" / "libpiper" / "piper-daemon"
 PIPER_LIB = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "lib"
 PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-data"

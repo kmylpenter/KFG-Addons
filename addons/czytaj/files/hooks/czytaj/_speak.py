@@ -51,7 +51,25 @@ def _log(*parts: object) -> None:
         pass
 SILENT_WAV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "silent.wav")
 PIPER_STREAM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "piper_stream.py")
-PIPER_BIN = os.path.expanduser("~/piper-tts/piper1-gpl/libpiper/piper")
+def _resolve_piper_bin() -> str:
+    """Locate the piper binary across install layouts. Order: $PIPER_HOME,
+    then ~/piper-tts, then the old Termux home. Piper is often built under
+    /data/data/com.termux/files/home before a native/PRoot switch moves HOME
+    to /root — without this, the hook logs 'missing-piper' and stays silent
+    even though the binary exists. First existing wins; else best-effort ~."""
+    rel = "piper1-gpl/libpiper/piper"
+    env = os.environ.get("PIPER_HOME")
+    if env:
+        return os.path.join(env, rel)
+    for home in (os.path.expanduser("~/piper-tts"),
+                 "/data/data/com.termux/files/home/piper-tts"):
+        cand = os.path.join(home, rel)
+        if os.path.isfile(cand):
+            return cand
+    return os.path.expanduser("~/piper-tts/" + rel)
+
+
+PIPER_BIN = _resolve_piper_bin()
 VOICE_TYPER_FLAG = os.path.expanduser(
     "~/storage/downloads/Termux-flags/voice-typer-recording.flag"
 )
