@@ -23,7 +23,8 @@ PAUSE_DEFAULT_S = 60.0
 ADB_FLAG = os.path.expanduser("~/.claude/czytaj-adb.flag")
 SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
 SCREEN_CACHE = os.path.expanduser("~/.claude/czytaj-screen.cache")
-SCREEN_CACHE_TTL_S = 2.0
+SCREEN_CACHE_TTL_S = 5.0
+PROBE_CACHE_TTL_S = 5.0  # mic + media probes
 # Multi-pane coordination: UPS hook writes the active session's transcript
 # ID here; Stop hook reads it and SKIPS if its own transcript doesn't match.
 # Prevents the X4 bug where 4 panes all read aloud when user prompts in one.
@@ -234,73 +235,106 @@ def _run_shell(shell_cmd: str, timeout_s: float = 2.0) -> tuple[bool, str]:
 
 
 def is_screen_unlocked() -> bool:
-    """True iff the phone screen is on AND not on the lock screen.
+    """True iff the user is actively interacting with the device.
 
-    Mechanism: Shizuku rish (preferred, instant) or Wireless ADB
-    (fallback). When neither is configured, returns True — feature is
-    opt-in, missing setup must NOT silence TTS. Cached for 2s to avoid
-    spawning a shell on every PreToolUse hook fire when /petla pumps
-    several tools per turn."""
+    Uses dumpsys power's mWakefulness — most reliable single signal:
+      Awake    → user is using device, return True
+      Asleep   → screen off / in pocket, return False
+      Dozing   → always-on display low-power, return False
+      Dreaming → screensaver active, return False
+
+    Earlier attempts at dumpsys window's mDreamingLockscreen/
+    mShowingLockscreen were unreliable: on Pixels with Always-On
+    Display, mDreamingLockscreen sticks at true for ~minutes after
+    waking, blocking TTS during active use. mWakefulness flips
+    immediately on touch/wake.
+
+    Requires Shizuku or Wireless ADB. Cached 5s. Fails OPEN — missing
+    helper or probe error → return True (don't suppress TTS just
+    because the probe broke)."""
     if _shell_cmd_prefix() is None:
         return True
     cached = _read_screen_cache()
     if cached is not None:
         return cached
-    ok, out = _run_shell("dumpsys window", timeout_s=2.0)
+    ok, out = _run_shell(
+        "dumpsys power | grep -m1 mWakefulness=",
+        timeout_s=5.0,
+    )
     if not ok:
         _write_screen_cache(True)
         return True
-    locked_signals = (
-        "mDreamingLockscreen=true",
-        "mShowingDream=true",
-        "mShowingLockscreen=true",
-        "mAwake=false",
-        "mScreenOn=false",
-    )
-    for sig in locked_signals:
-        if sig in out:
-            _write_screen_cache(False)
-            return False
-    _write_screen_cache(True)
-    return True
+    unlocked = "mWakefulness=Awake" in out
+    _write_screen_cache(unlocked)
+    return unlocked
+
+
+_IME_PACKAGES_CACHE: tuple[float, frozenset[str]] = (0.0, frozenset())
+
+
+def _enabled_ime_packages() -> frozenset[str]:
+    """Return the set of enabled input method (keyboard) package names.
+    Keyboards like Voice Typer hold the microphone open whenever they're
+    active — that doesn't mean the user is dictating right now. We must
+    exclude IME packages from is_mic_recording_global() to avoid
+    permanent TTS suppression. Cached for 5 minutes."""
+    global _IME_PACKAGES_CACHE
+    cached_at, cached = _IME_PACKAGES_CACHE
+    if time.time() - cached_at < 300.0 and cached:
+        return cached
+    if _shell_cmd_prefix() is None:
+        return frozenset()
+    ok, out = _run_shell("ime list -s", timeout_s=5.0)
+    if not ok:
+        return cached
+    pkgs = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if "/" in line:
+            pkgs.add(line.split("/", 1)[0])
+    if pkgs:
+        _IME_PACKAGES_CACHE = (time.time(), frozenset(pkgs))
+    return _IME_PACKAGES_CACHE[1]
 
 
 def is_mic_recording_global() -> bool:
-    """True iff any non-Termux app currently holds the microphone (e.g.
-    Voice Typer Keyboard, WhatsApp recording, etc.). Replaces the dead
-    Voice Typer flag mechanism that depended on the keyboard writing a
-    file we can't enforce.
+    """True iff any non-IME, non-Termux app currently records the
+    microphone (e.g. WhatsApp voice msg, Messenger call, dictaphone).
+    IME keyboards (Voice Typer, GBoard voice, etc.) hold the mic open
+    persistently — they're filtered out so the addon isn't permanently
+    muted whenever a voice-capable keyboard is enabled.
 
-    Requires Shizuku or Wireless ADB. Fails open. Cached briefly because
-    a quick burst of PreToolUse hooks would otherwise spawn many dumpsys
-    calls in a row."""
+    Probe: dumpsys audio's per-session source client= entries, filtered
+    by silenced:false (actively listening). Requires Shizuku or Wireless
+    ADB. Fails open. Cached for 1s."""
     if _shell_cmd_prefix() is None:
         return False
     cache = os.path.expanduser("~/.claude/czytaj-mic.cache")
     try:
-        if time.time() - os.stat(cache).st_mtime < 1.0:
+        if time.time() - os.stat(cache).st_mtime < PROBE_CACHE_TTL_S:
             return open(cache).read().strip() == "1"
     except OSError:
         pass
     ok, out = _run_shell(
-        "dumpsys media.audio_flinger | grep -iE 'active.*1|recordtrack.*active|started' | head -20",
-        timeout_s=2.0,
+        "dumpsys audio | grep -E 'source client=.*silenced:false.*pack:'",
+        timeout_s=5.0,
     )
-    if not ok:
-        ok, out = _run_shell(
-            "dumpsys audio | grep -iE 'recordclient.*active|active.*record' | head -20",
-            timeout_s=2.0,
-        )
     recording = False
     if ok and out.strip():
-        # We exclude lines that mention 'com.termux' / 'piper' so our own
-        # mic activity (if any) doesn't suppress our own TTS.
+        ime_pkgs = _enabled_ime_packages()
         for line in out.splitlines():
-            if "com.termux" in line or "piper" in line:
+            pkg = ""
+            for tok in line.split(" -- "):
+                tok = tok.strip()
+                if tok.startswith("pack:"):
+                    pkg = tok[5:].strip()
+                    break
+            if not pkg or pkg in ime_pkgs:
                 continue
-            if "active" in line.lower() or "started" in line.lower():
-                recording = True
-                break
+            if pkg.startswith("com.termux") or "piper" in pkg:
+                continue
+            recording = True
+            break
     try:
         with open(cache, "w") as f:
             f.write("1" if recording else "0")
@@ -321,13 +355,13 @@ def is_external_media_playing() -> bool:
         return False
     cache = os.path.expanduser("~/.claude/czytaj-media.cache")
     try:
-        if time.time() - os.stat(cache).st_mtime < 1.5:
+        if time.time() - os.stat(cache).st_mtime < PROBE_CACHE_TTL_S:
             return open(cache).read().strip() == "1"
     except OSError:
         pass
     ok, out = _run_shell(
         "cmd media_session list-sessions",
-        timeout_s=2.0,
+        timeout_s=5.0,
     )
     playing = False
     if ok and out:
@@ -696,13 +730,16 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?") -
         return 0
 
     state = load_state()
-    _log("STATE", caller, "uuid=", uuid[:8], "spoken_len=", len(state.get("spoken_text", "")), "full_len=", len(full_text))
-    if state.get("last_uuid") == uuid:
-        already = state.get("spoken_text", "")
-        if full_text.startswith(already):
-            new_text = full_text[len(already):]
-        else:
-            new_text = full_text
+    already = state.get("spoken_text", "")
+    _log("STATE", caller, "uuid=", uuid[:8], "spoken_len=", len(already), "full_len=", len(full_text))
+    # Compare by CONTENT, not by UUID. A single turn can emit multiple
+    # assistant messages with different UUIDs (think → say → tool → say
+    # more); UPS hook resets spoken_text to "" at every new user prompt
+    # so cross-turn re-reads are impossible. Within a turn, as long as
+    # the latest full_text still starts with what we've already spoken,
+    # we read only the suffix.
+    if already and full_text.startswith(already):
+        new_text = full_text[len(already):]
     else:
         new_text = full_text
 
