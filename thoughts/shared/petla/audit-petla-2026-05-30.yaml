@@ -1,0 +1,38 @@
+meta:
+  mode: audit
+  target: petla
+  source: ~/.claude/skills/petla/SKILL.md          # installed v3.1, 2001 lines (LIVE skill)
+  also_compared: addons/autoinit-skills/files/.claude/skills/petla/SKILL.md  # repo v3.0, 1594 lines (STALE)
+  purpose: "Modernize petla skill for Opus 4.8 + latest Claude Code capabilities"
+  started: "2026-05-30T09:15:00"
+  updated: "2026-05-30T09:15:00"
+  status: in_progress
+  iterations: 0
+  model: "claude-opus-4-8 (1M context)"
+  lenses:
+    - model-4.8-leverage
+    - tooling-currency
+    - prompt-quality
+    - consensus-and-termination
+    - termux-safety-invariant
+    - internal-consistency
+    - quality-vs-context
+  invariants_to_preserve:
+    - "TERMUX-SAFE: subagents-only, NEVER teammates/TeamCreate/SendMessage-to-validators, zero tmux panes, no Termux hang"
+    - "QUALITY OVER TOKENS: 1M context — prefer thoroughness over token savings"
+    - "Must remain a user-invocable markdown skill (no hard dependency on Workflow-tool opt-in)"
+  user_context: |
+    User runs on Termux/Android kiosk. Weekly limits rarely hit -> quality > context cost.
+    Skill was tuned for Opus 4.7; now modernizing for Opus 4.8.
+    Prior self-audit 2026-05-01 fixed false-consensus (three-state semantics, lens registry,
+    stop conditions). This audit targets 4.8-readiness, not re-litigating those fixes.
+
+issues: []
+
+iterations: []
+
+summary:
+  total: 0
+  critical: 0
+  major: 0
+  minor: 0

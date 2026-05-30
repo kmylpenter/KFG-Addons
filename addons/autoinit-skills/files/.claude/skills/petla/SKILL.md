@@ -1,12 +1,27 @@
 ---
 name: petla
-description: Iteracja z konsensusem via subagenci - 5 lensów walidujących plan/kod. Tryby: create, verify, audit, solve. v3.0: subagenci zamiast Agent Teams (zero tmux panes na Termux, zero zombie procesów). Persistent state via state file YAML.
-version: "3.0"
+description: Iteracja z konsensusem via subagenci - 5 lensów walidujących plan/kod. Tryby: create, verify, audit, solve, smoke (E2E browser smoke). v3.1: dodany /petla smoke mode (M1) — universal puppeteer-core wrapper w ~/.claude/lib/browser-smoke/.
+version: "3.1"
 user-invocable: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, TaskGet, AskUserQuestion
 ---
 
-# /petla v3.0 - Iteracja z Konsensusem (Subagents Only - Termux Safe)
+# /petla v3.1 - Iteracja z Konsensusem (Subagents Only - Termux Safe)
+
+> **v3.1** = v3.0 subagents-only core + smoke mode (M1) + runtime lens (M2) + Opus-4.8 hardening (2026-05-30).
+
+---
+
+## INVARIANTS — NEVER VIOLATE (Termux-safe by design)
+
+These are load-bearing. A future edit that breaks any of them regresses the skill on Termux/Android. Do **NOT** "restore" teammates or persistent named validators.
+
+1. **Subagents only.** Every validator/fixer = `Agent(subagent_type="general-purpose")` with **NO** `team_name`. NEVER `TeamCreate` / `TeamDelete` / `SendMessage`-to-validators / `name=`. Subagents are invisible by design — no tmux pane (GitHub #34468).
+2. **No pane, no hang.** `run_in_background` does NOT hide an Agent pane (it only affects the Bash tool) — never rely on it for that. Agent Teams froze Termux with one pane per teammate (#23615); that is exactly why v3.0 dropped them.
+3. **Subagents inherit Opus.** Never pass `model="haiku"` to a lens / verify / final-sweep agent — independent verdict quality is the whole point of the consensus engine.
+4. **smoke & worktree are opt-in and must clean up.** Headless chromium runs strictly one-at-a-time, NEVER during a parallel agent fan-out; every spawned process is reaped.
+5. **Pseudocode = LOGIC SPEC.** Every ` ```python ` / ` ```js ` block in this file is illustrative LOGIC to ENACT VIA TOOLS (Read/Write/Edit/Agent/Bash) — never code to emit or run literally.
+6. **Quality over tokens.** This runs on 1M-context Opus 4.8; the user rarely hits weekly limits. Prefer thoroughness (full re-reads, full exclude lists, all files, all patterns, more lenses) over token savings — everywhere.
 
 ---
 
@@ -47,6 +62,30 @@ panel do ~20 kolumn → UI freeze.
 
 Nie używaj TeamCreate, TeamDelete, ani SendMessage(to=validator-X).
 Jeśli widzisz w kodzie te wywołania → to legacy v2.1, usuń.
+
+---
+
+## OPTIONAL: Workflow-tool fast-path (Opus 4.8) — opt-in, NOT default
+
+The loop in this skill (parallel lens fan-out → consensus → iterate → stop) is hand-rolled
+prose that the orchestrator enacts via the `Agent` tool. Latest Claude Code also ships a
+**Workflow tool** that runs this control flow as DETERMINISTIC code (`parallel()` for the lens
+fan-out, `pipeline()`, loop-until-dry, `budget`) and — crucially — `agent({schema})` **forces
+each verdict through a validated StructuredOutput schema**, removing the entire "return YAML /
+malformed-YAML re-spawn / no_issues-without-proof" machinery (coverage proof becomes a schema
+constraint, not a prose honor-system).
+
+- **Use it ONLY on explicit opt-in** (user says "workflow" / passes `--workflow`). The Workflow
+  tool requires that opt-in and may spawn many agents — so the **default path stays the prose/Agent
+  loop**; this skill must stay invocable without it. Both paths obey every INVARIANT (subagents
+  only, zero panes).
+- **If opted in:** author a Workflow script whose `parallel()` stage spawns one `agent()` per lens
+  with the verdict JSON Schema (required: FILES_EXAMINED ≥5, PATTERNS_CHECKED ≥5 with result
+  CHECKED+0/CHECKED+N, ITEMS, SELF_CHECK_NOTES), loops until two dry rounds, and maps `budget` to
+  MAX_TOTAL_SPAWNS. Schema-forced output makes consensus trivial (no YAML parsing, no
+  malformed/empty branch).
+- **Plain `Agent` CANNOT force a schema** — schema-validated verdicts are available ONLY on this
+  Workflow path. On the default path keep the three-state + coverage-proof checks.
 
 ---
 
@@ -133,7 +172,7 @@ procesu w tle ani zombie. Pomijaj ten krok zupełnie. Jeśli widzisz w starym ko
 
 **Ta sekcja przetrwa kompakcję kontekstu - ZAWSZE jej przestrzegaj.**
 
-| NIGDY nie pytaj | ZAMIAST tego |
+| NIGDY nie pytaj / nie pisz | ZAMIAST tego |
 |-------------------|-----------------|
 | "Czy kontynuować?" | Kontynuuj automatycznie |
 | "Pozostało X problemów, czy mam dalej?" | Napraw wszystkie problemy |
@@ -141,6 +180,104 @@ procesu w tle ani zombie. Pomijaj ten krok zupełnie. Jeśli widzisz w starym ko
 | "Czy mogę przejść do następnego issue?" | Przejdź automatycznie |
 | "Minor issues są opcjonalne" | **NIE SĄ** - napraw wszystkie |
 | "Skończyłem major, wystarczy" | **NIE** - minor też musisz naprawić |
+| **"Sprint 1 done, Sprint 2 w następnej sesji"** | **NIE — Sprint Protocol (auto-continue).** |
+| **"Phase 1 complete, czekam na deploy"** | **NIE — Brak phase. Kontynuuj.** |
+| **"Wave 1 fixes pushed, Wave 2 później"** | **NIE — Brak wave. Kontynuuj.** |
+| **"Round 1 wystarczy, daj znać po QA"** | **NIE — Brak round. Kontynuuj.** |
+| **"Self-imposed checkpoint after critical"** | **NIE — Severity = ORDER not STOP.** |
+| **"15 minut robotę, zatrzymaj się na klatce do clasp push"** | **NIE — Czas nie jest stop signal.** |
+| **"Powinieneś teraz przetestować X manualnie"** | **NIE — Użyj `--smoke=auto/always` + runtime lens. Tool exists. Use it.** |
+| **"Zalecam manual smoke test fixu"** | **NIE — `node ~/.claude/lib/browser-smoke/smoke-launcher.js <test>`. Run it.** |
+| **"Daj znać czy fix działa, potem dalej"** | **NIE — runtime lens auto-verifies. Continue.** |
+| **"Zatrzymuję się żebyś sprawdził w przeglądarce"** | **NIE — `/petla smoke --features X` lub orchestrator runs smoke-launcher. Brak user-in-the-loop.** |
+| **"Sprawdź w QA + wróć do mnie"** | **NIE — QA = smoke phase. Run it sam.** |
+
+**🧪 TEST-OUTSOURCE ANTYWZORZEC (ten sam family co sprinty):**
+
+Claude ma silny bias do "outsource verification to user" — przerywa solve i prosi
+żeby user manualnie sprawdził fix. To było valid PRZED M2-simplified runtime lens
+(2026-05-02). **TERAZ JEST ZAKAZ.** Mamy zaimplementowane narzędzia:
+
+| Co Claude bias chce robić | Co MA robić zamiast tego |
+|---------------------------|--------------------------|
+| "Sprawdź w przeglądarce" / "Zalecam manual smoke" | `/petla solve audit.yaml --smoke=auto` lub `--smoke=always` → orchestrator sam odpala test |
+| "Daj znać czy działa" | runtime lens odpala `node ~/.claude/lib/browser-smoke/smoke-launcher.js` per fix; PASS/FAIL/INCONCLUSIVE wraca do solve queue |
+| "Trzeba potestować przed mergem" | `--smoke=always` testuje każdy fix przed merge AUTOMATYCZNIE |
+| "QA-stop, czekam na manual" | QA = smoke phase. Brak user-in-the-loop. |
+
+**Decision tree gdy bias mówi "trzeba przetestować":**
+
+```
+IF myślisz "powinienem zatrzymać się żeby user przetestował":
+  → STOP. To bias.
+  → Czy fix jest browser-runtime-related? (DOM, async, page state, JS)
+     YES → use smoke-launcher.js przez runtime lens (--smoke=always)
+     NO  → static lensy wystarczą; user nie musi testować
+  → KONTYNUUJ solve queue. NIE zatrzymuj się.
+
+IF audit YAML ma `smoke_test_file` per finding AND --smoke=auto:
+  → orchestrator AUTOMATYCZNIE odpala smoke per fix po static verify
+  → PASS → next issue
+  → FAIL → re-add do queue z evidence
+  → BRAK user input
+
+IF audit YAML NIE ma `smoke_test_file` AND fix wymaga browser test:
+  → Opcje (per --smoke flag):
+    --smoke=always:      napisz test inline (Test Author API), zapisz do smoke-tests/<date>/<fix_id>.js, run, parse
+    --smoke=interactive: AskUserQuestion ONCE ("Path do testu lub 'skip'") — wtedy user odpowiada w 1 słowie
+    --smoke=auto:        skip (nie ma file = nie testuje)
+  → ŻADNA z nich nie zatrzymuje solve queue na "manualne testowanie"
+```
+
+**Reference do narzędzi (musisz pamiętać że to istnieje):**
+
+- `~/.claude/lib/browser-smoke/smoke-launcher.js` — universal puppeteer wrapper, JSON Lines + END marker
+- `~/.claude/lib/browser-smoke/adapters/gas-server.py` — Python http.server + google.script.run shim
+- `/petla smoke --features X` — standalone runner (przed/po solve)
+- `/petla solve audit.yaml --smoke=auto|always|interactive` — runtime lens w solve
+- Test Author API: `snapshot/assertDom/recordCustom/recordBonusBug` (browser-smoke README)
+
+**Brak "manual test" w solve — używamy what we built.**
+
+---
+
+**🚀 SPRINT PROTOCOL (AIKIDO — wykorzystujemy naturalny bias zamiast walczyć)**
+
+Claude ma silny bias do myślenia w sprintach (z training corpus: agile/scrum/PR-culture).
+Walka frontalnie zawodzi — model wymyśla "Sprint 1 stop" mimo zakazu. Strategia:
+**zalegalizować sprinty POD WARUNKIEM auto-continue.**
+
+```
+SPRINT JEST BLOKIEM PRACY, NIE CHECKPOINTEM ZATWIERDZANIA.
+```
+
+### Reguły sprintu (jeśli model myśli sprintami):
+
+1. **Sprint = max 10-20 issues** zgrupowane logicznie (np. critical w Sprint 1, major w 2, minor 3+)
+2. **Sprint końcowy raport: 1-2 zdania**, np. "Sprint 1 done: 12/12 critical fixed. Sprint 2 starting: 24 major."
+3. **MIĘDZY sprintami NATYCHMIAST kontynuujesz** — następny TaskUpdate(in_progress) w tej samej wiadomości lub niezwłocznie potem
+4. **ZAKAZANE między sprintami:**
+   - "Daj znać", "Po QA", "Po deploy", "Po review"
+   - "Modyfikowane pliki: X. Co teraz: 1. push 2. QA 3. ..." ← lista TODO = pretekst stopu
+   - "Czekam na manual test"
+   - "W następnej sesji Sprint N+1"
+   - Jakiekolwiek pytanie do usera
+5. **Sprint kończy całość TYLKO gdy:** TaskList() zwraca 0 pending, OR MAX_ITERATIONS reached, OR user Ctrl+C
+6. **State file:** sprint to abstrakcja UI/raportowa, NIE persistowany jako "Sprint 2 pending" (continuation = same session, fresh TaskList query)
+
+### DETEKTOR samokontroli (przed wysłaniem podsumowania):
+
+Jeśli twoja draft response zawiera frazy:
+- "Sprint N done" / "Phase N complete" / "Wave N pushed"
+- "Co teraz:" + lista TODO
+- "Daj znać", "Po deploy", "Po QA"
+- "...w następnej sesji"
+
+→ **STOP.** Zwaliduj `TaskList()`. Jeśli pending > 0:
+- Albo: dopisz w tej samej wiadomości "Sprint N+1 starting now: TaskUpdate(...)" + KONTYNUUJ
+- Albo: usuń sprint-summary i kontynuuj bez niego
+
+→ Jeśli pending == 0: dopiero wtedy możesz napisać final summary.
 
 **ZASADA:** User ZAWSZE może przerwać przez `Ctrl+C`. Brak przerwania = kontynuuj.
 
@@ -150,7 +287,7 @@ procesu w tle ani zombie. Pomijaj ten krok zupełnie. Jeśli widzisz w starym ko
 
 ```
 MAX_ITERATIONS = options.max_iter OR 10     # NIGDY nie przekraczaj
-MAX_AGENTS = min(options.agents, 10)        # Hard cap: 10
+MAX_AGENTS = min(options.agents, 16)        # was 10 (Termux-pane era). Subagents are invisible now → raised. NEVER below len(lenses).
 MAX_TOTAL_SPAWNS = MAX_AGENTS * MAX_ITERATIONS  # Budget cap
 
 IF iteration >= MAX_ITERATIONS:
@@ -223,13 +360,23 @@ TaskList()  → zobacz progress: "12/47 completed"
 │  Severity wpływa TYLKO na KOLEJNOŚĆ, nie na to czy          │
 │  naprawiać. MUSISZ naprawić WSZYSTKIE issues.               │
 │                                                             │
-│  BŁĘDNE MYŚLENIE:                                           │
+│  BŁĘDNE MYŚLENIE (zatrzymujesz po pretekście):              │
 │  "Minor issues są opcjonalne" → NIE!                        │
 │  "Skończyłem major, mogę przerwać" → NIE!                   │
 │  "71 minor to za dużo" → NIE MA ZA DUŻO, NAPRAW!           │
+│  "Sprint 1 done, Sprint 2 w następnej sesji" → NIE!         │
+│  "QA-stop: czekam na manual test" → NIE!                    │
+│                                                             │
+│  ⚠️ SPRINT-jezyk JEST OK pod warunkiem auto-continue:        │
+│     "Sprint 1 done. Sprint 2 starting NOW: TaskUpdate(...)" │
+│     ← w tej samej wiadomości, bez user input.               │
+│     Patrz Sprint Protocol w sekcji AUTONOMY RULES.          │
 │                                                             │
 │  PRAWIDŁOWE MYŚLENIE:                                       │
-│  "Mam 71 minor issues → tworzę 71 Tasks → naprawiam"       │
+│  "Mam 115 issues → TaskCreate × 115 → naprawiam grupami     │
+│   (Sprint 1 = 12 critical → Sprint 2 = 30 major → ...)     │
+│   z auto-continue między sprintami. Continuum bez przerw    │
+│   aż TaskList = 0 pending. Brak QA-gate. Brak deploy-gate." │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -426,7 +573,10 @@ iterations:
   - number: 1
     timestamp: "2026-01-26T12:00:00"
     new_issues_found: 12
-    consensus: "0/5 no_issues"
+    consensus: "dirty (issues_found) — three-state, not a vote count"
+    verdicts:                        # update_state_file writes these; coverage_complete + evaluate_stop_conditions READ them
+      - {lens: bugs, status: issues_found, files_examined: ["a.ts", "b.ts"]}
+    issues: []                       # issues found THIS iteration (issue_key / stuck comparison)
 
 summary:
   total: 17
@@ -467,7 +617,7 @@ fixes:
         tests: skipped
         style: passed
         completeness: passed
-      consensus: "5/5 - VERIFIED"
+      consensus: "clean — all verified + coverage proof (three-state, not a vote)"
 
 progress:
   total_issues: 12
@@ -628,7 +778,7 @@ You are validating: {target}
 Mode: {mode}
 Your focus: {lens}
 
-{LENS_INSTRUCTIONS[lens][mode]}  # see Lens Registry below
+{get_lens_instructions(lens, mode)}  # registry below — handles custom-lens fallback (no KeyError)
 
 EVIDENCE REQUIREMENT (mandatory):
 - Before forming a verdict you MUST Read or Grep at least 5 files in target
@@ -656,7 +806,7 @@ ITERATION CONTEXT:
   iter 3+ = adversarial: assume bugs are hidden in obvious-looking code
 
 ADVERSARIAL SELF-CHECK (mandatory before finalizing):
-For 30-60s play devil's advocate against your own verdict:
+Before finalizing, thoroughly play devil's advocate against your own verdict (take the time you need — do not rush this):
 1. What did I assume rather than verify?
 2. Which patterns from the checklist did I NOT actually look for?
 3. If a senior {lens} expert reviewed this, what 3 gaps would they flag?
@@ -790,11 +940,17 @@ def get_lens_instructions(lens: str, mode: str) -> str:
     explicit checklist via --lens-prompts file for repeatability."""
 ```
 
-**Compressing exclude list** (replaces dump-everything):
+**Exclude list — FULL by default (1M context, INVARIANT 6).** Pass the COMPLETE prior
+findings (id + location + one-line desc) inside `<state-data>` so each fresh agent can
+de-dup by exact `file:line`. The compressor below is an OPTIONAL fallback ONLY for very
+large audits (>200 findings) — do NOT compress by default: dropping locations breaks
+exact de-dup AND corrupts the `new_issues_found` discovery-rate that the stop conditions rely on.
 
 ```python
 def compress_existing_summary(issues, current_lens):
-    """Group by file+lens to keep prompt token budget for actual analysis."""
+    """OPTIONAL fallback for >200 findings only — default is to pass the FULL list.
+    Groups by file+lens; NOTE this drops file:line so exact de-dup becomes impossible.
+    Use only when the full list genuinely will not fit (rare at 1M context)."""
     by_file_lens = {}
     for i in issues:
         key = (i.location.split(":")[0], i.lens)
@@ -832,7 +988,7 @@ zero memory leaks, zero shutdown_request**.
 │     → Loguj: "subagent {lens} timed out"                    │
 │     → Treat as INCONCLUSIVE — NEVER as no_issues            │
 │     → Re-spawn SAME lens once with extended prompt:         │
-│       "Previous attempt timed out. Focus on top 3 risks"    │
+│       "Previous attempt timed out. Re-run with FULL scope + longer budget; prioritize highest-severity patterns but cover every checklist item you can (do NOT cap at 3)"    │
 │     → If retry also fails → mark verdict INCONCLUSIVE,      │
 │       which BLOCKS consensus declaration                    │
 │                                                             │
@@ -858,31 +1014,41 @@ zero memory leaks, zero shutdown_request**.
 
 | Verdict | Meaning | Counts toward consensus? |
 |---------|---------|--------------------------|
-| `no_issues` | Agent returned valid YAML AND listed FILES_EXAMINED ≥ minimum AND completed full PATTERNS_CHECKED | YES (toward "clean") |
+| `no_issues` | Valid YAML AND FILES_EXAMINED ≥ 5 (or ALL files in scope if fewer) AND ≥ 5 PATTERNS_CHECKED whose result is CHECKED+0/CHECKED+N (UNABLE does NOT count) | YES (toward "clean") |
 | `issues_found` | Agent returned valid YAML with non-empty ITEMS | YES (toward "dirty" — keep iterating) |
 | `INCONCLUSIVE` | Timeout, malformed, empty, OR no_issues without FILES_EXAMINED/PATTERNS_CHECKED proof | NO — blocks consensus, requires re-spawn |
 
-**Consensus algorithm (explicit):**
+**Consensus algorithm (explicit) — LOGIC SPEC, enact via tools:**
 
 ```python
+MIN_FILES = MIN_PATTERNS = 5   # quality-over-tokens: raise this, never lower it
+
 def check_consensus(verdicts, agents_count):
     valid = [v for v in verdicts if v.status in ("no_issues", "issues_found")]
     if len(valid) < agents_count:
-        return ("inconclusive", "missing verdicts", verdicts)  # re-spawn missing
+        return ("inconclusive", "missing verdicts", verdicts)  # re-spawn missing/failed
     if any(v.status == "issues_found" for v in valid):
-        return ("dirty", "issues remain", valid)  # continue iter
-    # all valid AND all no_issues
+        return ("dirty", "issues remain", valid)  # keep iterating
     if not all(verify_coverage_proof(v) for v in valid):
         return ("inconclusive", "coverage proof missing", valid)  # re-spawn lacking lenses
     return ("clean", "consensus reached", valid)
 
 
 def verify_coverage_proof(verdict):
-    return (
-        verdict.files_examined and len(verdict.files_examined) >= 3
-        and verdict.patterns_checked and len(verdict.patterns_checked) >= 3
-    )
+    # Files: >= MIN_FILES (or ALL files in scope when the target has fewer).
+    # Patterns: only entries actually CHECKED count — an UNABLE entry is NOT proof.
+    files_ok = verdict.files_examined and len(verdict.files_examined) >= MIN_FILES
+    checked = [p for p in (verdict.patterns_checked or [])
+               if p.get("result") in ("CHECKED+0", "CHECKED+N")]
+    return bool(files_ok) and len(checked) >= MIN_PATTERNS
 ```
+
+> **CALLER CONTRACT — do NOT collapse the tuple to a bool.**
+> `status, reason, _ = check_consensus(verdicts, agents_count)` — pass the AGENT
+> COUNT (an int), **not** the mode string. Branch ONLY on `status == "clean"`.
+> `"inconclusive"` → re-spawn the missing/failed lenses (do NOT finish);
+> `"dirty"` → run another iteration. A bare `if check_consensus(...):` is WRONG —
+> the 3-tuple is always truthy, which would declare success on the first iteration.
 
 ---
 
@@ -896,11 +1062,14 @@ Modes:
   verify   - Sprawdź zgodność z wzorcem/planem
   audit    - Szukaj problemów w kodzie
   solve    - Napraw problemy z listy
+  smoke    - E2E browser smoke test (Termux chromium + puppeteer; opt-in, własny lifecycle)
 
 Options:
-  --agents N       - Liczba walidatorów (default: 5, max: 10)
+  --agents N       - Liczba walidatorów (default: 5, max: 16)
   --max-iter N     - Max iteracji (default: 10)
   --lenses "..."   - Custom lenses dla agentów
+  --smoke MODE     - (solve only) never|auto|always|interactive — runtime browser test (patrz TRYB: solve)
+  --workflow       - (opt-in) użyj Workflow-tool fast-path zamiast prozy (schema-forced verdicts)
 
 Uwaga: v3.0 spawnuje subagentów (`Agent(subagent_type=...)` bez `team_name`).
 Subagenci są invisible by design — zero tmux paneli, zero zombie procesów,
@@ -950,14 +1119,14 @@ ITERATION 1:
 │   ├── examples: incomplete - brak przykładów API
 │   ├── consistency: completed
 │   └── clarity: completed
-├── CONSENSUS: 3/5 completed → CONTINUE
+├── CONSENSUS: ≥1 lens incomplete (issues_found) → dirty → CONTINUE   # NOT a vote count
 └── AGGREGATE: [Installation, examples]
 
 ITERATION 2:
 ├── WORK: Main naprawia braki
 ├── VERIFY: spawn 5 NOWYCH subagentów (z exclude list w prompcie)
 │   └── ALL: completed
-├── CONSENSUS: 5/5 → DONE
+├── CONSENSUS: all no_issues + coverage proof → converged → DONE   # NOT a vote count
 ```
 
 ### Lenses dla create (default)
@@ -1012,7 +1181,7 @@ ITERATION 1:
 │   ├── tests: 3 test cases missing
 │   ├── types: completed
 │   └── security: 1 requirement not met
-├── CONSENSUS: 1/5 → CONTINUE
+├── CONSENSUS: ≥1 lens issues_found → dirty → CONTINUE   # NOT a vote count
 └── OUTPUT: Lista niezgodności
 ```
 
@@ -1056,6 +1225,7 @@ meta:
   status: in_progress
   iterations: 0
   lenses: [bugs, duplicates, security, performance, style]
+  target_files: []   # MUST populate before iter 1: Glob / `git ls-files <target>` — coverage_complete() needs it for the 100% coverage proof
 issues: []
 iterations: []
 summary:
@@ -1086,13 +1256,13 @@ ITERATION 1:
 
 ITERATION 2:
 ├── Spawn 5 NOWYCH subagentów z prompt: "Previous: [list]. Find NEW only."
-│   └── 4/5 no_new, 1 found → CONTINUE
+│   └── 1 lens issues_found → dirty → CONTINUE   # ANY issues_found continues (not a vote)
 
 ITERATION 3:
 ├── Spawn 5 NOWYCH subagentów (re-check)
 │   └── ALL: "no new issues"
-├── CONSENSUS: 5/5 → DONE
-└── Write report (subagenci sami się zamknęli — żadnego cleanup)
+├── CONSENSUS: all no_issues + coverage 100% → converged HIGH → DONE
+└── Write report WITH confidence level (subagenci sami się zamknęli — żadnego cleanup)
 ```
 
 ### Stop Conditions (multi-criteria — old set-equality alone was broken)
@@ -1142,28 +1312,31 @@ def evaluate_stop_conditions(state, iter_num, max_iter):
 def issue_key(issue):
     """Canonical key for set comparison — handles whitespace + lens variation."""
     loc = issue.get("location", "").strip().lower()
-    desc = issue.get("item", "").strip().lower()[:80]
+    desc = (issue.get("item") or issue.get("description") or "").strip().lower()[:80]
     return (loc, desc)
 
 
 def coverage_complete(state):
-    """Did the union of FILES_EXAMINED across all iters cover the target?"""
+    """Did the union of FILES_EXAMINED across all iters cover the target?
+    meta.target_files MUST be populated at init (Glob / git ls-files the scope).
+    Empty target_files is NOT 'best-effort True' — it means coverage is UNPROVEN,
+    so it BLOCKS a HIGH-confidence converge."""
     target_files = set(state["meta"].get("target_files", []))
     if not target_files:
-        return True  # caller didn't pre-enumerate — best-effort
+        return False  # cannot prove coverage → never green-light "converged HIGH"
     examined = set()
     for it in state["iterations"]:
         for verdict in it.get("verdicts", []):
             examined.update(verdict.get("files_examined", []))
     coverage = len(examined & target_files) / max(len(target_files), 1)
-    return coverage >= 0.95
+    return coverage >= 1.0  # quality-over-tokens: HIGH requires 100% of scope examined
 ```
 
 **Three exit confidence levels** (always communicate to user):
 
 | Status | Meaning | What user should believe |
 |--------|---------|--------------------------|
-| `converged` HIGH | 2× clean iters AND coverage ≥ 95% | Audit is trustworthy |
+| `converged` HIGH | 2× clean iters AND coverage = 100% of scope | Audit is trustworthy |
 | `max_iter_reached` MEDIUM | Hit cap with discovery slope decreasing | Some issues likely missed but iter cap stopped progress |
 | `unbounded` LOW | Discovery rate ≥ 70% per iter — agents sampling not searching | Audit untrustworthy — increase agents/lenses or use partition mode |
 | `stuck` MEDIUM | Same issues 3× — cannot progress | Likely contradictory lenses or unsolvable; manual review |
@@ -1268,6 +1441,313 @@ for group in independent_groups:
 | tests | Czy jest test dla fixa? |
 | style | Czy fix jest zgodny ze stylem kodu? |
 | completeness | Czy fix jest kompletny? |
+| **runtime** | **Czy fix przechodzi runtime browser test?** (opt-in via `--smoke` flag — see below) |
+
+### Runtime lens — opt-in browser verification (M2-medium, AI-main-context test gen)
+
+Po static verify (5 lensów statycznych) odpala smoke test przez `~/.claude/lib/browser-smoke/smoke-launcher.js`. Test jest **automatycznie generowany przez ORCHESTRATOR (main Claude w sesji)** na podstawie applied fix diff — nie subagent, nie user. Wykorzystuje ten sam runner co `/petla smoke` — fix raz, działa w obu trybach (SSOT).
+
+**Dlaczego main-context test gen jest BEZPIECZNE (vs subagent — N3_R5 blocker):**
+
+| Aspekt | Main Claude (this) | Subagent generator (M2-full deferred) |
+|--------|--------------------|---------------------------------------|
+| Input source | User-controlled session (audit YAML, fix proposal, applied diff) | CLI `--features` arg (potencjalnie adversarial) |
+| Context isolation | Pełen context fixu (proposal, diff, hint) | Tylko prompt z `{feature_name}` + `{hint}` |
+| Prompt injection ryzyko | Zerowe | Wysokie (vide N3_R5) |
+| Wymagane: linter sandbox, chromium network egress | NIE | TAK |
+
+Main Claude WIE co naprawił (proposal + applied diff w context) → wie co testować. Pisze test inline, zapisuje, odpala. Brak surprise input = brak security blockera.
+
+**CLI flag:**
+
+```bash
+/petla solve audit.yaml                       # no --smoke flag → DEFAULT = never (no runtime phase)
+/petla solve audit.yaml --smoke=never         # explicit skip
+/petla solve audit.yaml --smoke=auto          # RECOMMENDED: auto-write test for runtime-relevant fixes
+/petla solve audit.yaml --smoke=always        # auto-write test for EVERY fix (skip decision tree)
+/petla solve audit.yaml --smoke=interactive   # ask user per fix (auto-write OR skip)
+```
+
+**Default rule (single source of truth):** no `--smoke` flag → `--smoke=never` (no runtime phase), regardless of `schema_version`. `auto` is the recommended *explicit* value, never the implicit default. `schema_version` only controls which optional annotations are read — it does NOT change the smoke default.
+
+**Optional audit YAML annotations (M2 — wskazówki dla orchestrator):**
+
+```yaml
+schema_version: "3.1"
+issues:
+  - id: C1
+    severity: critical
+    description: "..."
+    smoke_required: true             # hint: ten issue WYMAGA runtime test (auditor flag)
+    smoke_hint: "trigger updateProductPreview, assert no console.error"  # podpowiedź co testować
+    smoke_test_file: "..."           # OPCJONALNE — user-written test path; jeśli podany, użyj zamiast auto-gen
+```
+
+`smoke_required` + `smoke_hint` = signal dla orchestrator co testować. Brak = orchestrator sam decyduje per decision tree.
+
+**Decision tree: czy fix wymaga runtime test (orchestrator self-evaluates):**
+
+```
+IF fix.diff dotyka:
+  - DOM events (addEventListener, onclick, onchange, oninput)
+  - async/await chains, Promise handlers
+  - page state (window.X, _state singletons, _cache)
+  - try/catch swallowing errors silently
+  - DOM mutations (innerHTML, textContent w event handlers)
+  - timing-sensitive code (setTimeout, requestAnimationFrame, debounce)
+  → AUTO-WRITE smoke test (browser-runtime-relevant)
+
+ELSE if fix.diff dotyka tylko:
+  - pure logic (math, parsing, formatting, validation)
+  - server-side code bez frontend wpływu
+  - dead code removal, comment changes, docs
+  - type definitions, refactor bez behavior change
+  → SKIP smoke (static lensy wystarczą)
+
+ELSE (ambiguous):
+  → AUTO-WRITE smoke test (bias toward verify; cheap insurance)
+```
+
+`--smoke=always` skipuje decision tree i ZAWSZE generuje test. `--smoke=auto` (default) używa decision tree.
+
+**Extended Flow (per issue, when runtime active):**
+
+```
+FOR each issue (critical → major → minor):
+   a. PROPOSE fix
+   b. SECURITY GATE (delete) — existing
+   c. APPLY fix — existing
+   d. STATIC VERIFY: 5 subagentów (correctness/regression/tests/style/completeness) — existing
+   e. IF static all_passed AND should_run_runtime(issue, --smoke flag):
+
+        f. RESOLVE TEST SOURCE:
+           IF issue.smoke_test_file istnieje:
+             → use user-written test (skip auto-gen)
+           ELSE IF should_run_runtime(fix, decision-tree):
+             → ORCHESTRATOR (main Claude) AUTO-WRITES test:
+                 1. Read applied diff (the changes you JUST made for this fix)
+                 2. Read smoke_hint if present (auditor's testing suggestion)
+                 3. Generate test using Test Author API:
+                    - 1-3 assertions targeting THIS fix's behavior change
+                    - Use page.evaluate, waitForFunction for state
+                    - Use snapshot/assertDom/recordCustom helpers
+                    - Use recordBonusBug for runtime errors caught
+                 4. Save to thoughts/shared/petla/smoke-tests/<date>/<fix_id>-auto.js
+                 5. (Test is disposable — for THIS verification only)
+           ELSE (--smoke=interactive):
+             → AskUserQuestion("Auto-write smoke test for fix {id}? [yes/skip]")
+
+        g. ORCHESTRATOR (NIE subagent — preserves v3.0 invariant) runs:
+           node ~/.claude/lib/browser-smoke/smoke-launcher.js <test_file>
+
+        h. PARSE JSON Lines + END marker. Missing/!END marker = output truncated/crashed
+           → treat as INCONCLUSIVE (infrastructure), budget-exempt, re-run ONCE.
+           (Orchestrator detects this — the launcher cannot self-report a death.)
+
+        i. CASE status:
+           PASS → record runtime_verifications[] entry, proceed
+           FAIL → re-add issue z runtime_failure_evidence
+                  failure_count[fix_id]++ (per fix_id, NIE per test_id — fan-out)
+                  if failure_count[fix_id] == 2 → mark needs_human_review reason="runtime regression after 2 retries"
+           INCONCLUSIVE (test_internal): flaky_count[fix_id]++
+                  if flaky_count[fix_id] == 2 → needs_human_review reason="consistently flaky test"
+           INCONCLUSIVE (truncated/corrupted/missing END marker): infrastructure failure — re-run ONCE, do NOT count toward fix retry budget (consistent with smoke M1 step c)
+
+        j. IF bonus_bug detected:
+           severity = bonus_bug.severity (NIE inherit fix severity)
+           insert at END of current severity tier (NIE jump priority)
+           count toward MAX_ITERATIONS budget
+
+   f. IF static failed → refine, re-spawn (existing v3.0 behavior)
+```
+
+**Auto-written test pattern (skeleton orchestrator wzoruje się na):**
+
+```javascript
+// thoughts/shared/petla/smoke-tests/<date>/<fix_id>-auto.js
+// AUTO-GENERATED by /petla solve runtime lens
+// Fix: {issue.id} — {issue.description}
+// Verifies: {what the diff changed}
+
+module.exports = async function(page, helpers) {
+  const { snapshot, assertDom, recordCustom, recordBonusBug, baseUrl } = helpers;
+
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => /* app-ready signal */);
+
+  // 1. Trigger the changed behavior
+  await page.evaluate(() => { /* call the fixed function or simulate event */ });
+
+  // 2. Snapshot state to assert fix works
+  await snapshot('post-fix', await page.evaluate(() => ({ /* relevant state */ })));
+
+  // 3. Assert fix behavior
+  // (orchestrator generates per-fix specific assertions)
+};
+```
+
+**Rule:** orchestrator pisze test w **tej samej wiadomości** co static verify completion — bez user input, bez subagent spawn. Test = 5-15 linii, sfokusowany TYLKO na tym fixie. Brak ogólnego smoke test framework — disposable per-fix verification.
+
+**fix_id hash function (deterministic, addresses fan-out semantics):**
+
+```python
+import hashlib, json
+def compute_fix_id(fix):
+    location = fix['location'].strip()
+    proposal_canonical = json.dumps(fix['proposal'], sort_keys=True, separators=(',', ':'))
+    return hashlib.sha1(f"{location}::{proposal_canonical}".encode()).hexdigest()[:12]
+```
+
+**State file extension (solve-*.yaml):**
+
+```yaml
+fixes:
+  - issue_id: "C1"
+    fix_id: "a3f5b2c1d8e9"   # from compute_fix_id()
+    issue: "..."
+    proposal: {...}
+    status: applied | verified | needs_human_review
+    static_verification: {...}        # existing
+    runtime_verifications:            # NEW (M2) — same TestResult schema as /petla smoke tests[]
+      - test_id: "C1"
+        status: PASS
+        duration_ms: 8400
+        # ... full TestResult fields (single source of truth — see browser-smoke README)
+    failure_count: 0
+    flaky_count: 0
+```
+
+**Why same schema:** `runtime_verifications[]` używa identycznej TestResult schemy co tests[] w `/petla smoke` state file. Fix raz w smoke-launcher.js → działa w obu trybach. SSOT.
+
+**Co JEST w M2-medium (current):**
+- ✅ AI auto-test gen przez **main Claude (orchestrator)** w sesji solve — pisze test inline na podstawie applied diff
+- ✅ Decision tree: orchestrator self-evaluates czy fix wymaga browser test
+- ✅ Auto-written tests są disposable (one-shot per fix)
+- ✅ Fan-out semantics, INCONCLUSIVE handling, retry-2-then-needs_human_review
+
+**Co WCIĄŻ deferred (M2-full):**
+- ⏳ Subagent-based test gen (osobny `/petla generate-test --feature X` workflow) — wymaga security mitigations (eslint-plugin-security + chromium network egress + vm.createContext sandbox per N3_R5)
+- ⏳ `coverage` audit lens (auto-flag `smoke_required` w audit YAML) — niezależne od test gen
+- ⏳ AI test auto-improve — orchestrator analyzes failed test, refines, retries
+
+**Why main-context test gen jest bezpieczne (vs subagent):** main Claude ma pełen context fixu (proposal + diff + audit context); brak surprise input z CLI; user obserwuje sesję; brak prompt injection vector.
+
+**Workflow recommendation:**
+
+1. Run `/petla audit src/` → produces audit-*.yaml
+2. Manually annotate critical/major issues with `smoke_test_file` paths (user-written tests in `thoughts/shared/petla/smoke-tests/`)
+3. Run `/petla solve audit-*.yaml --smoke=auto` → static verify + runtime verify per annotated fix
+4. Iterate: smoke FAIL → re-add to queue → refine fix → retry (max 2 per fix_id)
+
+---
+
+## TRYB: smoke (M1 — standalone E2E browser smoke runner)
+
+**Cel:** Zweryfikuj fixy/feature'y poprzez automated browser test (Termux chromium + puppeteer-core). Komplementarny do `audit/solve` (statyczne) — łapie runtime bugs (silent try/catch, async race, DOM events).
+
+**Empirycznie zwalidowany stack:** chromium 143 + puppeteer-core@24.42.0 + Python http.server z `google.script.run` shim. Działa na Termux Android ARM64.
+
+**Przykład:**
+```
+/petla smoke --features "login-flow,checkout"
+/petla smoke --rerun thoughts/shared/petla/smoke-2026-05-01.yaml
+```
+
+### Lokalizacja shared lib
+
+`~/.claude/lib/browser-smoke/`:
+- `smoke-launcher.js` — universal puppeteer wrapper (runTest, JSON Lines + END marker, --self-test)
+- `adapters/gas-server.py` — Python http.server z google.script.run shim
+- `package.json` (puppeteer-core@24.42.0 EXACT pin)
+
+### Konfiguracja per-projekt: `.smoke-config.yaml` w PROJECT ROOT
+
+> **M1 contract (CC2-3):** the CLI `node smoke-launcher.js <test>` runs with DEFAULTS only —
+> it does NOT auto-read `.smoke-config.yaml`. To honor these fields, the ORCHESTRATOR reads
+> the YAML and passes them into the programmatic API `runTest({testFile, baseUrl,
+> consoleFilterRegex, timeout, port, ...})` (see `module.exports`), and starts/wires the
+> gas-server itself. The schema below documents that wiring; it is not auto-loaded in M1.
+
+```yaml
+project_type: gas-web
+chromium_version_expected: "148"   # bump when Termux chromium drifts (launcher EXPECTED_CHROMIUM_MAJOR)
+dev_server:
+  type: gas-server
+  port: 0            # 0 = auto-discover via socket.bind(0)
+  gas_url: https://script.google.com/...
+  startup_wait_ms: 3000
+init_wait_for_function: "() => typeof appReady !== 'undefined' && appReady"
+console_filter_regex: '\[(CS|TEST|VARIANT)\]'
+adapter_helpers: thoughts/shared/petla/smoke-helpers/<project>-helpers.js
+schema_version: "3.1"
+enabled: true
+```
+
+### Flow (M1 manual mode — user/Claude pisze test ręcznie)
+
+```
+KROK 0: GATE
+  - Read .smoke-config.yaml (lub create from template)
+  - Verify chromium binary + version (3-tier policy: patch/minor INFO, +1 major WARN, +2+ major exit 3)
+  - Scan orphan chromium z $TMPDIR (NIE /tmp — Termux rule):
+    pgrep -f 'chromium-browser.*--user-data-dir=.*smoke-chromium-' > "$TMPDIR/smoke-orphans"
+    if non-empty: kill -TERM, sleep 2, kill -KILL still-alive, rm orphans
+
+KROK 1: TaskCreate per feature
+
+KROK 2: START gas-server.py background (auto-port; PID → thoughts/shared/petla/.smoke-server.pid)
+
+KROK 3: dla każdej feature:
+  a) USER pisze test plik thoughts/shared/petla/smoke-tests/<date>/<feature>-T<N>.js
+     używając Test Author API (snapshot/assertDom/recordCustom/recordBonusBug)
+  b) ORCHESTRATOR (NIE subagent — preserves v3.0 invariant) runs:
+     node ~/.claude/lib/browser-smoke/smoke-launcher.js <test.js>
+  c) PARSE JSON Lines + END marker (truncated/missing END → INCONCLUSIVE infrastructure, re-run once, NIE silent PASS — same rule as solve runtime step h)
+  d) Append result do state file thoughts/shared/petla/smoke-<target>-<date>.yaml
+
+KROK 4: STOP gas-server (kill PID, remove .smoke-server.pid)
+
+KROK 5: REPORT — markdown summary z port_allocated, chromium_version_actual, outcome
+```
+
+### Test Author API (jak test populuje evidence)
+
+```javascript
+// Test file: thoughts/shared/petla/smoke-tests/<date>/<feature>-T<N>.js
+module.exports = async function(page, helpers) {
+  const { snapshot, assertDom, recordCustom, recordBonusBug, baseUrl } = helpers;
+  await page.goto(baseUrl);
+  await page.waitForFunction(() => window.appReady);
+  await snapshot('after-init', await page.evaluate(() => ({ appReady, _state })));
+  await assertDom('#login-form', { matched: true, value: 'visible' });
+  await recordCustom('user_logged_in', await page.evaluate(() => !!_currentUser));
+  page.on('pageerror', err => recordBonusBug({
+    description: err.message, severity: 'major', hint: err.stack.split('\n')[0]
+  }));
+};
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | PASS |
+| 1 | FAIL |
+| 2 | INCONCLUSIVE (END marker present z status=INCONCLUSIVE OR truncation/corruption detected) |
+| 3 | SETUP_ERROR (chromium not found, port retry exhausted, dev server failed) |
+| 4 | CRASH/TIMEOUT (process died, missing END marker) |
+
+### Plan referencyjny
+
+Pełny design + iter 3 audit + risks + acceptance criteria:
+`thoughts/shared/petla-smoke-extension-plan-2026-05-01.md` (rev 4, 1106L)
+
+**Limitations (M1):**
+- AI test auto-generation = M2 (post PoC ≥70%)
+- `--auto` z git diff = M2
+- `--concurrency` >1 = M2
+- Cross-session locking = M2 (port discovery wystarczy w M1)
+- AI test linter (eslint-plugin-security + chromium network egress policy) = M2 must-fix przed AI generator
 
 ---
 
@@ -1280,7 +1760,7 @@ for group in independent_groups:
 
 ### Agents count
 ```
-/petla create docs/API.md --agents 3  # szybciej (min: 2, max: 10)
+/petla create docs/API.md --agents 3  # szybciej (min: 2, max: 16)
 /petla audit src/ --agents 7          # wolniej, dokładniej
 ```
 
@@ -1308,7 +1788,7 @@ przez TaskList + state file YAML.
 ### Krok 1: Parse argumenty
 
 ```python
-mode = args[0]       # create | verify | audit | solve
+mode = args[0]       # create | verify | audit | solve | smoke
 target = args[1]
 
 # SECURITY GATE
@@ -1316,7 +1796,7 @@ target = validate_path(target)  # basename, reject traversal
 
 options = parse_options(args[2:])
 max_iter = min(options.get('max_iter', 10), 10)
-agents_count = min(options.get('agents', 5), 10)
+agents_count = min(options.get('agents', 5), 16)  # cap raised 10→16 (subagents invisible); main loop ensures never < len(lenses)
 state_file = f"thoughts/shared/petla/{mode}-{basename(target)}-{date()}.yaml"
 
 if mode == "solve":
@@ -1335,17 +1815,20 @@ DEFAULT_LENSES = {
   "solve": ["correctness", "regression", "tests", "style", "completeness"]
 }
 
-lenses = options.lenses or DEFAULT_LENSES[mode][:agents_count]
+lenses = options.lenses or DEFAULT_LENSES.get(mode, [])
+agents_count = max(agents_count, len(lenses))   # NEVER drop a lens to fit a smaller count (was: [:agents_count])
+
+# DISPATCH GUARD: smoke has its OWN KROK 0-5 lifecycle (browser runner), NOT the consensus loop.
+if mode == "smoke":
+    run_smoke_lifecycle(target, options)   # see "## TRYB: smoke" — bypass the verify/consensus main loop
+    return
 # Brak TeamCreate. Subagenci spawn'owani per-iteration w Kroku 3.
 ```
 
 ### Krok 3: Main loop (subagenci per iteration)
 
 ```python
-iteration = 0
-stuck_count = 0
-prev_issue_set = set()
-
+iteration = 0   # stuck/convergence is handled by evaluate_stop_conditions, not loop-local vars
 while iteration < max_iter:
 
     # === WORK PHASE (create i solve) ===
@@ -1357,38 +1840,46 @@ while iteration < max_iter:
         fix_next_issue(issues_list)
 
     # === VERIFY PHASE — spawn FRESH subagents (ALL in ONE message) ===
-    existing_issues_summary = format_existing_issues(state_file, iteration)
+    # agents_count == len(lenses): NEVER truncate lenses to fit a smaller count.
+    existing_issues_summary = format_existing_issues(state, iteration)
     for lens in lenses:
         Agent(
-            subagent_type="general-purpose",
+            subagent_type="general-purpose",   # inherits Opus 4.8 — never haiku (INVARIANT 3)
             description=f"Validate {lens}",
             prompt=build_validator_prompt(lens, mode, target,
                                           existing_issues_summary)
         )
-    # Wszystkie 5 spawn w JEDNEJ wiadomości → parallel execution
+    # ALL lenses spawned in ONE message → parallel execution
 
     verdicts = parse_yaml_from_tool_results()
 
-    # === ERROR HANDLING ===
+    # === ERROR HANDLING — ANY failure blocks consensus (Silence ≠ Clean) ===
     failed = [v for v in verdicts if v.error]
-    if len(failed) > 2:
-        report_failures(failed)
+    if failed:
+        respawn(failed)                       # re-spawn EACH failed lens once
+        verdicts = merge(verdicts, parse_yaml_from_tool_results())
+        # any still-failed lens stays INCONCLUSIVE → cannot reach "clean"
 
-    # === STUCK DETECTION ===
-    curr_issues = set(v.issues for v in verdicts)
-    stuck_count = stuck_count + 1 if curr_issues == prev_issue_set else 0
-    prev_issue_set = curr_issues
-    if stuck_count >= 3:
-        return stuck_report()
+    # === CONSENSUS CHECK — destructure the tuple; pass the AGENT COUNT (int) ===
+    status, reason, valid = check_consensus(verdicts, len(lenses))
+    update_state_file(state, iteration, verdicts)   # persists verdicts WITH files_examined
+    if status == "clean":
+        # Clean alone is NOT enough — stop conditions gate the confidence label.
+        # (converged HIGH needs 2 clean iters AND 100% coverage; until then, keep going.)
+        decision, confidence = evaluate_stop_conditions(state, iteration, max_iter)
+        if decision == "continue":
+            iteration += 1
+            continue                          # clean but not yet converged → another iteration
+        return finish(decision, confidence)   # converged/max_iter/... with its REAL confidence label
+    if status == "inconclusive":
+        iteration += 1
+        continue                              # re-spawn missing/failed; do NOT finish
 
-    # === CONSENSUS CHECK ===
-    if check_consensus(verdicts, mode):
-        return success(iteration)
-        # Brak cleanup — subagenci kończą się sami po return
-
-    # === AGGREGATE ===
+    # status == "dirty": aggregate misses, then consult stop conditions
     aggregated_missing = aggregate(verdicts)
-    update_state_file(state_file, iteration, verdicts)
+    decision, confidence = evaluate_stop_conditions(state, iteration, max_iter)
+    if decision != "continue":
+        return finish(decision, confidence)   # report the confidence level prominently
 
     iteration += 1
 
@@ -1523,7 +2014,7 @@ Agent(subagent_type="general-purpose", description="{lens}",
 | Rule | Enforcement |
 |------|-------------|
 | Max iterations: 10 | HARD GATE in AUTONOMY RULES |
-| Max agents: 10 | HARD CAP in setup |
+| Max agents: 16 | HARD CAP in setup (was 10 — Termux-pane era; subagents invisible now) |
 | Timeout per agent: 2min | Warning + continue |
 | Stuck detection: 3x same | STOP + report |
 | Path validation | GATE in KROK 0 |
@@ -1585,7 +2076,7 @@ Jeśli widzisz w starym kodzie `SendMessage(shutdown_request)` lub
 ## Tips
 
 1. **Subagenci = ephemeral** - każda iteracja = fresh spawn z exclude list w prompcie
-2. **Więcej agentów = wolniej ale dokładniej** - max 10
+2. **Więcej agentów = wolniej ale dokładniej** - max 16
 3. **Custom lenses** - dostosuj do projektu
 4. **Audit → Solve pipeline** - znajdź → napraw
 5. **Worktrees** - parallel solve dla niezależnych issues (`isolation="worktree"`)

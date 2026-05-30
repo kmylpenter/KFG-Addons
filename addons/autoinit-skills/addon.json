@@ -5,13 +5,11 @@
   "version": "2.0.0",
   "author": "KFG",
   "dependencies": {},
-  "ensureEnv": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  },
   "targets": {
     "files/.claude/skills/session-init/": "~/.claude/skills/session-init/",
     "files/.claude/skills/implement_plan/": "~/.claude/skills/implement_plan/",
     "files/.claude/skills/petla/": "~/.claude/skills/petla/",
+    "files/.claude/lib/browser-smoke/": "~/.claude/lib/browser-smoke/",
     "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/"
   },
   "postInstall": {
@@ -65,5 +63,5 @@
       }
     }
   },
-  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /petla (v2.0) - iteracja z konsensusem via Agent Teams (audit/verify/solve/create)"
+  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /petla (v3.1) - iteracja z konsensusem via SUBAGENTS ONLY, Termux-safe, zero tmux panes (audit/verify/solve/create/smoke). NIE uzywa Agent Teams (usunieto w v3.0). /petla smoke wymaga ~/.claude/lib/browser-smoke (vendored z node_modules)."
 }

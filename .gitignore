@@ -4,6 +4,10 @@
 
 # Node
 node_modules/
+# EXCEPTION: browser-smoke lib is vendored WITH deps so /petla smoke works on a clean
+# install without `npm install` (user decision 2026-05-30). Keep this one tracked.
+!addons/autoinit-skills/files/.claude/lib/browser-smoke/node_modules/
+!addons/autoinit-skills/files/.claude/lib/browser-smoke/node_modules/**
 
 # Windows artifacts
 nul
