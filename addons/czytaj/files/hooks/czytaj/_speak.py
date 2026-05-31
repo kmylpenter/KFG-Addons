@@ -89,6 +89,7 @@ def _resolve_voice_typer_flag() -> str:
 
 
 VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
+VOICE_TYPER_STALE_S = 3.0  # keyboard heartbeats ≤1s; ignore a flag older than this (crashed)
 MAX_SPOKEN_TEXT_BYTES = 16384
 
 
@@ -179,7 +180,30 @@ def is_active_session(transcript_path: str) -> bool:
 
 
 def is_recording() -> bool:
-    return os.path.isfile(VOICE_TYPER_FLAG)
+    """True while the Voice Typer keyboard is dictating. Per the integration
+    contract the keyboard writes the current epoch (seconds) to VOICE_TYPER_FLAG
+    and refreshes it every ≤1s; we honour the flag as live only within
+    VOICE_TYPER_STALE_S so a crashed keyboard's stale flag can't mute TTS forever
+    (it self-heals by unlinking). An empty/legacy flag (presence-only, no heartbeat)
+    is honoured by presence; a present-but-unparseable flag fails safe to recording."""
+    try:
+        with open(VOICE_TYPER_FLAG) as f:
+            content = f.read().strip()
+    except OSError:
+        return False  # no flag → not recording
+    if not content:
+        return True   # legacy presence-only flag (keyboard deletes it on stop)
+    try:
+        ts = float(content)
+    except ValueError:
+        return True   # present but odd → fail safe to "recording" (pause TTS)
+    if time.time() - ts > VOICE_TYPER_STALE_S:
+        try:
+            os.unlink(VOICE_TYPER_FLAG)  # stale heartbeat → keyboard died → self-heal
+        except OSError:
+            pass
+        return False
+    return True
 
 
 def is_in_call() -> bool:
@@ -346,31 +370,31 @@ def is_screen_unlocked() -> bool:
     return unlocked
 
 
-_IME_PACKAGES_CACHE: tuple[float, frozenset[str]] = (0.0, frozenset())
+_IME_PACKAGES_CACHE: tuple[float, frozenset[str] | None] = (0.0, None)  # None = list unknown (F48)
 
 
-def _enabled_ime_packages() -> frozenset[str]:
-    """Return the set of enabled input method (keyboard) package names.
-    Keyboards like Voice Typer hold the microphone open whenever they're
-    active — that doesn't mean the user is dictating right now. We must
-    exclude IME packages from is_mic_recording_global() to avoid
-    permanent TTS suppression. Cached for 5 minutes."""
+def _enabled_ime_packages() -> frozenset[str] | None:
+    """Enabled input-method (keyboard) package names, or None when the list can't
+    be determined (no shell helper, or `ime list` failed). Keyboards like Voice
+    Typer hold the mic open whenever active — not 'dictating now' — so they're
+    excluded from is_mic_recording_global(). F48: return None (not empty) on
+    unknown so the caller fails OPEN instead of risking a false mic positive from
+    an unexcluded keyboard. Cached 5 minutes."""
     global _IME_PACKAGES_CACHE
     cached_at, cached = _IME_PACKAGES_CACHE
-    if time.time() - cached_at < 300.0 and cached:
+    if cached is not None and time.time() - cached_at < 300.0:
         return cached
     if _shell_cmd_prefix() is None:
-        return frozenset()
+        return None
     ok, out = _run_shell("ime list -s", timeout_s=5.0)
     if not ok:
-        return cached
+        return cached  # None if never cached → caller fails open
     pkgs = set()
     for line in out.splitlines():
         line = line.strip()
         if "/" in line:
             pkgs.add(line.split("/", 1)[0])
-    if pkgs:
-        _IME_PACKAGES_CACHE = (time.time(), frozenset(pkgs))
+    _IME_PACKAGES_CACHE = (time.time(), frozenset(pkgs))
     return _IME_PACKAGES_CACHE[1]
 
 
@@ -383,7 +407,7 @@ def is_mic_recording_global() -> bool:
 
     Probe: dumpsys audio's per-session source client= entries, filtered
     by silenced:false (actively listening). Requires Shizuku or Wireless
-    ADB. Fails open. Cached for 1s."""
+    ADB. Fails open. Cached for PROBE_CACHE_TTL_S (5s)."""
     if _shell_cmd_prefix() is None:
         return False
     cache = os.path.expanduser("~/.claude/czytaj-mic.cache")
@@ -399,6 +423,8 @@ def is_mic_recording_global() -> bool:
     recording = False
     if ok and out.strip():
         ime_pkgs = _enabled_ime_packages()
+        if ime_pkgs is None:
+            return False  # F48: IME list unknown → fail OPEN (don't risk a false positive)
         for line in out.splitlines():
             pkg = ""
             for tok in line.split(" -- "):
@@ -427,7 +453,7 @@ def is_external_media_playing() -> bool:
     'wait until WhatsApp voice msg finishes' behaviour the user asked
     about in the original audit.
 
-    Requires Shizuku or Wireless ADB. Fails open. Cached for 1.5s."""
+    Requires Shizuku or Wireless ADB. Fails open. Cached for PROBE_CACHE_TTL_S (5s)."""
     if _shell_cmd_prefix() is None:
         return False
     cache = os.path.expanduser("~/.claude/czytaj-media.cache")
@@ -541,7 +567,7 @@ def wait_for_recording_grace(timeout_s: float = 0.6, step_s: float = 0.05) -> bo
     soon as the flag appears (caller should then skip TTS)."""
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if os.path.isfile(VOICE_TYPER_FLAG):
+        if is_recording():   # F10: honour heartbeat staleness, not bare presence
             return True
         time.sleep(step_s)
     return False

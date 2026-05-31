@@ -59,6 +59,26 @@ def _resolve_voice_typer_flag() -> str:
 
 
 VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
+VOICE_TYPER_STALE_S = 3.0  # keyboard heartbeats ≤1s (F10/F27 — mirror of _speak.py)
+
+
+def _vt_recording() -> bool:
+    """Voice Typer dictating? Honours the heartbeat-timestamp staleness like
+    _speak.is_recording (F27 — kept in sync). Empty/odd flag → treat as recording."""
+    try:
+        with open(VOICE_TYPER_FLAG) as fh:
+            content = fh.read().strip()
+    except OSError:
+        return False
+    if not content:
+        return True
+    try:
+        ts = float(content)
+    except ValueError:
+        return True
+    return (time.time() - ts) <= VOICE_TYPER_STALE_S
+
+
 PREHEAT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "preheat.wav"
 SILENT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "silent.wav"
 
@@ -159,7 +179,7 @@ def watch_and_kill(proc: subprocess.Popen, fifo: Path | None,
     while not stop_event.is_set():
         if proc.poll() is not None:
             return
-        if os.path.isfile(VOICE_TYPER_FLAG):
+        if _vt_recording():  # F10/F27: heartbeat-aware, not bare presence
             try:
                 proc.kill()
             except ProcessLookupError:
@@ -267,7 +287,7 @@ def _play_via_termux_blocking(audio: Path) -> None:
     time.sleep(0.3)  # let `info` flip to Playing before we poll
     while time.monotonic() < deadline:
         # Voice Typer started dictation → stop talking over the user at once.
-        if os.path.isfile(VOICE_TYPER_FLAG):
+        if _vt_recording():  # F10/F27: heartbeat-aware, not bare presence
             try:
                 subprocess.run(
                     ["termux-media-player", "stop"],
