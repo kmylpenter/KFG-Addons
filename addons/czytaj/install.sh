@@ -105,7 +105,9 @@ fi
 # silently flipped a driving user's TTS off mid-session before this fix.
 WAS_ON=0
 [ -f "$HOME/.claude/czytaj.flag" ] && WAS_ON=1
-rm -f "$HOME/.claude/czytaj-state.json" "$HOME/.claude/czytaj-pause.flag"
+# F49: preserve czytaj-pause.flag across reinstall (wiping it silently cancelled
+# an active user pause → TTS resumed unexpectedly). Only reset transient state.json.
+rm -f "$HOME/.claude/czytaj-state.json"
 PIPER_RUN="${TMPDIR:-/tmp}/piper-server"
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f piper_server >/dev/null 2>&1 || true
