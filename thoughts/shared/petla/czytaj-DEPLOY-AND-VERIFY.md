@@ -83,3 +83,35 @@ text-sanitization(F26/28/29/30) → deploy-hygiene(F8/38/49) →
 setup-provisioning(F24/25/35/36/37/44) → **per-project(F1/2/4/5/15/18/32/40/50)** →
 **channel-lock(F3/6/7/43)** → process-mgmt+path(F21/33/34/11) → daemon-runtime(F19/20) →
 mic-detection(F10/27/48) → tempo(F9). (F12/F16/F17 = documented no-ops/deferred.)
+
+## 5. Session-2 additions (rish PRoot fix + volume-key control)
+NOT part of the 50-finding audit — added after, same branch working tree. New/changed files:
+`volume_watcher.py` (new), `_speak.py` (4 new fns at end: stop_now / speak_text_now /
+_resolve_active_transcript / read_last_message), `toggle.sh` (watcher spawn + OFF teardown),
+`setup-shizuku.sh` (idempotent rish patch). Deploy: the `cp "$SRC"/*.py "$SRC"/*.sh` in step 2
+already carries them.
+
+**rish PRoot fix** — stock rish aborts under PRoot fake-root (`[ -w $DEX ]` is always true → `exit 1`
+*before* app_process, which actually loads the dex fine on Android 14–16; it checks real mode bits,
+not fake-root `access()`). The fix lives in the live `~/.shizuku/rish`; to (re)apply on a fresh env
+just re-run setup-shizuku.sh — it now patches the freshly-extracted rish idempotently:
+```bash
+bash ~/.claude/hooks/czytaj/setup-shizuku.sh   # expect: [OK] rish PRoot fake-root patch applied + [OK] uid=shell
+rish -c id                                      # must print uid=2000(shell)
+```
+GOTCHA: SELinux=Enforcing blocks WRITE to /dev/input → `sendevent` / `input keyevent` can't generate
+test events; only PHYSICAL keys produce getevent events. getevent READ works (standard adb path).
+
+**Volume-key control** (needs rish working + Shizuku ready):
+- Watcher auto-starts on `/czytaj` ON (toggle.sh), single-instance flock, reads gpio_keys via getevent.
+- **Volume Down = stop TTS now**, **Volume Up = re-read Claude's last message.**
+- Keys still change system volume (passive getevent; consuming would need EVIOCGRAB). Gated to czytaj-ON.
+Verify (no ears needed):
+```bash
+pgrep -af '[v]olume_watcher'                 # exactly 1 process while reading is ON
+grep VOLKEY ~/.claude/czytaj.log | tail      # 'watcher start' + 'reading /dev/input/eventN'
+```
+On-device (ears): press **Volume Up** → hears the last message re-read; press **Volume Down** mid-read
+→ instant silence. If a press logs NO `VolumeUp/Down` line → getevent isn't delivering (pipe buffering
+or wrong device); if it logs but stays silent → audio path. Toggle OFF (last project) kills the
+watcher + `rish -c "pkill -9 getevent"` reaps the Shizuku-side reader.
