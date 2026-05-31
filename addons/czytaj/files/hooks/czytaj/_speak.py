@@ -709,11 +709,20 @@ def strip_markdown(text: str) -> str:
     # Match fenced code blocks even when they contain single backticks (was a
     # bug: r'```[^`]*```' breaks on inline `code` inside fences).
     t = re.sub(r"```.*?```", " ", t, flags=re.DOTALL)
+    t = re.sub(r"```.*$", " ", t, flags=re.DOTALL)  # F26: drop an unterminated/odd fence
     t = re.sub(r"`([^`]+)`", r"\1", t)
-    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
-    t = re.sub(r"\*([^*]+)\*", r"\1", t)
+    # F28: treat * / ** as emphasis ONLY when not hugging a word char, so
+    # arithmetic/globs (a*b*c, 2*3*4, *.py) aren't fused into "abc"/"234".
+    t = re.sub(r"(?<!\w)\*\*([^*]+)\*\*(?!\w)", r"\1", t)
+    t = re.sub(r"(?<!\w)\*([^*]+)\*(?!\w)", r"\1", t)
     t = re.sub(r"^#+\s*", "", t, flags=re.MULTILINE)
     t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    # F30: drop horizontal rules, table pipes, and emoji so a reply that is only
+    # rules/pipes/emoji doesn't synthesize as noise (the lone "if not speakable"
+    # guard let "---" / "| a | b |" / "✅" through).
+    t = re.sub(r"(?m)^\s*[-=*_]{3,}\s*$", " ", t)
+    t = re.sub(r"\|", " ", t)
+    t = re.sub(r"[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF️←-⇿⌀-⏿]", "", t)
     t = re.sub(r"^\s*[-*]\s+", ". ", t, flags=re.MULTILINE)
     t = re.sub(r"^\s*\d+\.\s+", ". ", t, flags=re.MULTILINE)
     t = re.sub(r"\n{2,}", ". ", t)
@@ -772,7 +781,11 @@ def _project_label(cwd: str, transcript_path: str) -> str:
     except Exception:
         parent = ""
     if parent and parent != "projects":
-        # encoded form: -data-data-...-projekty-Utility → last dash segment
+        # F29: the encoded form (-root-projekty-KFG-Addons) can't be reliably
+        # un-hyphenated (a separator '-' is indistinguishable from an in-name '-'),
+        # so a hyphenated leaf is truncated ("Addons"). This fallback only fires
+        # when cwd is absent; the exact, dash-safe cwd branch above is the live
+        # path once data['cwd'] is forwarded everywhere (per-project group).
         return parent.rstrip("-").rsplit("-", 1)[-1]
     return ""
 
@@ -960,7 +973,9 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
         return 0
 
     speakable = strip_markdown(new_text)
-    if not speakable:
+    # F30: skip when nothing speakable remains (no letter/digit) — a reply that was
+    # only rules/bullets/pipes/punctuation/emoji collapses to "" or ". . ." noise.
+    if not speakable or not any(ch.isalnum() for ch in speakable):
         _log("SKIP", caller, "reason=empty-after-strip")
         save_state({"last_uuid": uuid, "spoken_text": full_text})
         return 0
