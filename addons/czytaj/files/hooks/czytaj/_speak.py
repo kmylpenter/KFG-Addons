@@ -15,7 +15,8 @@ import subprocess
 import sys
 import time
 
-FLAG_FILE = os.path.expanduser("~/.claude/czytaj.flag")
+FLAG_FILE = os.path.expanduser("~/.claude/czytaj.flag")   # legacy global (pre per-project)
+FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")   # per-project flags: <sha1(realpath)>.flag
 STATE_FILE = os.path.expanduser("~/.claude/czytaj-state.json")
 SPEAK_LOCK = os.path.expanduser("~/.claude/czytaj-speak.lock")
 LOG_FILE = os.path.expanduser("~/.claude/czytaj.log")
@@ -70,9 +71,24 @@ def _resolve_piper_bin() -> str:
 
 
 PIPER_BIN = _resolve_piper_bin()
-VOICE_TYPER_FLAG = os.path.expanduser(
-    "~/storage/downloads/Termux-flags/voice-typer-recording.flag"
-)
+
+
+def _resolve_voice_typer_flag() -> str:
+    """Voice Typer writes its recording flag under the Termux shared-storage
+    Termux-flags dir. On native PRoot, HOME is /root and ~/storage does NOT
+    exist, so the old ~/storage/... path never matched and is_recording()
+    always returned False — dictation could never interrupt TTS. Resolve to
+    the first home whose Termux-flags dir actually exists."""
+    rel = "storage/downloads/Termux-flags/voice-typer-recording.flag"
+    for home in (os.path.expanduser("~"),
+                 "/data/data/com.termux/files/home"):
+        cand = os.path.join(home, rel)
+        if os.path.isdir(os.path.dirname(cand)):
+            return cand
+    return os.path.expanduser("~/" + rel)
+
+
+VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
 MAX_SPOKEN_TEXT_BYTES = 16384
 
 
@@ -83,8 +99,22 @@ def preheat_audio() -> None:
     return
 
 
-def is_active() -> bool:
-    return os.path.isfile(FLAG_FILE)
+def _project_flag(cwd: str = "") -> str:
+    """Per-project reading-mode flag path, keyed by sha1 of the project dir's
+    realpath. MUST match toggle.sh / user-prompt-submit.sh:
+        printf '%s' "$(realpath DIR)" | sha1sum
+    so enabling /czytaj in one project does NOT enable it in every other
+    open Claude window."""
+    d = os.path.realpath(cwd or os.getcwd())
+    key = hashlib.sha1(d.encode("utf-8")).hexdigest()
+    return os.path.join(FLAG_DIR, key + ".flag")
+
+
+def is_active(cwd: str = "") -> bool:
+    """Reading mode is PER-PROJECT (was global, which made one /czytaj read in
+    every open window). No legacy global fallback — that would re-introduce the
+    bug — so after this update each project needs /czytaj run once."""
+    return os.path.isfile(_project_flag(cwd))
 
 
 def _transcript_id(transcript_path: str) -> str:
@@ -216,16 +246,25 @@ def _read_screen_cache() -> bool | None:
             v = f.read().strip()
     except OSError:
         return None
+    if v not in ("0", "1"):
+        return None  # F46: torn/empty read → treat as cache-miss (re-probe), NOT locked
     return v == "1"
 
 
 def _write_screen_cache(unlocked: bool) -> None:
+    # F46: atomic tmp+replace so a concurrent _read_screen_cache never sees a
+    # truncated/empty file (which would be misread as "locked" → suppress TTS).
+    tmp = SCREEN_CACHE + ".tmp"
     try:
-        with open(SCREEN_CACHE, "w") as f:
+        with open(tmp, "w") as f:
             f.write("1" if unlocked else "0")
+        os.replace(tmp, SCREEN_CACHE)
         os.chmod(SCREEN_CACHE, 0o600)
     except OSError:
-        pass
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _shell_cmd_prefix() -> list[str] | None:
@@ -249,7 +288,10 @@ def _run_shell(shell_cmd: str, timeout_s: float = 2.0) -> tuple[bool, str]:
     if prefix[0] == "rish":
         cmd = prefix + [shell_cmd]
     else:
-        cmd = prefix + shell_cmd.split()
+        # F42: `adb shell` runs ONE string arg in a remote shell — pass the whole
+        # command so pipes/quotes in the dumpsys probes survive (shell_cmd.split()
+        # shattered them). shell_cmd is always a trusted in-code constant.
+        cmd = prefix + [shell_cmd]
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout_s,
@@ -506,7 +548,10 @@ def load_state() -> dict:
             except OSError:
                 pass
             try:
-                return json.load(f)
+                data = json.load(f)
+                # F47: a valid-but-non-dict payload ([], number) would propagate
+                # and crash state.get(...) → nonzero hook exit. Guard like _ledger_claim.
+                return data if isinstance(data, dict) else {"last_uuid": "", "spoken_text": ""}
             finally:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
@@ -517,8 +562,10 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
-    """Write state atomically (tempfile + os.replace) under exclusive lock so
-    concurrent PreToolUse + Stop hooks can't lose updates."""
+    """Write state atomically (tempfile + os.replace) under exclusive lock: a
+    reader never sees a torn file. NOTE this is torn-write protection, NOT
+    lost-update prevention — the read-modify-write is not one critical section;
+    serialization of concurrent PreToolUse + Stop relies on SPEAK_LOCK (F45)."""
     spoken = state.get("spoken_text", "")
     if isinstance(spoken, str) and len(spoken.encode("utf-8")) > MAX_SPOKEN_TEXT_BYTES:
         encoded = spoken.encode("utf-8")[-MAX_SPOKEN_TEXT_BYTES:]
@@ -574,7 +621,9 @@ def _parse_current_turn(transcript_path: str) -> tuple[str, str, str]:
     if not path_real.startswith(home_real + os.sep):
         return "", "", "no-transcript"
     try:
-        with open(transcript_path, encoding="utf-8") as f:
+        # F22: errors="replace" so a non-UTF8 byte can't raise UnicodeDecodeError
+        # (NOT an OSError) and crash the Stop/PreToolUse hook with a nonzero exit.
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except OSError:
         return "", "", "no-transcript"
@@ -640,7 +689,10 @@ def current_turn_text(transcript_path: str) -> tuple[str, str]:
     reason = "ok"
     for attempt in range(len(delays) + 1):
         uuid, text, reason = _parse_current_turn(transcript_path)
-        if text or reason in ("no-transcript", "no-user-msg"):
+        # F41: a tool-only turn (assistant msgs exist but none carry text → uuid set)
+        # is TERMINAL, not an fsync race — don't burn the 1.5s backoff. Only retry
+        # all-tool-only when uuid=="" (no assistant line fsync'd yet).
+        if text or reason in ("no-transcript", "no-user-msg") or (reason == "all-tool-only" and uuid):
             if attempt > 0:
                 _log("RETRY", "succeeded-after", attempt, "reason=", reason)
             elif not text:
@@ -772,10 +824,13 @@ def _ledger_claim(content_hash: str) -> bool:
         pruned = {h: t for h, t in data.items()
                   if isinstance(t, (int, float)) and (now - t) < SPOKEN_LEDGER_TTL_S}
         pruned[content_hash] = now  # always refresh → sliding window
+        # F14: write THEN truncate-to-length (not truncate-first) so a failed write
+        # can't leave a guaranteed-empty ledger that silently resets the dedup window.
         try:
-            os.ftruncate(fd, 0)
+            payload = json.dumps(pruned).encode("utf-8")
             os.lseek(fd, 0, 0)
-            os.write(fd, json.dumps(pruned).encode("utf-8"))
+            os.write(fd, payload)
+            os.ftruncate(fd, len(payload))
         except OSError:
             pass
         return not fresh

@@ -329,7 +329,10 @@ def _log(*parts: object) -> None:
 
 
 def main() -> int:
-    text = sys.stdin.read().strip()
+    # F23: decode stdin explicitly as UTF-8 (the writer pins utf-8). sys.stdin.read()
+    # uses the process locale and crashes on Polish diacritics under LANG=C/POSIX.
+    # F31: collapse newlines like the daemon path so both synth routes are consistent.
+    text = sys.stdin.buffer.read().decode("utf-8", "replace").replace("\n", " ").strip()
     if not text:
         _log("EXIT empty-text")
         return 0
