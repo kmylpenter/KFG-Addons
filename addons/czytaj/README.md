@@ -4,14 +4,14 @@ Toggle TTS odczytywania odpowiedzi Claude'a. Przeznaczone do hands-free use (np.
 
 ## Jak działa
 
-1. `/czytaj` — toggle trybu (włącza/wyłącza)
+1. `/czytaj` — toggle trybu (włącza/wyłącza) — **per-projekt** (każde okno/projekt osobno)
 2. Gdy włączony:
    - Claude generuje krótsze, voice-friendly odpowiedzi (3-5 zdań, bez markdown/kodu)
    - Po każdej odpowiedzi Stop hook czyta ją na głos przez Piper (neural, polski)
 3. `/czytaj` jeszcze raz — wyłącza
 4. `rozwin` — magiczne słowo: w jednej odpowiedzi Claude pomija reguły zwięzłości i daje pełny tekst.
 
-State: plik flag w `~/.claude/czytaj.flag` (istnieje = on).
+State: tryb jest **per-projekt** — flaga `~/.claude/czytaj-flags/<sha1(realpath projektu)>.flag` (istnieje = on dla tego projektu). Włączenie `/czytaj` w jednym oknie NIE włącza go w innych. (Pauza `/pauza` pozostaje **globalna** — jeden fizyczny głośnik, więc pauza wycisza wszystko.)
 
 ## Pauza (`/pauza`)
 
@@ -73,7 +73,7 @@ Skrypt poprowadzi przez:
 
 Po reboocie telefonu uruchom:
 ```bash
-bash ~/.claude/hooks/czytaj/adb-connect.sh
+bash ~/.claude/czytaj-runtime/adb-connect.sh
 ```
 (pairing przeżywa restart, sama sesja połączenia nie).
 
