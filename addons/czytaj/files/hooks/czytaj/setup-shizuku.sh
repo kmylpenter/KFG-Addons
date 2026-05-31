@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # czytaj — Shizuku integration setup (one-time).
 # Extracts the rish binary from the installed Shizuku APK and registers
 # it in Termux PATH. After this, czytaj's _speak.py can call rish to
@@ -13,7 +13,17 @@ set -e
 
 PKG=moe.shizuku.privileged.api
 RISH_HOME="$HOME/.shizuku"
-RISH_BIN="$PREFIX/bin/rish"
+# F24: on native PRoot $PREFIX is unset → "$PREFIX/bin" = /bin (system dir).
+# Prefer Termux's $PREFIX/bin when present, else a standard on-PATH writable dir
+# (_speak.py calls bare `rish`, so the dir MUST be on the hook process's PATH).
+if [ -n "$PREFIX" ] && [ -d "$PREFIX/bin" ]; then
+  RISH_BIN="$PREFIX/bin/rish"
+elif [ -d /usr/local/bin ]; then
+  RISH_BIN="/usr/local/bin/rish"
+else
+  mkdir -p "$HOME/.local/bin"
+  RISH_BIN="$HOME/.local/bin/rish"
+fi
 FLAG="$HOME/.claude/czytaj-shizuku.flag"
 
 echo ""
@@ -42,7 +52,7 @@ echo "  [OK] rish wypakowane do $RISH_HOME"
 
 # --- Wrapper that sets RISH_APPLICATION_ID for Termux ---
 cat > "$RISH_HOME/rish-wrapper.sh" <<'WRAP'
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 export RISH_APPLICATION_ID=com.termux
 exec "$HOME/.shizuku/rish" "$@"
 WRAP
@@ -70,10 +80,12 @@ fi
 echo ""
 echo "Test endpointów potrzebnych dla czytaj:"
 
-if "$RISH_BIN" -c "dumpsys window | grep -q mDreamingLockscreen" 2>/dev/null; then
-  echo "  [OK] dumpsys window — detekcja blokady ekranu"
+# F25: runtime detects lock via `dumpsys power | grep mWakefulness=` (commit
+# 3883ee4), not the old unreliable mDreamingLockscreen — test the signal in use.
+if "$RISH_BIN" -c "dumpsys power | grep -q mWakefulness=" 2>/dev/null; then
+  echo "  [OK] dumpsys power (mWakefulness) — detekcja blokady ekranu"
 else
-  echo "  [!] dumpsys window niedostępne — detekcja blokady wyłączona"
+  echo "  [!] dumpsys power niedostępne — detekcja blokady wyłączona"
 fi
 
 if "$RISH_BIN" -c "dumpsys audio | head -1" >/dev/null 2>&1; then
