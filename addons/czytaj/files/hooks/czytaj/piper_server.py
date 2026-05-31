@@ -163,13 +163,17 @@ def _spawn_daemon() -> subprocess.Popen | None:
     env["PIPER_VOICE_PATH"] = str(PIPER_VOICES)
     env["PIPER_LENGTH_SCALE"] = DEFAULT_LENGTH
     try:
-        d = subprocess.Popen(
-            [str(PIPER_DAEMON), "-m", DEFAULT_VOICE],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=env,
-        )
+        # F13: route the long-lived daemon's stderr to czytaj.log instead of
+        # /dev/null so synth failures are diagnosable. The child keeps its own
+        # dup of the fd, so closing our handle after spawn is fine.
+        with open(os.path.expanduser("~/.claude/czytaj.log"), "a") as _errlog:
+            d = subprocess.Popen(
+                [str(PIPER_DAEMON), "-m", DEFAULT_VOICE],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=_errlog,
+                env=env,
+            )
     except (FileNotFoundError, OSError):
         return None
     ready = d.stdout.readline().decode("utf-8", errors="ignore").strip()

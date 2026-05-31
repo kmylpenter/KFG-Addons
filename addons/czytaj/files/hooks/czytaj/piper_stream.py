@@ -45,9 +45,20 @@ try:
     PIPER_SAMPLE_RATE = int(os.environ.get("PIPER_SAMPLE_RATE", "22050"))
 except ValueError:
     PIPER_SAMPLE_RATE = 22050
-VOICE_TYPER_FLAG = os.path.expanduser(
-    "~/storage/downloads/Termux-flags/voice-typer-recording.flag"
-)
+def _resolve_voice_typer_flag() -> str:
+    """First home whose Termux-flags dir exists. On native PRoot ~/storage is
+    absent (HOME=/root), so the flag lives under the Termux home — otherwise
+    dictation can't interrupt playback."""
+    rel = "storage/downloads/Termux-flags/voice-typer-recording.flag"
+    for home in (os.path.expanduser("~"),
+                 "/data/data/com.termux/files/home"):
+        cand = os.path.join(home, rel)
+        if os.path.isdir(os.path.dirname(cand)):
+            return cand
+    return os.path.expanduser("~/" + rel)
+
+
+VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
 PREHEAT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "preheat.wav"
 SILENT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "silent.wav"
 
@@ -171,10 +182,12 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             input=text.encode("utf-8"),
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             timeout=60,
         )
         if proc.returncode != 0 or not raw_path.exists():
+            _log("SYNTH-FAIL rc=", proc.returncode, "stderr=",
+                 (proc.stderr or b"").decode("utf-8", "replace")[-200:])
             return False
         with open(raw_path, "rb") as f:
             raw = f.read()
@@ -192,7 +205,8 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             w.setframerate(PIPER_SAMPLE_RATE)
             w.writeframes(shorts)
         return True
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        _log("SYNTH-FAIL exception:", exc)
         return False
     finally:
         try:
@@ -238,11 +252,24 @@ def _play_via_termux_blocking(audio: Path) -> None:
             ["termux-media-player", "play", str(audio)],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        # F13: don't swallow a missing/broken termux-media-player silently —
+        # the Termux bridge is intermittently "command not found" on PRoot.
+        _log("PLAY-FAIL termux-media-player:", exc)
         return
     deadline = time.monotonic() + _wav_duration_s(audio) + 3.0
     time.sleep(0.3)  # let `info` flip to Playing before we poll
     while time.monotonic() < deadline:
+        # Voice Typer started dictation → stop talking over the user at once.
+        if os.path.isfile(VOICE_TYPER_FLAG):
+            try:
+                subprocess.run(
+                    ["termux-media-player", "stop"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+            break
         try:
             r = subprocess.run(
                 ["termux-media-player", "info"],
