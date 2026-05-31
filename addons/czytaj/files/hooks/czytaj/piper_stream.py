@@ -79,6 +79,31 @@ def _vt_recording() -> bool:
     return (time.time() - ts) <= VOICE_TYPER_STALE_S
 
 
+_LENGTH_FLAG_CACHE: list[str] | None = None
+
+
+def _length_scale_flag() -> list[str]:
+    """F9: the piper1-gpl C++ binary IGNORES PIPER_LENGTH_SCALE (a rhasspy-python
+    env convention) — that's the slow-tempo bug. Length scale must be a CLI flag,
+    but the spelling varies by build, so probe `piper --help` ONCE per process and
+    return [flag, value]; [] if none found (→ env-only, the old behaviour). FAIL-
+    SAFE: a wrong/absent flag never breaks synth — worst case is the old tempo."""
+    global _LENGTH_FLAG_CACHE
+    if _LENGTH_FLAG_CACHE is None:
+        _LENGTH_FLAG_CACHE = []
+        try:
+            h = subprocess.run([str(PIPER_BIN), "--help"],
+                               capture_output=True, text=True, timeout=5)
+            help_text = (h.stdout or "") + (h.stderr or "")
+            for cand in ("--length-scale", "--length_scale", "--length"):
+                if cand in help_text:
+                    _LENGTH_FLAG_CACHE = [cand, os.environ.get("PIPER_LENGTH_SCALE", "0.6")]
+                    break
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return _LENGTH_FLAG_CACHE
+
+
 PREHEAT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "preheat.wav"
 SILENT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "silent.wav"
 
@@ -204,7 +229,7 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
     raw_path = out_wav.with_suffix(".raw")
     try:
         proc = subprocess.run(
-            [str(PIPER_BIN), "-m", PIPER_VOICE, "-f", str(raw_path)],
+            [str(PIPER_BIN), "-m", PIPER_VOICE, "-f", str(raw_path)] + _length_scale_flag(),
             input=text.encode("utf-8"),
             env=env,
             stdout=subprocess.DEVNULL,
