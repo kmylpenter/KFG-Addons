@@ -106,7 +106,7 @@ fi
 # reinstall never silently turns a project off. F49: pause flag also preserved.
 # Only the transient daemon + state.json are reset below.
 rm -f "$HOME/.claude/czytaj-state.json"
-PIPER_RUN="${TMPDIR:-/tmp}/piper-server"
+PIPER_RUN="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/piper-server"   # F19: SSOT with piper_server.py
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f piper_server >/dev/null 2>&1 || true
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true

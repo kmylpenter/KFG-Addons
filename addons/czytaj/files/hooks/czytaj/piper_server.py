@@ -49,7 +49,10 @@ PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-d
 PIPER_VOICES = PIPER_HOME / "voices"
 FLAG_DIR = Path.home() / ".claude" / "czytaj-flags"   # F1: per-project (was global czytaj.flag)
 
-RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", os.environ.get("TMPDIR", "/tmp"))) / "piper-server"
+# F19: `or` chain (empty-as-unset) to match bash ${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
+# in toggle.sh + install.sh — .get(k, default) would return "" for a set-but-empty
+# XDG_RUNTIME_DIR, giving "/piper-server" and a dir mismatch.
+RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp") / "piper-server"
 SOCKET_PATH = RUN_DIR / "server.sock"
 PID_FILE = RUN_DIR / "server.pid"
 LOCK_FILE = RUN_DIR / "server.lock"
@@ -103,6 +106,13 @@ def server_alive() -> bool:
                 pass
         return False
     if not _can_connect():
+        # F19: PID alive but socket unreachable (killed -9 mid-bind, or a RUN_DIR
+        # mismatch left a stale socket). Remove the stale socket so the next
+        # ensure_running rebinds cleanly instead of a client stalling on a dead path.
+        try:
+            SOCKET_PATH.unlink()
+        except OSError:
+            pass
         return False
     return True
 
@@ -422,11 +432,18 @@ def speak(text: str, wav_out: Path, timeout_s: float = 30.0) -> bool:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "start":
+        # F20: race-safe spawn (toggle.sh uses this). ensure_running holds
+        # LOCK_FILE + re-checks server_alive, so it can't double-bind/orphan a
+        # daemon a client's ensure_running already started (the old `serve` path
+        # bound unconditionally and stole the socket).
+        ensure_running()
+        sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
         run_server()
         sys.exit(0)
     if len(sys.argv) < 2:
-        print("usage: piper_server.py serve | <text>", file=sys.stderr)
+        print("usage: piper_server.py start | serve | <text>", file=sys.stderr)
         sys.exit(1)
     text = sys.argv[1]
     out = Path(tempfile.mkstemp(suffix=".wav")[1])
