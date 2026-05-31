@@ -108,7 +108,7 @@ fi
 rm -f "$HOME/.claude/czytaj-state.json"
 PIPER_RUN="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/piper-server"   # F19: SSOT with piper_server.py
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
-pkill -9 -f piper_server >/dev/null 2>&1 || true
+pkill -9 -f 'python.*piper_server\.py' >/dev/null 2>&1 || true   # F21: anchored (final-sweep)
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true
 # Drop any legacy global flag (pre per-project); per-project flags survive above.
 rm -f "$HOME/.claude/czytaj.flag"
