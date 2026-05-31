@@ -166,29 +166,6 @@ def ensure_running() -> bool:
             pass
 
 
-_DAEMON_LENGTH_FLAG: list[str] | None = None
-
-
-def _daemon_length_flag() -> list[str]:
-    """F9: pass length-scale as a CLI flag (the binary ignores PIPER_LENGTH_SCALE).
-    Probe piper-daemon --help once for the supported spelling; [] if none (env-only,
-    fail-safe)."""
-    global _DAEMON_LENGTH_FLAG
-    if _DAEMON_LENGTH_FLAG is None:
-        _DAEMON_LENGTH_FLAG = []
-        try:
-            h = subprocess.run([str(PIPER_DAEMON), "--help"],
-                               capture_output=True, text=True, timeout=5)
-            t = (h.stdout or "") + (h.stderr or "")
-            for c in ("--length-scale", "--length_scale", "--length"):
-                if c in t:
-                    _DAEMON_LENGTH_FLAG = [c, DEFAULT_LENGTH]
-                    break
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return _DAEMON_LENGTH_FLAG
-
-
 def _spawn_daemon() -> subprocess.Popen | None:
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = f"{PIPER_LIB}:{env.get('LD_LIBRARY_PATH', '')}"
@@ -201,7 +178,7 @@ def _spawn_daemon() -> subprocess.Popen | None:
         # dup of the fd, so closing our handle after spawn is fine.
         with open(os.path.expanduser("~/.claude/czytaj.log"), "a") as _errlog:
             d = subprocess.Popen(
-                [str(PIPER_DAEMON), "-m", DEFAULT_VOICE] + _daemon_length_flag(),
+                [str(PIPER_DAEMON), "-m", DEFAULT_VOICE],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=_errlog,

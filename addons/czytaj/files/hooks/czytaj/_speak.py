@@ -1050,13 +1050,12 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     _log("SPEAK", caller, "label=", label or "-", "len=", len(audio_text),
          "first40=", repr(audio_text[:40]))
 
-    # F43: kill stale audio ONLY now — we're committed to playing (past the abort
-    # gate + ledger claim). Killing before the gate then bailing left dead air.
-    # (Only active panes reach here with kill_previous=True; background panes have
-    # kill_previous=False, so they never preempt the active one.)
-    if kill_previous:
-        _kill_audio_chain()
-
+    # Cross-window QUEUE model: NO global kill here. _kill_audio_chain stops the
+    # shared player + pkills piper_stream GLOBALLY, which cut OTHER windows' audio
+    # mid-utterance. Within a window the new utterance replaces its own previous via
+    # the single Android player's play (latest-wins); across windows piper_stream's
+    # _reserve_channel makes a later window WAIT its turn (queue). The new-turn
+    # flush (interrupt the previous turn's audio) still lives in the UPS hook.
     preheat_audio()
 
     # Piper is the only supported engine. termux-tts-speak fallback was

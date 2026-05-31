@@ -10,6 +10,7 @@ server is unavailable (e.g. during install before daemon comes up).
 """
 from __future__ import annotations
 
+import json
 import os
 import struct
 import subprocess
@@ -79,29 +80,34 @@ def _vt_recording() -> bool:
     return (time.time() - ts) <= VOICE_TYPER_STALE_S
 
 
-_LENGTH_FLAG_CACHE: list[str] | None = None
+_LENGTH_ENSURED = False
 
 
-def _length_scale_flag() -> list[str]:
-    """F9: the piper1-gpl C++ binary IGNORES PIPER_LENGTH_SCALE (a rhasspy-python
-    env convention) — that's the slow-tempo bug. Length scale must be a CLI flag,
-    but the spelling varies by build, so probe `piper --help` ONCE per process and
-    return [flag, value]; [] if none found (→ env-only, the old behaviour). FAIL-
-    SAFE: a wrong/absent flag never breaks synth — worst case is the old tempo."""
-    global _LENGTH_FLAG_CACHE
-    if _LENGTH_FLAG_CACHE is None:
-        _LENGTH_FLAG_CACHE = []
-        try:
-            h = subprocess.run([str(PIPER_BIN), "--help"],
-                               capture_output=True, text=True, timeout=5)
-            help_text = (h.stdout or "") + (h.stderr or "")
-            for cand in ("--length-scale", "--length_scale", "--length"):
-                if cand in help_text:
-                    _LENGTH_FLAG_CACHE = [cand, os.environ.get("PIPER_LENGTH_SCALE", "0.6")]
-                    break
-        except (OSError, subprocess.SubprocessError):
-            pass
-    return _LENGTH_FLAG_CACHE
+def _ensure_voice_length_scale() -> None:
+    """F9 (real fix): the piper1-gpl binary has NO --length-scale flag and IGNORES
+    the PIPER_LENGTH_SCALE env var — it reads length_scale from the voice's
+    .onnx.json. So set inference.length_scale to PIPER_LENGTH_SCALE (default 0.6)
+    idempotently, once per process; self-heals if the voice is ever re-downloaded.
+    Best-effort: any error leaves the config untouched and never blocks synth."""
+    global _LENGTH_ENSURED
+    if _LENGTH_ENSURED:
+        return
+    _LENGTH_ENSURED = True
+    try:
+        target = float(os.environ.get("PIPER_LENGTH_SCALE", "0.6"))
+        cfg = PIPER_VOICES / f"{PIPER_VOICE}.onnx.json"
+        with open(cfg) as fh:
+            d = json.load(fh)
+        inf = d.get("inference") or {}
+        if abs(float(inf.get("length_scale", 1)) - target) > 1e-6:
+            inf["length_scale"] = target
+            d["inference"] = inf
+            tmp = str(cfg) + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump(d, fh)
+            os.replace(tmp, cfg)
+    except Exception:
+        pass
 
 
 PREHEAT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "preheat.wav"
@@ -228,8 +234,9 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
     env["PIPER_LENGTH_SCALE"] = os.environ.get("PIPER_LENGTH_SCALE", "0.6")
     raw_path = out_wav.with_suffix(".raw")
     try:
+        _ensure_voice_length_scale()  # F9: tempo lives in the voice .onnx.json
         proc = subprocess.run(
-            [str(PIPER_BIN), "-m", PIPER_VOICE, "-f", str(raw_path)] + _length_scale_flag(),
+            [str(PIPER_BIN), "-m", PIPER_VOICE, "-f", str(raw_path)],
             input=text.encode("utf-8"),
             env=env,
             stdout=subprocess.DEVNULL,
@@ -412,31 +419,30 @@ def _write_channel(end_ts: float, owner: str, priority: str) -> None:
             pass
 
 
-def _reserve_channel_or_skip(wav: Path) -> bool:
-    """True → play (and claim the channel); False → yield (background pane while the
-    active pane is mid-utterance). FAIL-OPEN everywhere: missing env / unreadable
-    channel / parse error → True."""
+def _reserve_channel(wav: Path) -> None:
+    """Cross-window QUEUE on the shared single Android player: if ANOTHER window
+    currently owns the channel, WAIT until its utterance ends, then claim+play — so
+    two windows with czytaj on read one-after-another and never cut each other.
+    The SAME window never waits (a newer utterance just replaces its own previous
+    via termux-media-player's single-player play = latest-wins within a window).
+    FAIL-OPEN: unreadable channel / 45s cap → play anyway (never block into silence)."""
     owner = os.environ.get("CZYTAJ_TID", "") or "pane"
-    prio = os.environ.get("CZYTAJ_PRIORITY", "active")  # unset → active → play
     try:
         dur = _wav_duration_s(wav)
     except Exception:
         dur = 0.0
-    end_ts = time.time() + (dur if dur > 0 else 8.0) + 1.0
-    if prio != "background":          # active pane: priority — claim + play
-        _write_channel(end_ts, owner, "active")
-        return True
-    ch = _read_channel()
-    now = time.time()
-    if ch is None:                    # channel free
-        _write_channel(end_ts, owner, "background")
-        return True
-    c_end, c_owner, _c_prio, c_claim = ch
-    if c_owner == owner or now >= c_end or (now - c_claim) > CHANNEL_STALE_S:
-        _write_channel(end_ts, owner, "background")  # mine / expired / stale → free
-        return True
-    _log("CHANNEL", "yield-busy owner=", c_owner)   # active pane is talking → yield
-    return False
+    dur = dur if dur > 0 else 8.0
+    deadline = time.time() + 45.0   # hard cap so one window can't wedge another forever
+    while time.time() < deadline:
+        ch = _read_channel()
+        if ch is None:
+            break                                    # free
+        c_end, c_owner, _c_prio, c_claim = ch
+        now = time.time()
+        if c_owner == owner or now >= c_end or (now - c_claim) > CHANNEL_STALE_S:
+            break                                    # mine (replace) / expired / stale
+        time.sleep(0.3)                              # ANOTHER window busy → queue (wait)
+    _write_channel(time.time() + dur + 1.0, owner, "active")
 
 
 def _prune_scratch(max_age_s: float = 120.0) -> None:
@@ -563,12 +569,9 @@ def main() -> int:
         wav = Path(name)
         try:
             if synthesize_one_shot(text, wav):
-                # F3/F6/F7: yield the shared player to the active pane BEFORE any
-                # player interaction (so a yielding background pane never issues
-                # the unlock/stop that would clip the active pane).
-                if not _reserve_channel_or_skip(wav):
-                    _log("EXIT channel-yield")
-                    return 0
+                # Cross-window QUEUE: wait here until no OTHER window owns the shared
+                # player, then claim it. Same window / free channel → no wait.
+                _reserve_channel(wav)
                 unlock_audio_routing()
                 play_blocking(wav)  # blocks until done, then we delete
                 return 0
