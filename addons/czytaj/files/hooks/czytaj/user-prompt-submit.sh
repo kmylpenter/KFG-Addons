@@ -49,7 +49,8 @@ rm -f "$HOOK_TMP"
 # piper-daemon child alive — daemon respawn costs ~5s cold start per turn
 # (the bug that made every reply slow). The synth queue flushes itself
 # because paplay is killed and the daemon-to-FIFO write fails fast.
-for pat in termux-tts-speak termux-media-player paplay piper_stream; do
+# F21: anchor piper_stream to its python invocation (don't match editor/grep argv).
+for pat in termux-tts-speak termux-media-player paplay 'python.*piper_stream\.py'; do
   pkill -9 -f "$pat" 2>/dev/null
 done
 echo "$(date +%H:%M:%S) pid=$$ UPS-KILLED-CLIENTS" >> "$LOG" 2>/dev/null

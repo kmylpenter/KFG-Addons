@@ -749,7 +749,10 @@ def _truncate_to_sentence(text: str, limit: int) -> str:
 
 
 def _kill_audio_chain() -> None:
-    for pat in ("termux-tts-speak", "termux-media-player", "piper_stream", "paplay"):
+    # F21: anchor piper_stream to its python invocation so the pattern can't also
+    # match an editor/grep whose argv contains "piper_stream" (the binaries are
+    # specific enough). NEVER matches piper_server — the warm daemon must survive.
+    for pat in ("termux-tts-speak", "termux-media-player", r"python.*piper_stream\.py", "paplay"):
         subprocess.run(
             ["pkill", "-9", "-f", pat],
             stdout=subprocess.DEVNULL,
@@ -1062,10 +1065,15 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     try:
         proc.communicate(input=audio_text.encode("utf-8"), timeout=2)
     except subprocess.TimeoutExpired:
-        # Hand-off to piper_stream done; child runs in own session and
-        # owns playback lifecycle. Don't kill — would interrupt the audio
-        # the user is about to hear.
-        pass
+        # Hand-off to piper_stream done; child runs in own session and owns
+        # playback lifecycle. Don't kill — would interrupt the audio. F33: close
+        # our pipe end so the fd isn't held; the detached child (reparented to
+        # init) owns the rest.
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except OSError:
+            pass
     except (BrokenPipeError, OSError) as e:
         _log("ENGINE", "stdin-pipe-fail", repr(e))
 

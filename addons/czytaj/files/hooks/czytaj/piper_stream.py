@@ -67,7 +67,7 @@ PREHEAT_MARKER = Path(os.path.expanduser("~/.claude/czytaj-preheat.ts"))
 PREHEAT_VALID_S = 60
 
 
-def _audio_scratch_dir() -> Path:
+def _audio_scratch_dir() -> Path | None:
     """Directory for wavs that termux-media-player (the Android media app,
     running OUTSIDE PRoot) can actually open. PRoot paths like /tmp and /root
     are INVISIBLE to it — that was the silent-TTS bug on the native install:
@@ -85,7 +85,10 @@ def _audio_scratch_dir() -> Path:
             return d
         except OSError:
             continue
-    return Path(tempfile.gettempdir())
+    # F11: NO gettempdir fallback — both callers (native mkstemp + _staged_tone)
+    # feed termux-media-player, which can't read a PRoot tempdir (ENOENT → silent
+    # TTS). Return None so callers fail loudly instead of staging unplayably.
+    return None
 
 
 def _staged_tone() -> Path | None:
@@ -95,14 +98,17 @@ def _staged_tone() -> Path | None:
     src = PREHEAT_WAV if PREHEAT_WAV.is_file() else SILENT_WAV
     if not src.is_file():
         return None
+    d = _audio_scratch_dir()
+    if d is None:
+        return None  # F11: no Android-readable dir → skip preheat (never stage a PRoot path)
     try:
-        dst = _audio_scratch_dir() / src.name
+        dst = d / src.name
         if not dst.exists() or dst.stat().st_size != src.stat().st_size:
             import shutil
             shutil.copy2(src, dst)
         return dst
     except OSError:
-        return src
+        return None  # F11: was `return src` (a PRoot path the player can't open → ENOENT)
 
 
 def unlock_audio_routing() -> None:
@@ -388,6 +394,25 @@ def _reserve_channel_or_skip(wav: Path) -> bool:
     return False
 
 
+def _prune_scratch(max_age_s: float = 120.0) -> None:
+    """F34: remove tmp*.wav left in the scratch dir by a SIGKILL'd piper_stream
+    (pkill -9 bypasses the finally-unlink). Only tmp*.wav — never the persistent
+    preheat/silent tones."""
+    d = _audio_scratch_dir()
+    if d is None:
+        return
+    try:
+        now = time.time()
+        for p in d.glob("tmp*.wav"):
+            try:
+                if now - p.stat().st_mtime > max_age_s:
+                    p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def main() -> int:
     # F23: decode stdin explicitly as UTF-8 (the writer pins utf-8). sys.stdin.read()
     # uses the process locale and crashes on Polish diacritics under LANG=C/POSIX.
@@ -483,7 +508,12 @@ def main() -> int:
                 play_blocking(wav)
                 return 0
             return 1
-        fd, name = tempfile.mkstemp(suffix=".wav", dir=str(_audio_scratch_dir()))
+        scratch = _audio_scratch_dir()
+        if scratch is None:
+            _log("EXIT no-android-readable-scratch")  # F11: don't stage a PRoot path
+            return 3
+        _prune_scratch()  # F34: clear tmp*.wav leaked by a SIGKILL'd prior run
+        fd, name = tempfile.mkstemp(suffix=".wav", dir=str(scratch))
         os.close(fd)
         wav = Path(name)
         try:

@@ -19,7 +19,9 @@ if [ -f "$FLAG" ]; then
   # so /czytaj OFF here can't cut off another window that is still on.
   if [ -z "$(ls -A "$FLAG_DIR" 2>/dev/null)" ]; then
     termux-media-player stop >/dev/null 2>&1
-    for pat in piper_server piper-daemon paplay piper_stream termux-tts-speak; do
+    # F21: anchor the python scripts so the pattern can't match an editor/grep
+    # whose argv contains these names; bare binaries (daemon/paplay/tts) stay.
+    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak; do
       pkill -9 -f "$pat" >/dev/null 2>&1
     done
     rm -rf "$RUN_DIR"
