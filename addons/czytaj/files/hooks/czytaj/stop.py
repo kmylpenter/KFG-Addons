@@ -9,11 +9,13 @@ from _speak import is_active, is_recording, is_in_call, speak_new_text  # noqa: 
 
 
 def main() -> int:
-    if not is_active() or is_recording() or is_in_call():
-        return 0
     try:
         data = json.load(sys.stdin)
     except Exception:
+        return 0
+    # F2: gate on the per-project flag keyed by the hook's project dir (data['cwd']
+    # / CLAUDE_PROJECT_DIR), not os.getcwd() — read data BEFORE the is_active check.
+    if not is_active(data.get("cwd", "")) or is_recording() or is_in_call():
         return 0
     return speak_new_text(
         data.get("transcript_path", ""),

@@ -12,7 +12,10 @@ echo "$(date +%H:%M:%S) pid=$$ UPS-FIRED" >> "$LOG" 2>/dev/null
 # output downstream.
 HOOK_INPUT=$(cat)
 
-if [ ! -f "$HOME/.claude/czytaj.flag" ]; then
+# F1/F18: per-project gate — compute the SAME sha1 key as toggle.sh / _speak.py.
+_CZYTAJ_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
+_CZYTAJ_KEY=$(printf '%s' "$(realpath "$_CZYTAJ_DIR" 2>/dev/null || echo "$_CZYTAJ_DIR")" | sha1sum | cut -d' ' -f1)
+if [ ! -f "$HOME/.claude/czytaj-flags/$_CZYTAJ_KEY.flag" ]; then
   echo "$(date +%H:%M:%S) pid=$$ UPS-EXIT mode-off" >> "$LOG" 2>/dev/null
   exit 0
 fi

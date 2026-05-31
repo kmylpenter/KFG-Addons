@@ -47,7 +47,7 @@ PIPER_DAEMON = PIPER_HOME / "piper1-gpl" / "libpiper" / "piper-daemon"
 PIPER_LIB = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "lib"
 PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-data"
 PIPER_VOICES = PIPER_HOME / "voices"
-FLAG_FILE = Path.home() / ".claude" / "czytaj.flag"
+FLAG_DIR = Path.home() / ".claude" / "czytaj-flags"   # F1: per-project (was global czytaj.flag)
 
 RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", os.environ.get("TMPDIR", "/tmp"))) / "piper-server"
 SOCKET_PATH = RUN_DIR / "server.sock"
@@ -108,7 +108,7 @@ def server_alive() -> bool:
 
 
 def ensure_running() -> bool:
-    if not FLAG_FILE.is_file():
+    if not (FLAG_DIR.is_dir() and any(FLAG_DIR.iterdir())):  # F1: stay up while ANY project reads
         return False
     if server_alive():
         return True

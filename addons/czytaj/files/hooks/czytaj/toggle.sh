@@ -3,17 +3,31 @@
 # Prints exactly "ON" or "OFF" so the skill can branch on a single read.
 
 RUN_DIR="${TMPDIR:-/tmp}/piper-server"
+FLAG_DIR="$HOME/.claude/czytaj-flags"
 
-if [ -f "$HOME/.claude/czytaj.flag" ]; then
-  rm -f "$HOME/.claude/czytaj.flag"
-  termux-media-player stop >/dev/null 2>&1
-  for pat in piper_server piper-daemon paplay piper_stream termux-tts-speak; do
-    pkill -9 -f "$pat" >/dev/null 2>&1
-  done
-  rm -rf "$RUN_DIR"
+# Per-project key — MUST match _speak.py _project_dir/_project_flag and
+# user-prompt-submit.sh EXACTLY. printf '%s' (NOT echo) so no trailing newline
+# changes the sha1; $CLAUDE_PROJECT_DIR is stable across `cd` into a subdir.
+DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
+KEY=$(printf '%s' "$(realpath "$DIR" 2>/dev/null || echo "$DIR")" | sha1sum | cut -d' ' -f1)
+FLAG="$FLAG_DIR/$KEY.flag"
+
+if [ -f "$FLAG" ]; then
+  rm -f "$FLAG"
   echo OFF
+  # F4/F40: tear down the SHARED audio ONLY when NO project is reading anymore,
+  # so /czytaj OFF here can't cut off another window that is still on.
+  if [ -z "$(ls -A "$FLAG_DIR" 2>/dev/null)" ]; then
+    termux-media-player stop >/dev/null 2>&1
+    for pat in piper_server piper-daemon paplay piper_stream termux-tts-speak; do
+      pkill -9 -f "$pat" >/dev/null 2>&1
+    done
+    rm -rf "$RUN_DIR"
+    rm -f "$HOME/.claude/czytaj-pause.flag"   # F40: clear a stale global pause
+  fi
 else
-  touch "$HOME/.claude/czytaj.flag"
+  mkdir -p "$FLAG_DIR"
+  touch "$FLAG"
   mkdir -p "$RUN_DIR"
   chmod 700 "$RUN_DIR" 2>/dev/null
   nohup python3 "$HOME/.claude/hooks/czytaj/piper_server.py" serve >/dev/null 2>&1 &

@@ -101,21 +101,19 @@ if [ -f "$ADDON_DIR/files/skills/czytaj/SKILL.md" ]; then
 fi
 
 # --- Stale state cleanup (allow safe re-install) ---
-# Preserve the user's mode (ON/OFF) across reinstall — wiping the flag
-# silently flipped a driving user's TTS off mid-session before this fix.
-WAS_ON=0
-[ -f "$HOME/.claude/czytaj.flag" ] && WAS_ON=1
-# F49: preserve czytaj-pause.flag across reinstall (wiping it silently cancelled
-# an active user pause → TTS resumed unexpectedly). Only reset transient state.json.
+# F32/F50: reading mode is per-project (~/.claude/czytaj-flags/<sha1>.flag). The
+# per-project flags are PRESERVED across reinstall (not touched here), so a
+# reinstall never silently turns a project off. F49: pause flag also preserved.
+# Only the transient daemon + state.json are reset below.
 rm -f "$HOME/.claude/czytaj-state.json"
 PIPER_RUN="${TMPDIR:-/tmp}/piper-server"
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f piper_server >/dev/null 2>&1 || true
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true
-if [ "$WAS_ON" = "1" ]; then
-  echo "  [--] tryb był ON — pozostawiono flagę (daemon respawnuje przy pierwszym hooku)"
-else
-  rm -f "$HOME/.claude/czytaj.flag"
+# Drop any legacy global flag (pre per-project); per-project flags survive above.
+rm -f "$HOME/.claude/czytaj.flag"
+if [ -d "$HOME/.claude/czytaj-flags" ] && [ -n "$(ls -A "$HOME/.claude/czytaj-flags" 2>/dev/null)" ]; then
+  echo "  [--] zachowano per-project flagi czytania ($(ls -1 "$HOME/.claude/czytaj-flags" | wc -l) projekt(ow))"
 fi
 
 # --- settings.json patch (atomic, with backup) ---

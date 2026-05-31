@@ -15,8 +15,8 @@ import subprocess
 import sys
 import time
 
-FLAG_FILE = os.path.expanduser("~/.claude/czytaj.flag")   # legacy global (pre per-project)
 FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")   # per-project flags: <sha1(realpath)>.flag
+# F15: legacy global ~/.claude/czytaj.flag removed — reading mode is per-project only.
 STATE_FILE = os.path.expanduser("~/.claude/czytaj-state.json")
 SPEAK_LOCK = os.path.expanduser("~/.claude/czytaj-speak.lock")
 LOG_FILE = os.path.expanduser("~/.claude/czytaj.log")
@@ -99,13 +99,21 @@ def preheat_audio() -> None:
     return
 
 
+def _project_dir(cwd: str = "") -> str:
+    """The ONE canonical project dir for the per-project key (F1/F5).
+    Order: $CLAUDE_PROJECT_DIR (stable even after `cd` into a subdir) → the
+    hook's data['cwd'] → os.getcwd(). toggle.sh / user-prompt-submit.sh resolve
+    the SAME source (${CLAUDE_PROJECT_DIR:-$PWD}) so their sha1 keys line up."""
+    return os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
+
+
 def _project_flag(cwd: str = "") -> str:
     """Per-project reading-mode flag path, keyed by sha1 of the project dir's
-    realpath. MUST match toggle.sh / user-prompt-submit.sh:
-        printf '%s' "$(realpath DIR)" | sha1sum
-    so enabling /czytaj in one project does NOT enable it in every other
-    open Claude window."""
-    d = os.path.realpath(cwd or os.getcwd())
+    realpath. MUST match toggle.sh / user-prompt-submit.sh EXACTLY:
+        printf '%s' "$(realpath "${CLAUDE_PROJECT_DIR:-$PWD}")" | sha1sum
+    (printf '%s' — NOT echo, whose trailing newline would change the hash) so
+    enabling /czytaj in one project does NOT enable it in every open window."""
+    d = os.path.realpath(_project_dir(cwd))
     key = hashlib.sha1(d.encode("utf-8")).hexdigest()
     return os.path.join(FLAG_DIR, key + ".flag")
 
@@ -889,7 +897,7 @@ def _maybe_folder_prefix(label: str) -> str:
 def speak_new_text(transcript_path: str, kill_previous: bool, cwd: str = "") -> int:
     caller = "Stop" if kill_previous else "PreToolUse"
     _log("ENTER", caller, "transcript=", os.path.basename(transcript_path or ""))
-    if not is_active():
+    if not is_active(cwd):  # F2: key off the hook's project dir, not os.getcwd()
         _log("SKIP", caller, "reason=mode-off")
         return 0
     if is_recording():
@@ -985,7 +993,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     if kill_previous:
         _kill_audio_chain()
 
-    if wait_for_recording_grace() or is_in_call() or not is_active():
+    if wait_for_recording_grace() or is_in_call() or not is_active(cwd):  # F2: per-project
         return 0
 
     # Cross-window dedup CLAIM: hash (folder + content) so the same reply can't
