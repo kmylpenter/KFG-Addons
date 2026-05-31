@@ -21,9 +21,13 @@ if [ -f "$FLAG" ]; then
     termux-media-player stop >/dev/null 2>&1
     # F21: anchor the python scripts so the pattern can't match an editor/grep
     # whose argv contains these names; bare binaries (daemon/paplay/tts) stay.
-    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak; do
+    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak 'python.*volume_watcher\.py' 'rish.*getevent'; do
       pkill -9 -f "$pat" >/dev/null 2>&1
     done
+    # The getevent the watcher reads runs under the Shizuku SERVICE (shell uid),
+    # not as a child of the PRoot client — killing the client above can leave it.
+    # Reap it by process name via rish (best-effort; ignored if Shizuku is down).
+    timeout 8 rish -c "pkill -9 getevent" >/dev/null 2>&1
     rm -rf "$RUN_DIR"
     rm -f "$HOME/.claude/czytaj-pause.flag"   # F40: clear a stale global pause
   fi
@@ -33,6 +37,11 @@ else
   mkdir -p "$RUN_DIR"
   chmod 700 "$RUN_DIR" 2>/dev/null
   nohup python3 "$HOME/.claude/hooks/czytaj/piper_server.py" start >/dev/null 2>&1 &   # F20: race-safe
+  disown
+  # Volume-key watcher (VolumeDown=stop, VolumeUp=read-last via Shizuku getevent).
+  # Self-gates on Shizuku readiness + holds a single-instance lock, so spawning it
+  # on every ON is safe — a second project's toggle just exits immediately.
+  nohup python3 "$HOME/.claude/hooks/czytaj/volume_watcher.py" >/dev/null 2>&1 &
   disown
   echo ON
 fi

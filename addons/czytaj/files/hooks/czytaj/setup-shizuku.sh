@@ -50,6 +50,40 @@ chmod 400 "$RISH_HOME/rish_shizuku.dex"  # Android 14+ refuses writable dex
 chmod 755 "$RISH_HOME/rish"
 echo "  [OK] rish wypakowane do $RISH_HOME"
 
+# --- PRoot fake-root fix: neutralise the stock rish's Android-14 writable-dex
+#     bail. Under PRoot's emulated root `[ -w $DEX ]` is ALWAYS true even after
+#     chmod 400, so stock rish aborts before app_process — which actually loads
+#     the dex fine here. Idempotent; preserves Shizuku's own app_process line. ---
+python3 - "$RISH_HOME/rish" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+if "PRoot fake-root fix (czytaj)" in s:
+    print("  [OK] rish PRoot fake-root patch already present")
+    sys.exit(0)
+s = s.replace(
+    'echo "On Android 14+, app_process cannot load writable dex."',
+    'echo "On Android 14+, app_process cannot load writable dex." >&2')
+s = s.replace(
+    'echo "Attempting to remove the write permission..."',
+    'echo "Attempting to remove the write permission..." >&2')
+s = s.replace(
+    '''  if [ -w $DEX ]; then
+    echo "Cannot remove the write permission of $DEX."
+    echo "You can copy to file to terminal app's private directory (/data/data/<package>, so that remove write permission is possible"
+    exit 1
+  fi''',
+    '''  # PRoot fake-root fix (czytaj): [ -w $DEX ] always reports writable under
+  # PRoot's emulated root even after chmod 400, so the stock hard-exit is a false
+  # positive. app_process is the real arbiter of the writable-dex rule and loads
+  # the dex fine here, so warn and proceed instead of aborting.
+  if [ -w "$DEX" ]; then
+    echo "rish: dex still reports writable (PRoot fake-root); letting app_process decide." >&2
+  fi''')
+open(p, "w").write(s)
+print("  [OK] rish PRoot fake-root patch applied")
+PYEOF
+
 # --- Wrapper that sets RISH_APPLICATION_ID for Termux ---
 cat > "$RISH_HOME/rish-wrapper.sh" <<'WRAP'
 #!/usr/bin/env bash

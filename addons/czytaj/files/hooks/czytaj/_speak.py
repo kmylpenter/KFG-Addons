@@ -1103,3 +1103,109 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
         _log("ENGINE", "stdin-pipe-fail", repr(e))
 
     return 0
+
+
+# --------------------------------------------------------------------------
+# Manual actions (physical volume keys via volume_watcher.py, and the stop
+# skill). These DELIBERATELY bypass the spoken-ledger and active-session gate:
+# the user pressed a key NOW, so the action is honoured regardless of dedup or
+# whose turn it is. Gating on "czytaj ON" is the caller's job (the watcher).
+# --------------------------------------------------------------------------
+
+def stop_now() -> None:
+    """Silence TTS immediately: stop the shared Android player and kill the
+    audio chain (piper_stream / paplay / termux-media-player). The warm
+    piper_server daemon is intentionally left alive. Bound to VolumeDown."""
+    try:
+        subprocess.run(
+            ["termux-media-player", "stop"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+    _kill_audio_chain()
+    _log("ACTION", "stop_now")
+
+
+def speak_text_now(text: str, owner: str = "manual", priority: str = "active") -> bool:
+    """Synthesize + play arbitrary text immediately, bypassing the spoken-ledger
+    so already-spoken content is re-read on demand. Mirrors _speak_inner's
+    piper_stream hand-off (stdin + CZYTAJ_TID/CZYTAJ_PRIORITY). Returns True if
+    playback was started."""
+    speakable = strip_markdown(text or "")
+    if not speakable or not any(ch.isalnum() for ch in speakable):
+        _log("ACTION", "speak_text_now", "nothing-speakable")
+        return False
+    speakable = _truncate_to_sentence(speakable, 2000)
+    if not (os.path.isfile(PIPER_BIN) and os.path.isfile(PIPER_STREAM)):
+        _log("ACTION", "speak_text_now", "missing-piper")
+        return False
+    preheat_audio()
+    child_env = dict(os.environ)
+    child_env["CZYTAJ_TID"] = owner or "manual"
+    child_env["CZYTAJ_PRIORITY"] = priority
+    try:
+        proc = subprocess.Popen(
+            [sys.executable or "python3", PIPER_STREAM],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env=child_env,
+        )
+    except (FileNotFoundError, OSError) as e:
+        _log("ACTION", "speak_text_now", "spawn-fail", repr(e))
+        return False
+    try:
+        proc.communicate(input=speakable.encode("utf-8"), timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except OSError:
+            pass
+    except (BrokenPipeError, OSError):
+        pass
+    _log("ACTION", "speak_text_now", "len=", len(speakable))
+    return True
+
+
+def _resolve_active_transcript() -> str:
+    """Full path to the active session's transcript jsonl, or '' if none found.
+    czytaj-active-session.txt holds only the stable basename (session id); we
+    resolve it under ~/.claude/projects/*/. If the marker is missing/unmatched,
+    fall back to the most-recently-modified transcript so read-last still works
+    in a single-window setup that never wrote the marker."""
+    import glob
+    tid = ""
+    try:
+        with open(ACTIVE_SESSION_FILE) as f:
+            tid = f.read().splitlines()[0].strip()
+    except (OSError, IndexError):
+        tid = ""
+    candidates: list[str] = []
+    if tid:
+        candidates = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{tid}"))
+    if not candidates:
+        candidates = glob.glob(os.path.expanduser("~/.claude/projects/*/*.jsonl"))
+    if not candidates:
+        return ""
+    try:
+        return max(candidates, key=lambda p: os.path.getmtime(p))
+    except OSError:
+        return candidates[0]
+
+
+def read_last_message() -> bool:
+    """Re-read the latest assistant message of the active session. Bound to
+    VolumeUp. Returns True if something was spoken."""
+    path = _resolve_active_transcript()
+    if not path:
+        _log("ACTION", "read_last", "no-active-transcript")
+        return False
+    _uuid, text = current_turn_text(path)
+    if not text.strip():
+        _log("ACTION", "read_last", "empty-turn-text")
+        return False
+    _log("ACTION", "read_last", "transcript=", os.path.basename(path), "len=", len(text))
+    return speak_text_now(text, owner=os.path.basename(path), priority="active")
