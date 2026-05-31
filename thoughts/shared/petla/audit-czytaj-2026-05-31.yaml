@@ -1,0 +1,934 @@
+meta:
+  mode: audit
+  target: "czytaj"
+  target_path: "addons/czytaj/files/hooks/czytaj/"
+  started: "2026-05-31"
+  updated: "2026-05-31"
+  status: in_progress
+  iterations: 3
+  source_doc: "thoughts/shared/petla/czytaj-known-issues-2026-05-31.md"
+  baseline: "working-tree as-is = HEAD a27e132 + uncommitted INCOHERENT half-edit on _speak.py & piper_stream.py"
+  lenses: [flag-coherence, path-resolution, concurrency, repo-installed-sync, audio-runtime]
+  target_files:
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/_speak.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/piper_stream.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/piper_server.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/stop.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/pre-tool-use.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/user-prompt-submit.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/toggle.sh"
+
+# ── DECISIONS the user must make BEFORE /petla solve (do not auto-resolve) ──
+user_decisions:
+  - id: D-BASELINE
+    question: "Baseline for the fix: REVERT the broken half-edit (git checkout _speak.py piper_stream.py → clean known-good HEAD, then implement per-project cleanly) OR FINISH the per-project change forward from the current half-edit?"
+    recommendation: "REVERT to HEAD first, then implement BUG B coherently across all files. The half-edit only covers 2 of ~6 files; reverting loses no design (intent captured in F1/F2/F4/F5/F15) and gives /petla solve a clean, audibly-working starting point. Destructive (discards uncommitted edits) → needs explicit OK."
+    answer: "DECIDED 2026-05-31 (user delegated 'just make it work'): PRESERVE the 2 GOOD half-edit patches (voice-typer resolver in both files, piper_stream interrupt) — do NOT blanket-revert (FC-3). Rebuild per-project COHERENTLY across all 6+ files. Solve mechanic: revert _speak.py/piper_stream.py to clean a27e132 base, then re-apply the 2 keepers + per-project as their own atomic commits per recommended_safe_order (RR-4)."
+  - id: D-BUGA
+    question: "BUG A (F10): can the Kmylpenter Voice Typer keyboard be made to WRITE a recording flag again? If YES → trivial path fix. If NO → must special-case the keyboard's Android package name in the Shizuku dumpsys-audio probe (need the exact package name)."
+    blocking_for: [F10]
+    warning: "RR-6 — the 'special-case the IME package' branch can REGRESS dormant BUG A into PERMANENT silence (an IME holds the mic persistently; if treated as a recorder, is_recording() sticks True → TTS never speaks). Strongly prefer the flag-file path; if forced into the allowlist branch, require idle→busy edge-detect + auto-clear."
+    answer: "RESOLVED 2026-05-31: YES — the Voice Typer keyboard CAN write the flag (it is a separate Android app maintained by a different Claude). Hand-off contract written: thoughts/shared/petla/voice-typer-recording-flag-CONTRACT.md (keyboard writes /storage/emulated/0/Download/Termux-flags/voice-typer-recording.flag on dictation start, deletes on stop; optional heartbeat-timestamp for crash-safety). Takes the FLAG-FILE path → AVOIDS the RR-6 IME-allowlist permanent-mute risk entirely. czytaj side = _resolve_voice_typer_flag (already correct) + (if heartbeat) staleness check in is_recording()."
+  - id: D-PAUSE
+    question: "Pause scope (F40): should /pauza be PER-PROJECT (extend pauza + the pause readers to the same sha1 key) or stay GLOBAL? There is one physical speaker, so global pause-all may be correct-by-design rather than a bug."
+    recommendation: "Keep pause GLOBAL (single physical audio channel → pausing everything is sane). This is a product decision independent of D-BASELINE; do not auto-pick per-project."
+    blocking_for: [F40]
+    answer: "DECIDED 2026-05-31 (user delegated): keep pause GLOBAL (one physical speaker → pause-all is intended). F40 → no per-project pause; just ensure F4 OFF-teardown clears a stale pause flag."
+
+issues:
+  # ══════════════════ CRITICAL ══════════════════
+  - id: F1
+    severity: critical
+    lens: [flag-coherence, path-resolution, repo-installed-sync]
+    origin_ids: [B1, P2, S1]
+    confidence: HIGH
+    is_new: false   # confirms known BUG B
+    title: "Per-project flag incoherence: global write vs per-project read → deploy kills reading mode"
+    item: >
+      _speak.py is_active() (line 117) reads a PER-PROJECT flag ~/.claude/czytaj-flags/<sha1(realpath)>.flag
+      with NO legacy fallback, but toggle.sh (lines 7,8,16) and user-prompt-submit.sh (line 15) still
+      write/read the GLOBAL ~/.claude/czytaj.flag. If the repo working tree is deployed/committed as-is,
+      /czytaj reports ON, writes the global flag, yet is_active() stays False forever → permanent silence,
+      no error.
+    location: "_speak.py:18,113-117 ; toggle.sh:7,8,16 ; user-prompt-submit.sh:15"
+    evidence: "toggle.sh:16 'touch \"$HOME/.claude/czytaj.flag\"'; _speak.py:117 'return os.path.isfile(_project_flag(cwd))'; grep czytaj-flags|sha1sum|_project_flag in *.sh → ZERO hits. py_compile passes (logical, not syntactic, breakage)."
+    root_cause: "BUG B fix applied to the Python read-side only; the bash write-side never converted. Removing the global fallback turned 'still global' into 'permanently off'."
+    suggestion: "COMPLETE-OR-REVERT across all files together (see D-BASELINE). If finishing: toggle.sh + user-prompt-submit.sh compute KEY=$(printf '%s' \"$(realpath \"${CLAUDE_PROJECT_DIR:-$PWD}\")\" | sha1sum | cut -d' ' -f1) and write/check ~/.claude/czytaj-flags/$KEY.flag. MUST use printf '%s' NOT echo (newline breaks sha1 parity — verified, see notes)."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F2
+    severity: critical
+    lens: [flag-coherence, path-resolution, concurrency, repo-installed-sync]
+    origin_ids: [B2, P1, C7, S2]
+    confidence: HIGH
+    is_new: true
+    title: "is_active() called without cwd at 4 sites → per-project keying unsound even after bash fix"
+    item: >
+      speak_new_text(…, cwd) threads cwd into _project_label and the ledger, but its OWN is_active()
+      guards ignore it, and the two hook entrypoints guard before reading cwd. So activation keys off
+      os.getcwd() of the hook process, not the hook-provided project realpath that toggle.sh would hash.
+      Even if BUG B is finished bash-side, the sha1 keys won't line up unless os.getcwd() == that realpath.
+    location: "_speak.py:854 'if not is_active():' ; _speak.py:948 'or not is_active()' ; stop.py:12 ; pre-tool-use.py:12"
+    evidence: "_speak.py:851 signature 'speak_new_text(transcript_path, kill_previous, cwd=\"\")' but :854/:948 call bare is_active(); is_active(cwd='') → _project_flag → :108 'os.path.realpath(cwd or os.getcwd())'. stop.py:21 DOES pass cwd to speak_new_text, proving the plumbing is half-wired."
+    root_cause: "cwd param added + forwarded to labels/ledger but not to the is_active() gates; default arg silently swallows the omission (no NameError)."
+    suggestion: "Forward cwd everywhere: _speak.py:854/:948 → is_active(cwd); stop.py:12 & pre-tool-use.py:12 → read data first, then is_active(data.get('cwd','')). Assert os.getcwd()/data['cwd'] realpath == the dir toggle.sh hashes. Land with F1."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F3
+    severity: critical
+    lens: [concurrency]
+    origin_ids: [C1, C2]
+    confidence: HIGH
+    is_new: false   # confirms known BUG C + new C2 facet
+    title: "No cross-window playback channel lock; ledger only dedups identical text"
+    item: >
+      _play_via_termux_blocking issues 'termux-media-player play' with NO busy-check at the point of play,
+      and the single shared Android MediaPlayer means any window reaching that line cuts off whatever
+      another window is playing. The only guard, is_self_already_speaking(), is a stateless probe run
+      seconds earlier and far upstream (separated by the whole _speak_inner pipeline + piper synthesis in a
+      detached child). The X4 content-hash ledger keys on sha1(label+text), so two DIFFERENT replies in two
+      windows both claim and both play — the ledger is NOT a mutual-exclusion lock for the shared player.
+    location: "piper_stream.py:247-251 (play) ; _speak.py:871-875,502 (only probe) ; _speak.py:956-959 (ledger key)"
+    evidence: "piper_stream.py:248-251 subprocess.run(['termux-media-player','play',str(audio)]…) — no preceding info/lock check. _speak.py:255 'time.sleep(0.3) # let info flip to Playing' hints the probe is laggy → widens TOCTOU."
+    root_cause: "A 'is it playing?' probe (state) is used where a held 'channel reservation' (lock) is required; dedup ledger and channel-busy decision are conflated."
+    suggestion: "Add a real flock'd channel lock ~/.claude/czytaj-channel.lock storing end-ts + owner-transcript-id, claimed immediately before play and held for wav duration. Background pane may claim only when end-ts passed; active pane may preempt. flock on /root/.claude is valid cross-process (all hooks run in same PRoot)."
+    fix_group: channel-lock
+    smoke_required: false   # not browser-testable; user must verify on-device with 2 windows
+
+  # ══════════════════ MAJOR ══════════════════
+  - id: F4
+    severity: major
+    lens: [flag-coherence]
+    origin_ids: [B3]
+    confidence: HIGH
+    is_new: false
+    title: "toggle.sh OFF tears down audio GLOBALLY → silences other projects"
+    item: "OFF branch unconditionally runs 'termux-media-player stop', pkills piper_server/piper-daemon/paplay/piper_stream/termux-tts-speak, and rm -rf RUN_DIR. With per-project mode, /czytaj OFF in project A disrupts project B still reading."
+    location: "toggle.sh:9-13"
+    evidence: "toggle.sh:9 'termux-media-player stop'; :10-12 pkill loop; :13 'rm -rf \"$RUN_DIR\"'. No guard on remaining czytaj-flags/ entries."
+    root_cause: "toggle.sh teardown predates per-project mode; it is global."
+    suggestion: "After removing this project's flag, gate the global teardown on empty dir: if [ -z \"$(ls -A ~/.claude/czytaj-flags 2>/dev/null)\" ]; then <teardown>; fi"
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F5
+    severity: major
+    lens: [flag-coherence]
+    origin_ids: [B5]
+    confidence: HIGH
+    is_new: true
+    title: "Three inconsistent 'which project' sources must realpath-match"
+    item: "toggle.sh keys off ${CLAUDE_PROJECT_DIR:-$PWD}; hook line-12 guards key off os.getcwd(); hook JSON carries data['cwd']. The per-project design only works if all three realpath to the identical string before sha1."
+    location: "toggle.sh (CLAUDE_PROJECT_DIR/$PWD) ; stop.py:12 & pre-tool-use.py:12 (os.getcwd) ; stop.py:21 (data['cwd'])"
+    evidence: "stop.py:21 'cwd=data.get(\"cwd\",\"\")' vs stop.py:12 'is_active()' (os.getcwd) — two sources in the SAME file."
+    root_cause: "Three independent ways to learn the project dir; no canonical source."
+    suggestion: "Canonical key = realpath(data['cwd']) for hooks, realpath(${CLAUDE_PROJECT_DIR:-$PWD}) for toggle.sh; verify CLAUDE_PROJECT_DIR is exported in toggle.sh's runtime else $PWD must equal project realpath. Land with F1/F2."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F6
+    severity: major
+    lens: [concurrency]
+    origin_ids: [C4, C5]
+    confidence: HIGH
+    is_new: true
+    title: "SPEAK_LOCK guards the decision not the resource; priority gate racy + fail-open TTL"
+    item: >
+      SPEAK_LOCK is released (_speak.py:905) as soon as the detached piper_stream child is spawned
+      (proc.communicate timeout=2, start_new_session=True), i.e. seconds before audio plays — so it
+      protects state reads, never playback. The active-vs-background priority is a one-shot stateless
+      probe; is_active_session fails OPEN after ACTIVE_SESSION_TTL_S (300s), after which every pane is
+      'active' and races with kill_previous=True.
+    location: "_speak.py:882-908 (lock lifetime) ; :991-1009 (detached child) ; :145-170 (fail-open TTL)"
+    evidence: "_speak.py:1004 'proc.communicate(input=…, timeout=2)'; :168-170 'if time.time()-marked_at > ACTIVE_SESSION_TTL_S: return True'."
+    root_cause: "Lock guards the decision phase; playback lifetime lives in a detached grandchild outside any lock."
+    suggestion: "Fold priority into the F3 channel-lock (store owner=transcript_id + end-ts; re-evaluate under the lock at play time, not via an early probe). Keep SPEAK_LOCK only for decision serialization."
+    fix_group: channel-lock
+
+  - id: F7
+    severity: major
+    lens: [concurrency]
+    origin_ids: [C3, C6]
+    confidence: MEDIUM
+    is_new: true
+    title: "Untargeted 'termux-media-player stop' (interrupt + preheat) kills OTHER window's playback"
+    item: >
+      The half-edit Voice-Typer interrupt (piper_stream.py:258-266) and unlock_audio_routing (stop+0.9s tone,
+      :124-140) both issue an UNtargeted 'stop' on the shared player. One pane's stop/tone cuts another pane's
+      legitimate playback and injects an 80Hz tone into the shared channel. Dormant for the interrupt today
+      (flag never written) but hazardous once BUG A's flag is restored.
+    location: "piper_stream.py:258-266 (interrupt) ; piper_stream.py:108-146 (unlock_audio_routing), called :400,413,423"
+    evidence: "piper_stream.py:258 'if os.path.isfile(VOICE_TYPER_FLAG): …stop…; break'; :125-129 stop + :133-139 play tone + :140 sleep(0.9). VOICE_TYPER_FLAG is a single global path, 'stop' has no target."
+    root_cause: "Per-utterance/per-sink intent implemented as a global stop on a shared player with no ownership token."
+    suggestion: "Gate both on F3 channel ownership (only stop if I'm the current owner). On native (no-pulse) path, skip unlock_audio_routing entirely — the routing tone is a PulseAudio concern, harmful on the shared MediaPlayer."
+    fix_group: channel-lock
+
+  - id: F8
+    severity: minor   # DOWNGRADED iter3 (completeness-critic): install.sh:93 already chmods — only the MANUAL sync is exposed
+    lens: [repo-installed-sync]
+    origin_ids: [S4]
+    confidence: HIGH
+    is_new: true
+    title: "MANUAL 'cp repo→installed' sync strips the +x bit (install.sh self-heals, manual handoff does not)"
+    item: "Repo .sh are -rw------- (toggle.sh has NO +x; user-prompt-submit.sh -rwx------); installed .sh are -rwxr-xr-x. install.sh:93 'chmod 755 *.sh' fixes this on a real install, BUT the handoff's documented manual sync ('cp repo→installed') has no chmod → a hand-deployed hook is non-executable."
+    location: "repo .sh perms vs installed -rwxr-xr-x ; install.sh:93 (self-heals) ; known-issues.md:129 (manual cp, no chmod)"
+    evidence: "ls -la confirmed; install.sh:93 'chmod 755 \"$HOME/.claude/hooks/czytaj/\"*.sh' (verified by completeness-critic)."
+    root_cause: "Repo perms diverged from installed; the MANUAL sync instruction omits chmod (install.sh is fine)."
+    suggestion: "Track the bit in git (git update-index --chmod=+x *.sh) so even a bare cp preserves it; add chmod +x to the manual-sync note. install.sh needs no change."
+    fix_group: deploy-hygiene
+
+  - id: F9
+    severity: major
+    lens: [audio-runtime]
+    origin_ids: [D1]
+    confidence: HIGH   # mechanism; on-device 'piper --help' confirmation required
+    is_new: false   # confirms known BUG D
+    title: "BUG D tempo: PIPER_LENGTH_SCALE env var likely ignored by piper1-gpl C++ binary"
+    item: >
+      Length-scale is delivered ONLY via the PIPER_LENGTH_SCALE env var. The piper1-gpl C++ binary/daemon
+      ('-m … -f …' form) is not the rhasspy python wrapper that honored that env var; no '--length-scale'
+      CLI flag is ever passed, and the daemon protocol carries only path+text. So the voice's default
+      length_scale (~1.0) plays instead of 0.6 → audibly slower. Present identically in HEAD → this is the
+      real tempo cause, not a half-edit regression. (Sample-rate header is correctly 22050 → NOT the cause.)
+    location: "piper_stream.py:177-181 (one-shot) ; piper_server.py:164,167,242 (daemon spawn) ; piper_server.py:189-190 (protocol)"
+    evidence: "piper_stream.py:180-181 argv has no length flag; piper_server.py:189-190 protocol = path+text only; grep '--length'/'length_scale' flag → 0 hits."
+    root_cause: "Assumes libpiper honors the rhasspy env var; it reads length_scale from the voice .onnx.json or a CLI/JSON arg."
+    suggestion: "On-device: confirm exact flag via '<piper> --help'. Then EITHER add '--length-scale 0.6' (or '--length_scale') to argv at piper_stream.py:181 AND piper_server.py daemon argv; OR patch pl_PL-gosia-medium.onnx.json 'length_scale' to 0.6; OR send a JSON synth-config line on the daemon stdin. Keep env as fallback. Do not go below ~0.5."
+    fix_group: tempo
+    smoke_required: false   # user must confirm flag + audibly verify tempo on-device
+
+  - id: F10
+    severity: major
+    lens: [audio-runtime]
+    origin_ids: [A1]
+    confidence: HIGH
+    is_new: false   # confirms known BUG A
+    title: "BUG A detection double-dead: no keyboard flag + Shizuku probe excludes all IMEs"
+    item: >
+      is_recording() depends on VOICE_TYPER_FLAG which the current keyboard build never writes (dir empty
+      during dictation), AND the only other mic signal is_mic_recording_global() explicitly skips ALL enabled
+      IMEs (_speak.py:389) — the Voice Typer keyboard IS an IME, so it can never be detected there. TTS keeps
+      talking over dictation; the half-edit stop-on-flag never fires.
+    location: "_speak.py:173-174 (is_recording) ; _speak.py:381,389 (IME exclusion) ; piper_stream.py:258 (interrupt on same dead flag)"
+    evidence: "_speak.py:389 'if not pkg or pkg in ime_pkgs: continue'; _speak.py:174 'return os.path.isfile(VOICE_TYPER_FLAG)' + handoff: Termux-flags dir empty during dictation."
+    root_cause: "No live mic signal for an IME-based dictation keyboard once the keyboard stopped writing a flag; Shizuku probe deliberately ignores IMEs to avoid permanent muting."
+    suggestion: "USER DECISION D-BUGA. If keyboard can write a flag → path fix (_resolve_voice_typer_flag already drafted) suffices. Else → add an allowlist so is_mic_recording_global treats the Voice Typer package as a real recorder despite being an IME (invert the :389 skip for that one pkg). Need exact Android package name."
+    fix_group: mic-detection
+    needs_user_decision: D-BUGA
+
+  # ══════════════════ MINOR ══════════════════
+  - id: F11
+    severity: minor
+    lens: [path-resolution]
+    origin_ids: [P3, P4]
+    confidence: HIGH
+    is_new: true
+    title: "Scratch/preheat fallback can return a PRoot-invisible path → silent ENOENT on native player"
+    item: >
+      _audio_scratch_dir() last-resort returns tempfile.gettempdir() (PRoot /tmp/$TMPDIR — Android-invisible);
+      _staged_tone() on copy failure returns the in-PRoot source wav. On the native (termux-media-player) path
+      both feed a path the Android player cannot open → silent no-sound. Latent today (preferred dirs exist) but
+      it is exactly the a27e132 ENOENT bug re-introduced as a silent fallback.
+    location: "piper_stream.py:88 (scratch fallback, reached from :417) ; piper_stream.py:105 (staged_tone fallback, consumed :120,134)"
+    evidence: "piper_stream.py:88 'return Path(tempfile.gettempdir())'; :98-105 'except OSError: return src'."
+    root_cause: "Generic temp fallback is correct only for the paplay/PRoot backend; the termux-media-player consumer needs an Android-readable path."
+    suggestion: "On the native path, do NOT fall back to gettempdir()/PRoot src; if no Termux-readable scratch is writable, _log loudly and return failure (preheat: return None and skip)."
+    fix_group: path-safety
+
+  - id: F12
+    severity: minor
+    lens: [audio-runtime]
+    origin_ids: [R1]
+    confidence: HIGH
+    is_new: true
+    title: "Native interrupt stops playback but not the piper synth subprocess"
+    item: "On flag-detect the play loop runs 'termux-media-player stop' + break but does not kill the piper synth (synthesize_one_shot, timeout=60). The PulseAudio path (watch_and_kill) kills paplay AND unlinks the FIFO to abort synth via EPIPE; the native path has no equivalent synth-abort."
+    location: "piper_stream.py:256-266 vs :149-167 (watch_and_kill)"
+    evidence: "piper_stream.py:259-266 stop+break only; synthesize_one_shot:180 has no flag check, timeout=60."
+    root_cause: "Interrupt bolted onto playback poll only; synthesis is the earlier phase and is not flag-aware on native."
+    suggestion: "Low priority. If tighter interruption wanted: check VOICE_TYPER_FLAG just before play (covered) AND poll it inside synthesize_one_shot, or move the flag-check into _speak.py before spawning piper_stream. Depends on F10 first."
+    fix_group: mic-detection
+
+  - id: F13
+    severity: minor
+    lens: [audio-runtime]
+    origin_ids: [R3, self-check]
+    confidence: HIGH
+    is_new: true
+    title: "Silent failures: termux-media-player unavailable + ALL piper errors swallowed (stderr DEVNULL, no _log)"
+    item: "When 'play' fails (binary 'command not found' → OSError caught, returns silently) there is no _log; every piper spawn uses stderr=DEVNULL with no error log on failure. BUG-D-class and intermittent-mount issues are undiagnosable from czytaj.log."
+    location: "piper_stream.py:248-253 (play except, no log) ; :185-186,:362-363 + piper_server.py:171 (stderr=DEVNULL)"
+    evidence: "piper_stream.py:252-253 'except (OSError, subprocess.SubprocessError): return' (no _log); synth stderr=DEVNULL everywhere."
+    root_cause: "Fail-open/quiet convention with no diagnostic breadcrumb."
+    suggestion: "Add one-line _log on play failure ('PLAY','termux-mp-unavailable') and capture piper stderr to czytaj.log on non-zero exit. Cheap, high diagnostic value."
+    fix_group: observability
+
+  - id: F14
+    severity: minor
+    lens: [concurrency]
+    origin_ids: [C8]
+    confidence: LOW
+    is_new: true
+    title: "Ledger rewrite is truncate-then-write in place (partial-write window)"
+    item: "Ledger RMW does os.ftruncate(fd,0) then os.write inside try/except OSError: pass. A failed write after a successful truncate leaves an empty ledger, resetting the dedup window (could allow a duplicate read). Low likelihood."
+    location: "_speak.py:805-810"
+    evidence: "_speak.py:806-810 truncate+write in try/except that passes."
+    root_cause: "Non-atomic in-place rewrite instead of tmp+rename (the state/last-folder writes already use tmp+rename)."
+    suggestion: "Write to SPOKEN_LEDGER+'.tmp' then os.replace into place — never leaves a truncated ledger."
+    fix_group: robustness
+
+  - id: F15
+    severity: minor
+    lens: [flag-coherence, repo-installed-sync]
+    origin_ids: [B4, S3]
+    confidence: MEDIUM
+    is_new: false
+    title: "Dead/contradictory FLAG_FILE constant + no legacy migration"
+    item: "_speak.py:18 FLAG_FILE ('~/.claude/czytaj.flag') is defined but no longer read in _speak.py, while the .sh files still depend on exactly that path — the live contract is split with no shared source of truth. Existing users with the global flag set go dark until /czytaj is re-run per project (intentional per handoff, but undocumented in-code)."
+    location: "_speak.py:18 (dead const) ; toggle.sh:7,8,16 + user-prompt-submit.sh:15 (still authoritative)"
+    evidence: "grep FLAG_FILE → only _speak.py:18; czytaj.flag literal still in toggle.sh x3 + user-prompt-submit.sh x1."
+    root_cause: "Half-migration left old global constant as dead code while shell scripts remain un-migrated consumers."
+    suggestion: "If finishing F1: remove FLAG_FILE and migrate the .sh literals. If reverting: this line returns to live and the issue disappears. Optionally one-shot migrate global→per-project on first is_active()."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F16
+    severity: minor
+    lens: [repo-installed-sync]
+    origin_ids: [S5]
+    confidence: MEDIUM
+    is_new: true
+    title: "Stale cpython-312 .pyc relics in installed __pycache__"
+    item: "Installed __pycache__ still has cpython-312 .pyc (old Termux Python) alongside cpython-314. Not a correctness risk (CPython revalidates source mtime), but the 312 artifacts are pre-PRoot relics that could confuse a future audit."
+    location: "/root/.claude/hooks/czytaj/__pycache__/ (_speak.cpython-312.pyc, piper_server.cpython-312.pyc)"
+    evidence: "ls __pycache__ shows both cpython-312 (May 22) and cpython-314 (May 30)."
+    root_cause: "Interpreter changed 3.12 (Termux) → 3.14 (PRoot) during env migration; old .pyc never pruned."
+    suggestion: "Optional hygiene: delete the cpython-312 .pyc from installed __pycache__ (ASK before rm). No functional change."
+    fix_group: deploy-hygiene
+
+  - id: F17
+    severity: minor
+    lens: [audio-runtime]
+    origin_ids: [R4]
+    confidence: MEDIUM
+    is_new: true
+    title: "Daemon reports hardcoded DEFAULT_SAMPLE_RATE, not the voice's real rate"
+    item: "speak_raw always returns DEFAULT_SAMPLE_RATE (22050) and paplay is invoked --rate=22050, ignoring the voice model's actual rate. Correct for gosia-medium (22050) but swapping PIPER_VOICE to a 16000 'low' model would desync → pitch/tempo distortion (pulse path)."
+    location: "piper_server.py:348,406 ; piper_stream.py:356"
+    evidence: "piper_server.py:348 '{…\"rate\":DEFAULT_SAMPLE_RATE}'; never parses model .onnx.json sample_rate."
+    root_cause: "Sample rate is a config constant, not derived from voice metadata."
+    suggestion: "Low priority while voice fixed at gosia-medium. If voice becomes configurable, parse sample_rate from <voice>.onnx.json."
+    fix_group: robustness
+
+  # ══════════ ITERATION 2 — new surface (setup/daemon/entry/text/completeness) ══════════
+  - id: F18
+    severity: critical
+    lens: [hook-entry-lifecycle, fix-surface-completeness]
+    origin_ids: [E1, K1]
+    confidence: HIGH
+    is_new: true
+    title: "Shell wrappers gate on GLOBAL flag at the bash layer BEFORE Python runs → per-project broken in a SECOND layer"
+    item: >
+      stop.sh:5, pre-tool-use.sh:5 ('[ -f ~/.claude/czytaj.flag ] || exit 0') and user-prompt-submit.sh:15
+      short-circuit and exit 0 when the GLOBAL flag is absent — so the Python hook (with its per-project
+      is_active) is never even exec'd. Even if F1/F2 are completed inside Python, the wrappers still block.
+      The per-project fix surface is 4 shell files + Python, not just toggle.sh. Hooks are registered as the
+      .sh wrappers (install.sh:140-166), so these gates are the live entrypoints.
+    location: "stop.sh:5 ; pre-tool-use.sh:5 ; user-prompt-submit.sh:15"
+    evidence: "stop.sh:5 '[ -f \"$HOME/.claude/czytaj.flag\" ] || exit 0'; identical pre-tool-use.sh:5."
+    root_cause: "Per-project migration applied only to _speak.py; the bash gates that exec it were never converted."
+    suggestion: "Move the per-project key check into the wrappers (compute key = printf '%s' \"$(realpath \"${CLAUDE_PROJECT_DIR:-$PWD}\")\" | sha1sum | cut -d' ' -f1; test ~/.claude/czytaj-flags/$key.flag) OR drop the bash gate and let stop.py/pre-tool-use.py decide via is_active(data['cwd']). Land with F1/F2."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+  - id: F19
+    severity: major
+    lens: [setup-and-daemon-paths, daemon-lifecycle-process-mgmt]
+    origin_ids: [G2, L1, G7]
+    confidence: HIGH
+    is_new: true
+    title: "RUN_DIR derivation diverges (XDG_RUNTIME_DIR-first vs TMPDIR-only) → wrong-dir teardown, stale daemon, 30s stalls"
+    item: >
+      piper_server.py:52 derives RUN_DIR as XDG_RUNTIME_DIR→TMPDIR→/tmp, but toggle.sh:5 and install.sh:109
+      use only ${TMPDIR:-/tmp}/piper-server. If XDG_RUNTIME_DIR is ever set, the daemon binds its socket/PID
+      in a DIFFERENT dir than toggle OFF / reinstall clean → 'rm -rf $RUN_DIR' deletes the wrong dir, leaving
+      an orphan daemon + stale socket. server_alive() also does not unlink a stale socket when _can_connect
+      fails (only when PID is dead), so after a SIGKILL teardown a client can connect to a dead socket →
+      DAEMON_READ_TIMEOUT (30s) silent stall.
+    location: "piper_server.py:52 vs toggle.sh:5 vs install.sh:109 ; piper_server.py:91-107 (stale-socket recovery)"
+    evidence: "piper_server.py:52 'Path(os.environ.get(\"XDG_RUNTIME_DIR\", os.environ.get(\"TMPDIR\",\"/tmp\")))/\"piper-server\"'; toggle.sh:5 'RUN_DIR=\"${TMPDIR:-/tmp}/piper-server\"'."
+    root_cause: "Three independent RUN_DIR derivations with different precedence; no single source of truth."
+    suggestion: "Mirror one precedence everywhere: RUN_DIR=\"${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/piper-server\" in shell, OR have toggle delegate teardown to a piper_server.py 'stop' subcommand. Also unlink stale socket in server_alive() when _can_connect fails."
+    fix_group: daemon-runtime
+
+  - id: F20
+    severity: major
+    lens: [daemon-lifecycle-process-mgmt]
+    origin_ids: [L2]
+    confidence: HIGH
+    is_new: true
+    title: "toggle.sh ON spawns daemon via UNLOCKED 'nohup serve' path, bypassing ensure_running's flock → orphan daemon"
+    item: >
+      ensure_running() guards double-spawn with flock(LOCK_FILE) + server_alive() re-check, but run_server()/'serve'
+      does NO such check: it unconditionally unlinks the socket, binds, and overwrites PID_FILE. toggle.sh:19
+      force-spawns 'nohup python3 piper_server.py serve', so a second toggle (or two windows toggling) steals the
+      socket and overwrites PID_FILE, orphaning the previous daemon+piper-daemon child (no longer discoverable via PID_FILE).
+    location: "toggle.sh:19 vs piper_server.py:121-124 (lock) / 290-308 (run_server, no lock)"
+    evidence: "toggle.sh:19 'nohup python3 .../piper_server.py serve …'; piper_server.py:296 'SOCKET_PATH.unlink()'; :300 bind; :308 'PID_FILE.write_text(...)' — none under LOCK_FILE."
+    root_cause: "Lock/identity check lives only in ensure_running(), not in run_server()."
+    suggestion: "Guard run_server() with the same flock+server_alive() check, OR make toggle ON call ensure_running() (don't force-spawn 'serve'). Toggle probably shouldn't pre-spawn — first client brings it up race-free."
+    fix_group: daemon-runtime
+
+  - id: F21
+    severity: major
+    lens: [daemon-lifecycle-process-mgmt]
+    origin_ids: [L3]
+    confidence: HIGH
+    is_new: true
+    title: "pkill -9 -f over-matches command lines → collateral SIGKILL of unrelated tools + prevents socket cleanup"
+    item: >
+      Teardown (toggle.sh:10-12) and client kill (user-prompt-submit.sh:49-51, _speak.py:712-718) run
+      'pkill -9 -f <bareword>' on tokens like 'paplay','piper_stream','piper_server'. -f matches the WHOLE
+      command line, so an editor/pager/grep whose argv contains the token (e.g. 'vim piper_stream.py', a grep
+      over the source — this very audit) gets SIGKILLed. SIGKILL also bypasses cleanup, guaranteeing stale
+      sockets/pidfiles (feeds F19/F20 orphans).
+    location: "toggle.sh:10-12 ; user-prompt-submit.sh:49-51 ; _speak.py:712-718"
+    evidence: "_speak.py:713 '[\"pkill\",\"-9\",\"-f\", pat] for pat in (…\"piper_stream\",\"paplay\")'; toggle.sh:10 'for pat in piper_server piper-daemon paplay piper_stream …; do pkill -9 -f \"$pat\"'."
+    root_cause: "Whole-cmdline matching with short generic tokens + SIGKILL; no PID-file targeting, no anchoring to the script path."
+    suggestion: "Use PID-file SIGTERM→wait→SIGKILL for the daemon; anchor client patterns to the script path (e.g. 'python3? .*piper_stream\\.py') and SIGTERM before -9 so paplay/daemon clean their sockets."
+    fix_group: process-mgmt
+
+  - id: F22
+    severity: major
+    lens: [hook-entry-lifecycle]
+    origin_ids: [E2]
+    confidence: HIGH
+    is_new: true
+    title: "Non-UTF8 byte in a transcript line → UnicodeDecodeError → NONZERO Stop/PreToolUse hook exit"
+    item: >
+      _parse_current_turn opens the transcript utf-8 and calls readlines(), but the surrounding try only
+      catches OSError; UnicodeDecodeError (a ValueError, NOT OSError) propagates through current_turn_text
+      (no guard) → speak_new_text → sys.exit(main()) → the hook exits nonzero with a traceback. The JSON-stdin
+      path IS guarded; this transcript-decode path is not.
+    location: "_speak.py:606-610 (open+readlines, except OSError) ; :671-672 (current_turn_text no guard) ; stop.py:25 / pre-tool-use.py:25 'sys.exit(main())'"
+    evidence: "_speak.py:607-609 'with open(transcript_path, encoding=\"utf-8\") as f: lines = f.readlines() … except OSError:'; verified issubclass(UnicodeDecodeError, OSError) is False."
+    root_cause: "readlines() decodes eagerly; chosen except (OSError) does not cover decode errors."
+    suggestion: "Open with errors='replace' (or widen except to (OSError, UnicodeDecodeError)). Belt-and-suspenders: wrap main() body so no transcript anomaly makes a hook exit nonzero."
+    fix_group: robustness
+
+  - id: F23
+    severity: major
+    lens: [text-processing-synth-edge]
+    origin_ids: [T3]
+    confidence: HIGH
+    is_new: true
+    title: "piper_stream reads stdin with process locale, not explicit UTF-8 → silent crash on Polish text under POSIX locale"
+    item: >
+      _speak.py writes audio_text.encode('utf-8') to the pipe, but piper_stream.py:326 does sys.stdin.read()
+      (locale-dependent). Under LANG=C/POSIX (common for non-interactive spawned shells) Python decodes stdin
+      as ASCII; any Polish diacritic (ł = 0xc5 0x82) raises UnicodeDecodeError → uncaught crash → total silence,
+      no useful log. Same for the __main__ argv path.
+    location: "piper_stream.py:326 (sys.stdin.read()) vs _speak.py:1004 (input=audio_text.encode('utf-8'))"
+    evidence: "piper_stream.py:326 'text = sys.stdin.read().strip()' — no encoding; no PYTHONIOENCODING/LANG exported anywhere (grep)."
+    root_cause: "Asymmetric encoding contract: writer pins utf-8, reader trusts locale."
+    suggestion: "Read bytes explicitly: text = sys.stdin.buffer.read().decode('utf-8','replace').strip(); or export PYTHONIOENCODING=utf-8 when spawning piper_stream."
+    fix_group: robustness
+
+  - id: F24
+    severity: major
+    lens: [setup-and-daemon-paths]
+    origin_ids: [G1]
+    confidence: HIGH
+    is_new: true
+    title: "setup-shizuku.sh installs rish to $PREFIX/bin/rish but $PREFIX is UNSET on native PRoot → /bin/rish (fresh-provision break)"
+    item: >
+      RISH_BIN=\"$PREFIX/bin/rish\"; on native PRoot $PREFIX is empty (Termux-app env var), so the symlink/probe
+      target collapses to /bin/rish. _speak.py calls bare 'rish' (PATH). rish CURRENTLY works only because it was
+      placed manually earlier; a fresh native install would not reproduce it. Screen-unlock/mic probes silently fail.
+    location: "setup-shizuku.sh:16,52,58"
+    evidence: "setup-shizuku.sh:16 'RISH_BIN=\"$PREFIX/bin/rish\"'; verified PREFIX empty under native PRoot."
+    root_cause: "Path assumes Termux-app $PREFIX; native PRoot has none."
+    suggestion: "Resolve a writable PATH dir explicitly (first of $PREFIX/bin, /usr/local/bin, $HOME/.local/bin that is on $PATH; mkdir -p). Not currently live-breaking (rish already on PATH) but blocks reprovision."
+    fix_group: setup-provisioning
+
+  - id: F25
+    severity: major
+    lens: [setup-and-daemon-paths]
+    origin_ids: [G5]
+    confidence: HIGH
+    is_new: true
+    title: "setup-shizuku.sh smoke-tests mDreamingLockscreen but runtime now uses mWakefulness → install-time green check is meaningless"
+    item: >
+      The setup probe greps 'dumpsys window | grep -q mDreamingLockscreen' and prints '[OK] screen-lock detection',
+      but is_screen_unlocked() was migrated (commit 3883ee4) to 'dumpsys power | grep mWakefulness=' precisely because
+      mDreamingLockscreen was unreliable. Setup validates a signal the code no longer uses.
+    location: "setup-shizuku.sh:73 vs _speak.py:317-318"
+    evidence: "setup-shizuku.sh:73 'dumpsys window | grep -q mDreamingLockscreen'; _speak.py:317 'dumpsys power | grep -m1 mWakefulness='."
+    root_cause: "Setup script not updated when the unlock signal changed."
+    suggestion: "Change the setup probe to 'dumpsys power | grep -q mWakefulness='."
+    fix_group: setup-provisioning
+
+  - id: F26
+    severity: major
+    lens: [text-processing-synth-edge]
+    origin_ids: [T1]
+    confidence: HIGH
+    is_new: true
+    title: "Unclosed/odd-count fenced code block leaks raw code + backticks into speech"
+    item: >
+      strip_markdown uses r'```.*?```' (DOTALL) which only removes PAIRED fences. A truncated/unterminated
+      fence (Claude streaming cut off, or MAX_SPOKEN truncation severs the closing fence) leaves the code body
+      + literal backticks to be read aloud verbatim.
+    location: "_speak.py:689"
+    evidence: "_speak.py:689 't = re.sub(r\"```.*?```\", \" \", t, flags=re.DOTALL)'; 'Oto kod:\\n```python\\nprint(...)\\nbrak' → code + backticks spoken."
+    root_cause: "Non-greedy pair matcher has no fallback for an unterminated fence."
+    suggestion: "After the paired pass, strip a dangling fence: t = re.sub(r'```.*$',' ',t,flags=re.DOTALL)."
+    fix_group: text-sanitization
+
+  # ── ITERATION-2 minor findings ──
+  - id: F27
+    severity: minor
+    lens: [fix-surface-completeness]
+    origin_ids: [K4]
+    confidence: HIGH
+    is_new: true
+    title: "_resolve_voice_typer_flag duplicated verbatim in _speak.py:76 and piper_stream.py:48 (DRY hazard for the BUG-A fix)"
+    item: "Logic-identical copies (no drift today). The BUG-A voice-typer-path fix MUST edit both or they diverge."
+    location: "_speak.py:76-91 ; piper_stream.py:48-61"
+    evidence: "Both: rel='storage/downloads/Termux-flags/voice-typer-recording.flag', same home tuple + fallback; only docstrings differ."
+    root_cause: "Copy-paste instead of a shared import."
+    suggestion: "Edit both in lockstep, or extract to one module imported by both. Flag for the fixer."
+    fix_group: mic-detection
+
+  - id: F28
+    severity: minor
+    lens: [text-processing-synth-edge]
+    origin_ids: [T2]
+    confidence: HIGH
+    is_new: true
+    title: "Emphasis regex eats arithmetic/glob stars (a*b*c → abc, 2*3*4 → 234)"
+    location: "_speak.py:691-692"
+    evidence: "_speak.py:691 're.sub(r\"\\*([^*]+)\\*\", r\"\\1\", t)' fuses 'a*b*c'→'abc'."
+    root_cause: "Emphasis stripping treats every '*…*' as italic; multiplication/globs collide."
+    suggestion: "Require markers to hug non-space, or strip lone '*' to space."
+    fix_group: text-sanitization
+
+  - id: F29
+    severity: minor
+    lens: [text-processing-synth-edge]
+    origin_ids: [T4]
+    confidence: HIGH
+    is_new: true
+    title: "_project_label rsplit('-',1) truncates hyphenated repo name (KFG-Addons announced as 'Addons')"
+    location: "_speak.py:752-754"
+    evidence: "_speak.py:753 'return parent.rstrip(\"-\").rsplit(\"-\",1)[-1]' → '-root-projekty-KFG-Addons' yields 'Addons'."
+    root_cause: "Claude-encoded dir replaces separators AND internal dashes with '-'; last-segment heuristic can't recover hyphenated leaf."
+    suggestion: "Prefer always passing cwd, or store the real label at UPS time instead of decoding the dir."
+    fix_group: text-sanitization
+
+  - id: F30
+    severity: minor
+    lens: [text-processing-synth-edge]
+    origin_ids: [T5]
+    confidence: HIGH
+    is_new: true
+    title: "Degenerate-but-nonempty speakable (bullets '. . .', '---', emoji, table pipes) synthesized as noise"
+    location: "_speak.py:937-943 (guard) + 685-699 (strip_markdown)"
+    evidence: "strip_markdown('- \\n- \\n- ')=='. . .'; '---' survives; '| a | b |' pipes survive; emoji kept. Only guard is 'if not speakable'."
+    root_cause: "Sanitizer is emphasis-focused; no table/HR/emoji handling, no 'has alphanumeric' gate."
+    suggestion: "Strip pipes/HR/emoji and gate synth on 'contains alphanumeric'."
+    fix_group: text-sanitization
+
+  - id: F31
+    severity: minor
+    lens: [text-processing-synth-edge]
+    origin_ids: [T6]
+    confidence: MEDIUM
+    is_new: true
+    title: "Newline normalization diverges: daemon path collapses \\n, one-shot path does not"
+    location: "piper_server.py:190 vs piper_stream.py:181"
+    evidence: "server: 'text.replace(\"\\n\",\" \")'; one_shot: input=text.encode('utf-8') (raw \\n). Latent after strip_markdown, but speak_raw can be called with un-stripped text."
+    root_cause: "Two synth paths normalize input differently."
+    suggestion: "Normalize newlines identically in both (or once in _speak.py before handoff)."
+    fix_group: robustness
+
+  - id: F32
+    severity: minor
+    lens: [fix-surface-completeness]
+    origin_ids: [K2]
+    confidence: HIGH
+    is_new: true
+    title: "install.sh preserves ON/OFF via the GLOBAL czytaj.flag (WAS_ON) → preserves the wrong thing under per-project"
+    location: "install.sh:107,113-117"
+    evidence: "install.sh:107 '[ -f \"$HOME/.claude/czytaj.flag\" ] && WAS_ON=1'; :116 'rm -f \"$HOME/.claude/czytaj.flag\"'."
+    root_cause: "Reinstall-state logic keyed to the global flag."
+    suggestion: "Either drop WAS_ON (new project starts OFF per doc) or preserve the czytaj-flags/ dir across reinstall."
+    fix_group: per-project-flag
+
+  - id: F33
+    severity: minor
+    lens: [daemon-lifecycle-process-mgmt]
+    origin_ids: [L4]
+    confidence: MEDIUM
+    is_new: true
+    title: "Detached TTS child: no guaranteed reaper under PRoot + communicate(timeout) leaves child handle/fds unclosed"
+    location: "_speak.py:991-1013"
+    evidence: "_speak.py:1004 'proc.communicate(input=…, timeout=2)'; except TimeoutExpired: pass — no proc.wait()/poll(), no stdin.close(); returns 0."
+    root_cause: "Fire-and-forget detached child relies on OS reaping not guaranteed under PRoot."
+    suggestion: "Close proc.stdin explicitly; either set parent as subreaper or have piper_stream double-fork (daemonize) so it isn't the hook's child."
+    fix_group: process-mgmt
+
+  - id: F34
+    severity: minor
+    lens: [daemon-lifecycle-process-mgmt]
+    origin_ids: [L6]
+    confidence: MEDIUM
+    is_new: true
+    title: "Temp-wav cleanup defeated by SIGKILL teardown; one-shot CLI mkstemp never cleaned"
+    location: "piper_server.py:428 (no cleanup) ; piper_stream.py:417-430 (finally skipped on SIGKILL) ; :99-103 (staged tone never removed)"
+    evidence: "piper_server.py:428 'mkstemp(suffix=\".wav\")' printed, never unlinked; F21's pkill -9 bypasses the finally unlink."
+    root_cause: "SIGKILL (F21) defeats finally-based cleanup; __main__ path has none."
+    suggestion: "Use SIGTERM for piper_stream so finally runs; clean the one-shot mkstemp; optionally prune old *.wav in scratch dir on startup."
+    fix_group: process-mgmt
+
+  - id: F35
+    severity: minor
+    lens: [setup-and-daemon-paths]
+    origin_ids: [G3]
+    confidence: HIGH
+    is_new: true
+    title: "setup-adb-pairing.sh hardcodes /tmp/adb-*.log (not writable on Termux-app target) → failure-branch cat shows nothing"
+    location: "setup-adb-pairing.sh:66,70,99,103"
+    evidence: "'tee /tmp/adb-pair.log', 'cat /tmp/adb-pair.log'."
+    root_cause: "Assumes a writable /tmp; Termux-app /tmp is not writable."
+    suggestion: "Use LOG=\"${TMPDIR:-$HOME/.cache}/adb-pair.log\"."
+    fix_group: setup-provisioning
+
+  - id: F36
+    severity: minor
+    lens: [setup-and-daemon-paths]
+    origin_ids: [G4]
+    confidence: HIGH
+    is_new: true
+    title: "Generated adb-connect.sh + rish-wrapper.sh live in the install-managed hook dir but are untracked/outside install.sh allowlist"
+    location: "setup-adb-pairing.sh:134-141 ; setup-shizuku.sh:44-49 ; install.sh:84-90 (allowlist)"
+    evidence: "install.sh uses an explicit allowlist ('clean snapshot'); generated artifacts are neither installed nor protected."
+    root_cause: "Runtime-generated artifacts in a dir install.sh treats as a managed snapshot."
+    suggestion: "Generate runtime artifacts outside the managed hook dir (e.g. ~/.claude/czytaj-runtime/), or document them."
+    fix_group: setup-provisioning
+
+  - id: F37
+    severity: minor
+    lens: [setup-and-daemon-paths]
+    origin_ids: [G6]
+    confidence: MEDIUM
+    is_new: true
+    title: "Generated wrappers carry Termux-app shebang #!/data/data/com.termux/files/usr/bin/bash (mode 0700) — fragile on native"
+    location: "setup-shizuku.sh:45-47 ; setup-adb-pairing.sh:136"
+    evidence: "rish-wrapper '#!/data/data/com.termux/files/usr/bin/bash'; that bash is -rwx------ root."
+    root_cause: "Hardcoded Termux-app interpreter in generated wrappers."
+    suggestion: "Use '#!/usr/bin/env bash'."
+    fix_group: setup-provisioning
+
+  - id: F38
+    severity: minor
+    lens: [hook-entry-lifecycle, fix-surface-completeness]
+    origin_ids: [E3, K6]
+    confidence: HIGH
+    is_new: true
+    title: "addon.json targets omit the skill (and pauza), but install.sh copies them → manifest/installer disagree; two overlapping activation entrypoints"
+    location: "addon.json:12-15 ; install.sh:97-101,140-166 ; SKILL.md:9 ; commands/czytaj.md:6"
+    evidence: "addon.json targets list only czytaj.md + hooks/czytaj/ (no skills key, no pauza); install.sh:98 copies SKILL.md anyway."
+    root_cause: "Manifest not kept in sync with install.sh; skill + /czytaj command both call toggle.sh."
+    suggestion: "Add skills/ + pauza to addon.json targets, or document install.sh as the real deployer; pick one activation SSOT."
+    fix_group: deploy-hygiene
+
+  - id: F39
+    severity: minor
+    lens: [fix-surface-completeness]
+    origin_ids: [K5]
+    confidence: HIGH
+    is_new: true
+    title: "Docs (SKILL.md, czytaj.md, pauza.md, README) describe the GLOBAL toggle model — will diverge from per-project hooks"
+    location: "SKILL.md:9 ; commands/czytaj.md:6 ; commands/pauza.md:6 ; README.md:14"
+    evidence: "README.md:14 references czytaj.flag; SKILL.md:9 plain ON/OFF via toggle.sh."
+    root_cause: "Docs written for the global model."
+    suggestion: "After per-project lands, update wording to 'mode is per-project (each project toggles independently)'."
+    fix_group: docs
+
+  - id: F40
+    severity: minor
+    lens: [fix-surface-completeness]
+    origin_ids: [K7]
+    confidence: HIGH
+    is_new: true
+    title: "pauza uses a disjoint GLOBAL pause flag (~/.claude/czytaj-pause.flag) → pause stays global while reading goes per-project (semantic mismatch)"
+    location: "commands/pauza.md:6 ; _speak.py:184-206 (is_paused_by_user reads PAUSE_FLAG) + :492 (consumer)"   # corrected iter3 (was :187,479 = docstrings)
+    evidence: "pauza.md:6 writes/reads ~/.claude/czytaj-pause.flag unconditionally; czytaj per-project uses czytaj-flags/<sha1>.flag — disjoint key spaces."
+    root_cause: "pauza predates per-project model."
+    suggestion: "Per D-PAUSE: keep global (recommended — one physical speaker) OR extend pauza + is_paused_by_user to the same sha1 key. If kept global, F4 OFF-teardown must also clear a stale pause flag or it silences the next per-project ON."
+    fix_group: per-project-flag
+    needs_user_decision: D-PAUSE
+
+  - id: F41
+    severity: minor
+    lens: [hook-entry-lifecycle]
+    origin_ids: [E4]
+    confidence: MEDIUM
+    is_new: true
+    title: "Tool-only/empty-text turns ('all-tool-only') not in retry early-return → each PreToolUse fire burns the full 1.5s backoff"
+    location: "_speak.py:650-652 (all-tool-only) + :673 (early-return set excludes it)"
+    evidence: "_speak.py:651 'return last_uuid, \"\", \"all-tool-only\"'; :673 'if text or reason in (\"no-transcript\",\"no-user-msg\"):' — all-tool-only falls through to time.sleep(delays[attempt])."
+    root_cause: "Retry guard treats terminal tool-only state as a transient fsync race worth waiting for."
+    suggestion: "Add 'all-tool-only' to early-return when the assistant uuid is already populated; keep retry only when uuid=='' (true fsync race)."
+    fix_group: robustness
+
+  # ══════════ ITERATION 3 — deep internals + security + critic findings ══════════
+  - id: F42
+    severity: major
+    lens: [deep-untraced-_speak, security-injection]
+    origin_ids: [D3-1, SEC-2]
+    confidence: HIGH
+    is_new: true
+    title: "_run_shell ADB-fallback uses shell_cmd.split() → shatters piped dumpsys probes (screen/mic/media broken on ADB path)"
+    item: >
+      The rish path passes the command as ONE string (works); the ADB-shell fallback does prefix + shell_cmd.split(),
+      which word-splits 'dumpsys power | grep -m1 mWakefulness=' into broken argv tokens ('|','grep',… become separate
+      args). So every Shizuku/ADB probe (screen-unlock, mic, media) is malformed on the ADB transport. Not exploitable
+      (the string is a trusted constant) but the probes silently degrade (fail-open) on that path.
+    location: "_speak.py:279-282"
+    evidence: "_speak.py:280 'if prefix[0]==\"rish\": cmd = prefix + [shell_cmd]' else ':282 cmd = prefix + shell_cmd.split()'."
+    root_cause: "Two transports handle shell metacharacters inconsistently; adb branch assumes the remote shell re-joins+re-parses split tokens (implementation-defined)."
+    suggestion: "For the adb branch also pass one arg: cmd = prefix + [shell_cmd] (adb shell joins+runs in a remote shell), matching rish; add a comment that shell_cmd is a trusted constant."
+    fix_group: robustness
+
+  - id: F43
+    severity: major
+    lens: [deep-untraced-_speak]
+    origin_ids: [D3-2]
+    confidence: HIGH
+    is_new: true
+    title: "_kill_audio_chain() runs BEFORE the final abort gate → previous audio killed then we bail = dead air"
+    item: >
+      In speak_new_text the kill_previous path calls _kill_audio_chain() at :945, THEN the abort gate
+      (wait_for_recording_grace / is_in_call / not is_active) at :948 can return 0. If a recording flag appears in the
+      grace window, or /czytaj was toggled off between the early is_active() (:854) and here, the previous turn's audio
+      is already pkilled but nothing new plays → the active utterance is cut off into silence.
+    location: "_speak.py:945-949"
+    evidence: "_speak.py:945 'if kill_previous: _kill_audio_chain()' then :948 'if wait_for_recording_grace() or is_in_call() or not is_active(): return 0'."
+    root_cause: "Destructive kill precedes the late re-check; killing should only happen once committed to speaking."
+    suggestion: "Move _kill_audio_chain() to AFTER the abort gate (re-check recording/in-call/is_active first, then kill, then claim ledger + play)."
+    fix_group: channel-lock
+
+  - id: F44
+    severity: major
+    lens: [security-injection]
+    origin_ids: [SEC-1]
+    confidence: HIGH
+    is_new: true
+    title: "setup-adb-pairing.sh tees pairing/connect output to world-readable /tmp logs that are never deleted (+ uses forbidden /tmp)"
+    item: >
+      'adb pair'/'adb connect' output is tee'd to /tmp/adb-pair.log + /tmp/adb-connect.log with default umask, no chmod,
+      no cleanup. /tmp is multi-user/Android-shared AND (per env rule) not the correct tmp dir here. Pairing-attempt detail
+      persists world-readable.
+    location: "setup-adb-pairing.sh:66,70,99,103"
+    evidence: "setup-adb-pairing.sh:66 'adb pair … | tee /tmp/adb-pair.log | grep -q …'; :70/:103 'cat /tmp/adb-*.log'; no rm/chmod/mktemp (grep)."
+    root_cause: "Debug logging to a shared, persistent, world-readable path with no cleanup or perms hardening."
+    suggestion: "Write to mktemp under \"${TMPDIR:-$PREFIX/tmp}\" with umask 077 / chmod 600 and rm -f on EXIT (trap). Stop persisting to /tmp."
+    fix_group: setup-provisioning
+
+  # ── ITERATION-3 minor (deep _speak.py internals + completeness gaps) ──
+  - id: F45
+    severity: minor
+    lens: [deep-untraced-_speak]
+    origin_ids: [D3-3]
+    confidence: MEDIUM
+    is_new: true
+    title: "State load/save is not a single-lock RMW (lost-update) + save_state docstring overclaims the guarantee"
+    item: "load_state (shared lock, read) and save_state (exclusive lock, write) are separate critical sections; concurrent PreToolUse+Stop both read old state, last write wins. SPEAK_LOCK mitigates in practice, but save_state's docstring claims 'can't lose updates' which is false (it guarantees torn-write protection only)."
+    location: "_speak.py:530-547 (load) + 549-586 (save); SPEAK_LOCK at :892 is the real serializer"
+    evidence: "save_state docstring: 'concurrent PreToolUse + Stop hooks can't lose updates' — lock spans only the write."
+    root_cause: "Write-atomicity conflated with read-modify-write serialization."
+    suggestion: "Fix the docstring to state the guarantee (torn-write protection; lost-update prevention relies on SPEAK_LOCK), or do a single load-modify-save under one exclusive lock."
+    fix_group: robustness
+
+  - id: F46
+    severity: minor
+    lens: [deep-untraced-_speak]
+    origin_ids: [D3-4]
+    confidence: HIGH
+    is_new: true
+    title: "Screen cache has no flock + truncate-then-write → torn read returns '' → treated as LOCKED → fails CLOSED (suppresses TTS)"
+    item: "_write_screen_cache opens 'w' (truncate) then writes 1 byte with no lock; a concurrent _read_screen_cache can read empty → v=='1' False → cached=False (locked) → is_screen_unlocked returns False → SKIP. Fails closed, contradicting the module's fail-open intent for screen probes."
+    location: "_speak.py:236-258 (read 245-249, write 252-258); consumed 314-315"
+    evidence: "_speak.py:252-254 open(SCREEN_CACHE,'w'); reader :245-249 returns v=='1'."
+    root_cause: "Non-atomic cache file; reader treats empty as '0' (locked)."
+    suggestion: "Write atomically (tmp + os.replace) like ACTIVE_SESSION/LAST_FOLDER, or treat empty/short read as cache-miss (re-probe / fail open)."
+    fix_group: robustness
+
+  - id: F47
+    severity: minor
+    lens: [deep-untraced-_speak]
+    origin_ids: [D3-5]
+    confidence: HIGH
+    is_new: true
+    title: "load_state lacks isinstance(dict) guard → a valid non-dict JSON ([], number) → AttributeError → nonzero hook exit"
+    item: "json.load on a syntactically valid non-dict payload doesn't raise ValueError, so it's returned as-is; state.get(...) then raises AttributeError → uncaught → hook exits nonzero. _ledger_claim DOES guard with isinstance; load_state does not."
+    location: "_speak.py:530-547 (no dict check) ; crash site ~:919"
+    evidence: "_speak.py 'return json.load(f)' with 'except (OSError, ValueError)' only; consumer state.get('spoken_text',…)."
+    root_cause: "Only OSError/ValueError caught; a JSON array parses cleanly and propagates."
+    suggestion: "data = json.load(f); return data if isinstance(data, dict) else {'last_uuid':'','spoken_text':''}. (Pairs with F22 main()-wrap.)"
+    fix_group: robustness
+
+  - id: F48
+    severity: minor
+    lens: [deep-untraced-_speak]
+    origin_ids: [D3-6, D3-7]
+    confidence: HIGH
+    is_new: true
+    title: "Probe cache TTL doc/behavior drift (docstrings say 1s/1.5s, code uses 5.0s) + _enabled_ime_packages fail-mode → over-suppression"
+    item: >
+      is_mic_recording_global docstring says 'Cached for 1s', is_external_media_playing 'Cached for 1.5s', but both use
+      PROBE_CACHE_TTL_S=5.0 → mic/media state stale up to 5s (a just-ended call can suppress TTS ~5s; a just-started
+      recording unseen ~5s). Separately _enabled_ime_packages returns the (possibly empty) cache on 'ime list' failure →
+      empty ime set → IMEs NOT excluded → is_mic_recording_global may report recording=True → permanent SKIP; and the
+      'and cached' guard forces an ime-list subprocess on every mic probe when the cache is empty.
+    location: "_speak.py:29 (=5.0), 366/371 (mic), 410/415 (media), 332-354 (ime cache)"
+    evidence: "PROBE_CACHE_TTL_S=5.0; docstrings '1s'/'1.5s'; _enabled_ime_packages ':340 'and cached'', :344-346 'if not ok: return cached'."
+    root_cause: "Per-function docstrings predate the unified 5.0s constant; empty-frozenset is both 'unknown' and 'known-empty' sentinel; ime-list failure fails CLOSED (over-suppress)."
+    suggestion: "Lower/split the TTL and fix docstrings; use a None sentinel for 'unknown' ime set and fail OPEN (treat mic as not-recording) on ime-list failure, consistent with the rest of the probe's fail-open intent."
+    fix_group: mic-detection
+
+  - id: F49
+    severity: minor
+    lens: [completeness-critic]
+    origin_ids: [CC-1]
+    confidence: HIGH
+    is_new: true
+    title: "install.sh wipes ~/.claude/czytaj-pause.flag on EVERY reinstall → silently cancels an active user pause"
+    item: "install.sh:108 unconditionally 'rm -f … czytaj-pause.flag' (the pause-flag analogue of the WAS_ON bug the reinstall block was written to avoid). A driving user who ran /pauza loses their pause on reinstall → TTS resumes unexpectedly."
+    location: "install.sh:108"
+    evidence: "install.sh:108 'rm -f \"$HOME/.claude/czytaj-state.json\" \"$HOME/.claude/czytaj-pause.flag\"' — no preservation, unlike czytaj.flag WAS_ON."
+    root_cause: "Reinstall cleanup wipes the pause flag without WAS_ON-style preservation."
+    suggestion: "Preserve czytaj-pause.flag across reinstall (mirror WAS_ON) or document that reinstall clears any pause."
+    fix_group: deploy-hygiene
+
+  - id: F50
+    severity: minor
+    lens: [completeness-critic]
+    origin_ids: [CC-2]
+    confidence: HIGH
+    is_new: true
+    title: "install.sh has ZERO awareness of ~/.claude/czytaj-flags/ → per-project state neither preserved nor migrated on reinstall"
+    item: "grep czytaj-flags in install.sh → 0 hits. When per-project lands, a reinstall neither preserves per-project ON state nor cleans stale per-project flags; the WAS_ON probe (F32) keys only off the dead global flag."
+    location: "install.sh:104-117 (reinstall state block; czytaj-flags/ never referenced)"
+    evidence: "install.sh only probes/removes ~/.claude/czytaj.flag (global)."
+    root_cause: "Reinstall logic predates per-project model."
+    suggestion: "Fold into per-project-flag: on reinstall preserve (or intentionally clear) ~/.claude/czytaj-flags/*; retire the global WAS_ON probe once the global flag is gone (with F1/F15/F32)."
+    fix_group: per-project-flag
+    needs_user_decision: D-BASELINE
+
+# ── Verified NON-bugs (record so /petla solve does not 're-fix' working code) ──
+verified_clean:
+  - "Ledger flock RMW is correct: single fd, LOCK_EX spans read→prune→truncate→write, unlock+close in finally (concurrency)."
+  - "hashlib IS imported (_speak.py:9) → no NameError from _project_flag (sync); repo files py_compile OK; toggle.sh + user-prompt-submit.sh bash -n OK."
+  - "installed ~/.claude/hooks/czytaj/ == HEAD a27e132 for _speak.py & piper_stream.py (git show|diff) → the half-edit incoherence is NOT live yet; it is a 'breaks on deploy' risk (sync)."
+  - "wav header framerate written correctly = 22050 (piper_stream.py:200-203) → tempo regression is NOT a sample-rate-header problem (audio)."
+  - "_pulse_available() correctly routes to termux-media-player on native every time; no silent-paplay path (audio)."
+  - "is_screen_unlocked() parses mWakefulness=Awake and fails OPEN when Shizuku/ADB unavailable, as intended (audio)."
+  - "piper binary auto-detect returns only an existing binary; LD_LIBRARY_PATH/ESPEAK_DATA_PATH derived from resolved PIPER_HOME (path/audio). Only risk: user-set bad $PIPER_HOME (trusted unconditionally)."
+  - "sha1 parity bash↔python VERIFIED MATCH: printf '%s' \"$(realpath D)\" | sha1sum == hashlib.sha1(os.path.realpath(D).encode()) → 9bef3e9… Both. The fix must use printf '%s' (NOT echo — newline breaks parity)."
+  - "Voice-Typer half-edit tempfile cleanup: no leak — main() finally unlinks the wav even on interrupt break (audio R2)."
+
+iterations:
+  - number: 1
+    timestamp: "2026-05-31"
+    new_issues_found: 17   # canonical (deduped from ~30 raw lens items)
+    consensus: "dirty (all 5 lenses issues_found)"
+    coverage_note: "All 7 target_files examined by ≥3 lenses each → 100% coverage in iter 1."
+    verdicts:
+      - {lens: flag-coherence, status: issues_found, files_examined: ["_speak.py","toggle.sh","stop.py","pre-tool-use.py","user-prompt-submit.sh","SKILL.md"]}
+      - {lens: path-resolution, status: issues_found, files_examined: ["_speak.py","piper_stream.py","piper_server.py","user-prompt-submit.sh","toggle.sh"]}
+      - {lens: concurrency, status: issues_found, files_examined: ["_speak.py","piper_stream.py","piper_server.py","stop.py","pre-tool-use.py","user-prompt-submit.sh"]}
+      - {lens: repo-installed-sync, status: issues_found, files_examined: ["_speak.py","piper_stream.py","toggle.sh","user-prompt-submit.sh","stop.py","pre-tool-use.py","installed/_speak.py","installed/piper_stream.py","installed/toggle.sh"]}
+      - {lens: audio-runtime, status: issues_found, files_examined: ["piper_stream.py","_speak.py","piper_server.py"]}
+    issues: [F1,F2,F3,F4,F5,F6,F7,F8,F9,F10,F11,F12,F13,F14,F15,F16,F17]
+  - number: 2
+    timestamp: "2026-05-31"
+    new_issues_found: 24   # canonical, deduped; cross-lens dups merged (E1≡K1→F18, G2≡L1→F19)
+    consensus: "dirty (all 5 lenses issues_found) — NEW SURFACE, not random sampling"
+    angle: "deliberately targeted iter-1 blind spots: setup scripts, daemon lifecycle, install/manifest, hook wrappers, text/synth pipeline, whole-tree completeness"
+    discovery_rate_note: "24/17 ≈ 1.4 — high, but EXPECTED: iter 2 covered code iter 1 never read (setup-*.sh, install.sh, addon.json, docs, text sanitizer). NOT the 'unbounded/sampling' failure mode."
+    expansions: "K3→F5 (CLAUDE_PROJECT_DIR absent), E5→F6 (active-session marker never renewed/empty-tid), L5→F7 (preheat-path untargeted stop)"
+    verdicts:
+      - {lens: hook-entry-lifecycle, status: issues_found, files_examined: ["stop.py","pre-tool-use.py","stop.sh","pre-tool-use.sh","user-prompt-submit.sh","toggle.sh","_speak.py","SKILL.md","addon.json","install.sh","commands/czytaj.md"]}
+      - {lens: setup-and-daemon-paths, status: issues_found, files_examined: ["setup-shizuku.sh","setup-adb-pairing.sh","piper_server.py","piper_stream.py","_speak.py","toggle.sh","user-prompt-submit.sh","install.sh"]}
+      - {lens: daemon-lifecycle-process-mgmt, status: issues_found, files_examined: ["piper_server.py","piper_stream.py","_speak.py","toggle.sh","user-prompt-submit.sh"]}
+      - {lens: fix-surface-completeness, status: issues_found, files_examined: ["pre-tool-use.sh","stop.sh","toggle.sh","user-prompt-submit.sh","_speak.py","piper_stream.py","install.sh","addon.json","SKILL.md","commands/czytaj.md","commands/pauza.md","README.md"]}
+      - {lens: text-processing-synth-edge, status: issues_found, files_examined: ["_speak.py","piper_stream.py","piper_server.py"]}
+    issues: [F18,F19,F20,F21,F22,F23,F24,F25,F26,F27,F28,F29,F30,F31,F32,F33,F34,F35,F36,F37,F38,F39,F40,F41]
+  - number: 3
+    timestamp: "2026-05-31"
+    new_issues_found: 9    # canonical code findings F42-F50 (SEC-2≡D3-1→F42 merged); critics also produced solve_directives + 2 refinements
+    consensus: "dirty (code) but discovery TAPERING: 17→24→9; iter-3 criticals were PLANNING hazards, not new code bugs"
+    discovery_rate_note: "9/24 ≈ 0.38 — below the 0.7 noise floor → convergence tail, NOT unbounded sampling."
+    angle: "deep-untraced _speak.py internals + security/injection sweep + 3 critics (fix-coherence, completeness, regression)"
+    coverage_proof: "completeness-critic enumerated all 17 source files, cross-checked vs iter1-2 FILES_EXAMINED → COVERAGE_GAPS: [] (100%). All 4 known bugs A/B/C/D captured with root cause + fix surface."
+    refinements: "F8 major→minor (install.sh:93 already chmods); F40 location corrected (:184-206,:492) + decision D-BASELINE→D-PAUSE"
+    verdicts:
+      - {lens: deep-untraced-_speak, status: issues_found, files_examined: ["_speak.py (whole)","toggle.sh"]}
+      - {lens: security-injection, status: issues_found, files_examined: ["_speak.py","piper_stream.py","piper_server.py","setup-shizuku.sh","setup-adb-pairing.sh","toggle.sh","user-prompt-submit.sh"]}
+      - {lens: fix-coherence-critic, status: issues_found, note: "7 fix-coherence hazards → solve_directives (not code-bug ITEMs)"}
+      - {lens: completeness-critic, status: issues_found, coverage_gaps: [], note: "all 17 source files enumerated; 100% coverage"}
+      - {lens: regression-risk-critic, status: issues_found, note: "6 regression hazards → solve_directives + RISK_TABLE/SAFE_ORDER; verified installed==HEAD a27e132 is the working GLOBAL baseline"}
+    issues: [F42,F43,F44,F45,F46,F47,F48,F49,F50]
+
+# ════════════════════════════════════════════════════════════════════════════
+# SOLVE DIRECTIVES — distilled from the iter-3 critics (fix-coherence + regression).
+# READ THESE BEFORE /petla solve. They change HOW to fix, not WHAT is broken.
+# ════════════════════════════════════════════════════════════════════════════
+solve_directives:
+  baseline_is_GLOBAL_not_partial: "VERIFIED installed ~/.claude/hooks/czytaj/ == HEAD a27e132 is the COHERENT GLOBAL flag model (audibly working). Per-project is a from-SCRATCH rewrite across 6+ files, NOT 'finishing' a migration. Failure = 100% silent reading, NO error (py_compile/bash -n pass — the break is logical)."
+  D_BASELINE_revert_is_destructive: "The half-edit bundles THREE separable concerns: (1) per-project read-side [INCOHERENT=the bug], (2) _resolve_voice_typer_flag() path fix in BOTH _speak.py:76 AND piper_stream.py:48 [GOOD, drafted BUG-A path fix], (3) the piper_stream interrupt branch [GOOD]. 'git checkout' reverts ALL THREE. If reverting, FIRST extract (2)+(3) as their own commits, THEN revert only the per-project hunk. Treat the half-edit as 3 patches."
+  per_project_ONE_canonical_dir_source: "CRITICAL (FC-1): toggle.sh hashing ${CLAUDE_PROJECT_DIR:-$PWD} while hooks hash data['cwd'] does NOT match when the user cd's into a SUBDIR (parent vs subdir → different sha1 → silent miss again). Pick ONE source for BOTH sides — recommended: everyone resolves CLAUDE_PROJECT_DIR (hooks: os.environ.get('CLAUDE_PROJECT_DIR') or data['cwd']; is_active must PREFER it over os.getcwd())."
+  keep_the_sh_wrappers: "RR-2: the 3 .sh wrappers are the registered entrypoints (install.sh:140-142). Prefer F18 option-B: bash does only a cheap 'czytaj-flags/ non-empty?' existence gate (sha1 in ONE place=python); stop.py/pre-tool-use.py are the single keyed authority via is_active(canonical_dir). user-prompt-submit.sh has UNIQUE side-effects (mark_active_session, reset_state_atomic, client-kill) with NO .py equivalent — do NOT re-point settings.json to the .py."
+  printf_not_echo: "sha1 parity VERIFIED: printf '%s' \"$(realpath D)\" | sha1sum == hashlib.sha1(os.path.realpath(D).encode()) (9bef3e9…). 'echo' adds a newline → different hash. The fix MUST use printf '%s'."
+  channel_lock_lives_in_the_child: "FC-4/RR-3: SPEAK_LOCK is released before the detached piper_stream grandchild plays; only that child outlives the wav. The channel reservation must be ADVISORY STATE (end-ts + owner-tid + priority) checked at play-time INSIDE piper_stream, NOT an flock held across its blocking poll (that blocks the active pane or makes it self-skip). Pass an owner/priority token INTO piper_stream (today only text crosses on stdin). Background claims only if end-ts passed; active pane preempts via targeted SIGTERM (per F21) then claims. Auto-expire stale claims."
+  ordering_bug_A_after_channel_lock: "FC-5/RR-6: fixing BUG A (F10) ARMS the dormant untargeted 'termux-media-player stop' (F7) → channel-lock ownership (F3/F7) MUST land BEFORE/WITH F10. The IME-allowlist branch can regress to PERMANENT silence — prefer the flag-file path; if forced into allowlist, require idle→busy edge-detect + auto-clear."
+  tempo_prefer_tracked_vehicle: "FC-6/RR-5: deliver length-scale via a CLI flag in BOTH argv sites (piper_stream.py:181 AND piper_server.py daemon argv) — tracked, survives reinstall. Editing pl_PL-gosia-medium.onnx.json covers both paths+restart BUT is OUTSIDE install.sh's allowlist → reverts on reinstall (if used, ALSO add to install.sh). Confirm the exact flag via '<piper> --help' on-device. A stale daemon keeps the old value (F19/F20) → teardown must restart it."
+  unify_in_use_predicate: "FC-7: define ONE 'is czytaj in use' predicate = 'czytaj-flags/ non-empty' and route F4 OFF-teardown + F32/F50 install WAS_ON + the toggle daemon-kill through it (OFF in project A must not silence project B)."
+  per_fix_group_atomic_commits: "RR-4: NO automated audio test, and czytaj is NOT browser-testable (/petla smoke does NOT apply). One commit per fix_group, each revertible to a27e132. STOP for on-device user verification before/after each HIGH/MED group."
+  on_device_verification:
+    groups_needing_user_test: [per-project-flag, channel-lock, daemon-runtime, process-mgmt, tempo, mic-detection]
+    safe_to_ship_blind: [observability, robustness, text-sanitization, setup-provisioning, deploy-hygiene, docs]
+    per_project_min_check: "static: grep ZERO 'czytaj.flag' literals remain in the 4 .sh; all use printf '%s' (not echo); _speak.py:854/:948 pass cwd. parity: printf vs hashlib MATCH. on-device (USER): /czytaj in project A → flag file created AND audio audible next reply; project B without /czytaj stays SILENT; /czytaj OFF in A leaves a still-ON project reading."
+  recommended_safe_order: [observability, robustness, text-sanitization, deploy-hygiene, setup-provisioning, "per-project-flag (atomic + on-device gate)", channel-lock, process-mgmt, daemon-runtime, mic-detection, tempo, docs]
+
+summary:
+  total: 50
+  critical: 4
+  major: 17
+  minor: 29
+  confidence: "MEDIUM-HIGH"
+  confidence_rationale: >
+    NOT the strict petla 'converged HIGH' (needs 2 consecutive zero-discovery iters), but stronger than 'unbounded LOW':
+    (1) completeness-critic PROVED 100% file coverage (COVERAGE_GAPS: []) and all 4 known bugs captured;
+    (2) discovery tapering 17→24→9, iter-3 rate 0.38 (below 0.7 noise floor);
+    (3) iter-3 found NO new critical code bug — its criticals were fix-PLANNING hazards (now in solve_directives).
+    Residual: a 2300-line codebase always has more MINOR deep-internal items; a 4th iter would scrape minors, not change the fix plan.
+  by_fix_group:
+    per-project-flag: [F1,F2,F4,F5,F15,F18,F32,F40,F50]   # the big coherent change — complete-or-revert across 4 .sh + _speak.py + install.sh + pauza
+    channel-lock: [F3,F6,F7,F43]                        # cross-window playback arbitration (+ active-session priority)
+    daemon-runtime: [F19,F20]                           # RUN_DIR SSOT + locked spawn
+    process-mgmt: [F21,F33,F34]                         # targeted/SIGTERM kills, reaping, temp cleanup
+    tempo: [F9]                                         # BUG D length-scale
+    mic-detection: [F10,F12,F27,F48]                    # BUG A + native synth-abort + resolver DRY
+    path-safety: [F11]                                  # PRoot-invisible scratch fallback
+    robustness: [F14,F17,F22,F23,F31,F41,F42,F45,F46,F47]   # crashes, atomicity, encoding, ADB-split, backoff
+    text-sanitization: [F26,F28,F29,F30]                # speech-quality bugs
+    setup-provisioning: [F24,F25,F35,F36,F37,F44]       # fresh-install correctness + /tmp pairing log
+    deploy-hygiene: [F8,F16,F38,F49]                    # +x bit, stale pyc, manifest, reinstall pause-wipe
+    observability: [F13]                                # silent failures
+    docs: [F39]
