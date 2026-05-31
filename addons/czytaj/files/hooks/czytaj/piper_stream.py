@@ -56,6 +56,44 @@ PREHEAT_MARKER = Path(os.path.expanduser("~/.claude/czytaj-preheat.ts"))
 PREHEAT_VALID_S = 60
 
 
+def _audio_scratch_dir() -> Path:
+    """Directory for wavs that termux-media-player (the Android media app,
+    running OUTSIDE PRoot) can actually open. PRoot paths like /tmp and /root
+    are INVISIBLE to it — that was the silent-TTS bug on the native install:
+    piper wrote into a PRoot tempdir and the player got ENOENT. Stage audio
+    under the Termux-shared tree instead. Falls back to the system temp only
+    as a last resort (fine when paplay, which lives inside PRoot, is the
+    backend)."""
+    for d in (Path("/data/data/com.termux/files/home/.cache/czytaj"),
+              Path("/data/data/com.termux/files/usr/tmp")):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            probe = d / ".wtest"
+            probe.write_text("x")
+            probe.unlink()
+            return d
+        except OSError:
+            continue
+    return Path(tempfile.gettempdir())
+
+
+def _staged_tone() -> Path | None:
+    """The preheat/silence tone on a path the Android player can read. The
+    bundled wavs live inside PRoot (~/.claude/hooks/czytaj/), invisible to
+    termux-media-player, so copy once into the shared audio dir."""
+    src = PREHEAT_WAV if PREHEAT_WAV.is_file() else SILENT_WAV
+    if not src.is_file():
+        return None
+    try:
+        dst = _audio_scratch_dir() / src.name
+        if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+            import shutil
+            shutil.copy2(src, dst)
+        return dst
+    except OSError:
+        return src
+
+
 def unlock_audio_routing() -> None:
     """Spotify-style audio routing unlock for Android Auto / Bluetooth.
     Plays an audible ~0.8s 80Hz tone via termux-media-player to wake Android
@@ -68,8 +106,8 @@ def unlock_audio_routing() -> None:
             return
     except OSError:
         pass
-    tone = PREHEAT_WAV if PREHEAT_WAV.is_file() else SILENT_WAV
-    if not tone.is_file():
+    tone = _staged_tone()  # shared-readable copy; PRoot paths are invisible to the player
+    if tone is None or not tone.is_file():
         return
     try:
         subprocess.run(
@@ -344,12 +382,31 @@ def main() -> int:
 
         if not PIPER_BIN.exists():
             return 2
-        wav = Path(td) / "out.wav"
-        if synthesize_one_shot(text, wav):
-            unlock_audio_routing()
-            play_blocking(wav)
-            return 0
-        return 1
+        # paplay (inside PRoot) can read PRoot paths, so the fast tempdir is
+        # fine when pulse is up. termux-media-player (Android, outside PRoot)
+        # CANNOT — on the native path the wav must live in the Termux-shared
+        # tree or the player gets ENOENT and nothing is heard.
+        if pulse:
+            wav = Path(td) / "out.wav"
+            if synthesize_one_shot(text, wav):
+                unlock_audio_routing()
+                play_blocking(wav)
+                return 0
+            return 1
+        fd, name = tempfile.mkstemp(suffix=".wav", dir=str(_audio_scratch_dir()))
+        os.close(fd)
+        wav = Path(name)
+        try:
+            if synthesize_one_shot(text, wav):
+                unlock_audio_routing()
+                play_blocking(wav)  # blocks until done, then we delete
+                return 0
+            return 1
+        finally:
+            try:
+                wav.unlink()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
