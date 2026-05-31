@@ -990,9 +990,6 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
 
     speakable = _truncate_to_sentence(speakable, 2000)
 
-    if kill_previous:
-        _kill_audio_chain()
-
     if wait_for_recording_grace() or is_in_call() or not is_active(cwd):  # F2: per-project
         return 0
 
@@ -1024,6 +1021,13 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     _log("SPEAK", caller, "label=", label or "-", "len=", len(audio_text),
          "first40=", repr(audio_text[:40]))
 
+    # F43: kill stale audio ONLY now — we're committed to playing (past the abort
+    # gate + ledger claim). Killing before the gate then bailing left dead air.
+    # (Only active panes reach here with kill_previous=True; background panes have
+    # kill_previous=False, so they never preempt the active one.)
+    if kill_previous:
+        _kill_audio_chain()
+
     preheat_audio()
 
     # Piper is the only supported engine. termux-tts-speak fallback was
@@ -1036,6 +1040,12 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
              "stream=", os.path.isfile(PIPER_STREAM))
         return 0
 
+    # F3/F6: hand the owner-id + priority to piper_stream so it can arbitrate the
+    # shared single Android player (active preempts; background yields). Derived
+    # from kill_previous: active panes keep kill_previous=True, background=False.
+    child_env = dict(os.environ)
+    child_env["CZYTAJ_TID"] = os.path.basename(transcript_path or "") or "pane"
+    child_env["CZYTAJ_PRIORITY"] = "active" if kill_previous else "background"
     try:
         proc = subprocess.Popen(
             [sys.executable or "python3", PIPER_STREAM],
@@ -1043,6 +1053,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
+            env=child_env,
         )
     except (FileNotFoundError, OSError) as e:
         _log("ENGINE", "spawn-fail", repr(e))

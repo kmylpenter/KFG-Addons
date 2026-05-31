@@ -328,6 +328,66 @@ def _log(*parts: object) -> None:
         pass
 
 
+# ── F3/F6/F7: cross-window channel reservation (native single-player only) ──
+# The native route shares ONE Android MediaPlayer across all windows, so a
+# background pane's `play` would cut off the active pane. This advisory state
+# (NOT a held lock — see audit RR-3) lets the active pane have priority and a
+# background pane yield while the channel is busy. FAIL-OPEN: any uncertainty
+# resolves to "play", so the worst case is the old behaviour, never silence.
+CHANNEL_FILE = os.path.expanduser("~/.claude/czytaj-channel")
+CHANNEL_STALE_S = 30.0  # a claim older than this is ignored (crashed/killed owner)
+
+
+def _read_channel():
+    """(end_ts, owner, priority, claim_ts) or None. None on any error (fail-open)."""
+    try:
+        with open(CHANNEL_FILE) as f:
+            p = f.read().split()
+        return float(p[0]), p[1], p[2], float(p[3])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _write_channel(end_ts: float, owner: str, priority: str) -> None:
+    tmp = CHANNEL_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(f"{end_ts} {owner or 'pane'} {priority} {time.time()}")
+        os.replace(tmp, CHANNEL_FILE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _reserve_channel_or_skip(wav: Path) -> bool:
+    """True → play (and claim the channel); False → yield (background pane while the
+    active pane is mid-utterance). FAIL-OPEN everywhere: missing env / unreadable
+    channel / parse error → True."""
+    owner = os.environ.get("CZYTAJ_TID", "") or "pane"
+    prio = os.environ.get("CZYTAJ_PRIORITY", "active")  # unset → active → play
+    try:
+        dur = _wav_duration_s(wav)
+    except Exception:
+        dur = 0.0
+    end_ts = time.time() + (dur if dur > 0 else 8.0) + 1.0
+    if prio != "background":          # active pane: priority — claim + play
+        _write_channel(end_ts, owner, "active")
+        return True
+    ch = _read_channel()
+    now = time.time()
+    if ch is None:                    # channel free
+        _write_channel(end_ts, owner, "background")
+        return True
+    c_end, c_owner, _c_prio, c_claim = ch
+    if c_owner == owner or now >= c_end or (now - c_claim) > CHANNEL_STALE_S:
+        _write_channel(end_ts, owner, "background")  # mine / expired / stale → free
+        return True
+    _log("CHANNEL", "yield-busy owner=", c_owner)   # active pane is talking → yield
+    return False
+
+
 def main() -> int:
     # F23: decode stdin explicitly as UTF-8 (the writer pins utf-8). sys.stdin.read()
     # uses the process locale and crashes on Polish diacritics under LANG=C/POSIX.
@@ -428,6 +488,12 @@ def main() -> int:
         wav = Path(name)
         try:
             if synthesize_one_shot(text, wav):
+                # F3/F6/F7: yield the shared player to the active pane BEFORE any
+                # player interaction (so a yielding background pane never issues
+                # the unlock/stop that would clip the active pane).
+                if not _reserve_channel_or_skip(wav):
+                    _log("EXIT channel-yield")
+                    return 0
                 unlock_audio_routing()
                 play_blocking(wav)  # blocks until done, then we delete
                 return 0
