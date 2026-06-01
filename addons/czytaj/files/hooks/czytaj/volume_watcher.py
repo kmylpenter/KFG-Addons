@@ -165,6 +165,39 @@ def _media(cmd: str) -> None:
         pass
 
 
+# Keep the CPU awake while reading mode is ON. The Shizuku key-reader FREEZES when
+# the device dozes (a slept CPU delivers no dd events) — that was every "I pressed
+# and nothing happened" after a quiet spell or a pause. A partial wakelock, held by
+# main() for as long as ANY project has reading on, stops the doze so every press
+# reaches us; released when all reading is off (battery back to normal, on-demand
+# keys still work best-effort). Tracked so we never spawn a redundant lock/unlock.
+_wake_held = False
+
+
+def _wake_lock() -> None:
+    global _wake_held
+    if _wake_held:
+        return
+    try:
+        subprocess.run(["termux-wake-lock"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        _wake_held = True
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+
+
+def _wake_unlock() -> None:
+    global _wake_held
+    if not _wake_held:
+        return
+    _wake_held = False
+    try:
+        subprocess.run(["termux-wake-unlock"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+
+
 def _toggle_pause() -> None:
     """VolumeDown: pause the current TTS at its position, or resume if paused —
     media-player style. Uses a local state flag (no slow status query) for snappy
@@ -234,9 +267,12 @@ def _stream(device: str) -> None:
                     continue  # release / autorepeat / non-key
                 if code not in (KEY_VOLUMEDOWN, KEY_VOLUMEUP):
                     continue
-                if not (_reading_on() and _termux_foreground()):
-                    continue  # reading OFF, or Termux not the focused app → leave the
-                    #            volume keys to their normal job (no stray re-read)
+                if not _termux_foreground():
+                    continue  # Termux not the focused app → leave the volume keys to
+                    #            their normal job. The keys are a GLOBAL remote now,
+                    #            independent of czytaj on/off (czytaj on/off gates only
+                    #            AUTO-reading); on-demand read-back/pause work any time
+                    #            you're in the terminal, whether reading mode is on or off.
                 now = time.monotonic()
                 if now - last_fire.get(code, 0.0) < DEBOUNCE_S:
                     continue
@@ -262,6 +298,13 @@ def main() -> int:
     device = ""
     try:
         while True:
+            # Reliable delivery: hold a CPU wakelock while any project is reading so
+            # the device can't doze and freeze the Shizuku key-reader. Re-evaluated
+            # each loop so it follows a czytaj on→off toggle within a cycle.
+            if _reading_on():
+                _wake_lock()
+            else:
+                _wake_unlock()
             if not _shizuku_ready():
                 time.sleep(IDLE_RECHECK_S)
                 continue
@@ -276,6 +319,7 @@ def main() -> int:
                 device = ""
             time.sleep(RESPAWN_DELAY_S)
     finally:
+        _wake_unlock()  # never leave the CPU pinned awake after the watcher stops
         _log("VOLKEY", "watcher exit")
         try:
             os.close(lock_fd)

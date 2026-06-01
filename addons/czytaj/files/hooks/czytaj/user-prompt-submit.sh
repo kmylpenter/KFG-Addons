@@ -6,6 +6,17 @@
 LOG="$HOME/.claude/czytaj.log"
 echo "$(date +%H:%M:%S) pid=$$ UPS-FIRED" >> "$LOG" 2>/dev/null
 
+# GLOBAL-KEYS: ensure the volume-key watcher is running REGARDLESS of czytaj on/off
+# — the keys are an always-on remote (read-back / pause), so they must survive even
+# when reading mode is off. Self-healing (respawns a watcher that died after doze /
+# reboot) and cheap: the pgrep guard only spawns when absent, and the watcher's own
+# single-instance flock makes any redundant spawn a no-op. MUST sit ABOVE the
+# czytaj-flag early-exit below, or it would never run while reading is off.
+if ! pgrep -f '[v]olume_watcher\.py' >/dev/null 2>&1; then
+  setsid nohup python3 "$HOME/.claude/hooks/czytaj/volume_watcher.py" >/dev/null 2>&1 </dev/null &
+  disown 2>/dev/null || true
+fi
+
 # Capture hook input early — Claude Code sends JSON with transcript_path
 # on stdin. We need transcript_path BEFORE the flag check so even when
 # mode is off we don't accidentally consume stdin and break the JSON

@@ -1180,6 +1180,38 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
 # whose turn it is. Gating on "czytaj ON" is the caller's job (the watcher).
 # --------------------------------------------------------------------------
 
+# Read-back serialization: VolumeUp scrubbing spawns one piper_stream PER press.
+# Two of them for the SAME window would run concurrently — synth takes ~1.5s, so a
+# rapid second press left the first still synthesizing/playing while the second
+# started too, and the two fought over the single Android player (you heard a
+# fragment of one read, then it was overwritten by the other). _reserve_channel
+# deliberately does NOT serialize same-owner reads (auto-speak wants latest-wins),
+# so read-back must interrupt its OWN previous child itself. Tracked by pid and
+# killed targeted — NO global pkill, so other reading windows stay untouched.
+_readback_proc: "subprocess.Popen | None" = None
+
+
+def _stop_previous_readback() -> None:
+    """Terminate the piper_stream started by the PREVIOUS VolumeUp read-back so a
+    fast second press doesn't leave two synth/playback processes racing on the
+    shared player. Targets only OUR last read-back child (its process group, since
+    speak_text_now starts it new-session); the next read's play replaces any audio
+    it already emitted (latest-wins). Best-effort — a dead/finished child is a
+    no-op, and any error is swallowed so the watcher never dies on a stray press."""
+    global _readback_proc
+    proc = _readback_proc
+    _readback_proc = None
+    if proc is None or proc.poll() is not None:
+        return  # nothing started yet, or it already finished on its own
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def stop_now() -> None:
     """Silence TTS immediately: stop the shared Android player and kill the
     audio chain (piper_stream / paplay / termux-media-player). The warm
@@ -1195,7 +1227,8 @@ def stop_now() -> None:
     _log("ACTION", "stop_now")
 
 
-def speak_text_now(text: str, owner: str = "manual", priority: str = "active") -> bool:
+def speak_text_now(text: str, owner: str = "manual", priority: str = "active",
+                   track: bool = False) -> bool:
     """Synthesize + play arbitrary text immediately, bypassing the spoken-ledger
     so already-spoken content is re-read on demand. Mirrors _speak_inner's
     piper_stream hand-off (stdin + CZYTAJ_TID/CZYTAJ_PRIORITY). Returns True if
@@ -1224,6 +1257,9 @@ def speak_text_now(text: str, owner: str = "manual", priority: str = "active") -
     except (FileNotFoundError, OSError) as e:
         _log("ACTION", "speak_text_now", "spawn-fail", repr(e))
         return False
+    if track:                       # read-back scrubbing: remember this child so the
+        global _readback_proc       # NEXT VolumeUp can interrupt it (no concurrent reads)
+        _readback_proc = proc
     try:
         proc.communicate(input=speakable.encode("utf-8"), timeout=2)
     except subprocess.TimeoutExpired:
@@ -1259,16 +1295,66 @@ def _transcript_for_project(proj_path: str) -> str:
         return cands[0]
 
 
+def _tmux_active_transcript() -> str:
+    """Transcript of the tmux window currently on TOP, read LIVE from the tmux
+    server at press time. czytaj runs under Termux's uid (via PRoot), so — unlike
+    the Voice Keyboard, a separate app uid that must relay through a Termux
+    RUN_COMMAND — it can open tmux's private socket directly and ask which window
+    is active RIGHT NOW. That matches the user's fast window-hopping (send a
+    message, immediately switch to the next window) with NO switch-time lag: the
+    keyboard flag is written just before tmux finishes switching, so on rapid
+    presses it records the window you came FROM (off-by-one); reading tmux live
+    sidesteps that race entirely. Best-effort: no tmux / no socket / any error →
+    '' so the caller falls back to the keyboard flag and markers."""
+    import glob
+    prefix = "/data/data/com.termux/files/usr"
+    home = "/data/data/com.termux/files/home"
+    tmux_bin = os.path.join(prefix, "bin", "tmux")
+    if not os.path.isfile(tmux_bin):
+        return ""
+    socks = glob.glob(os.path.join(prefix, "var", "run", "tmux-*", "default"))
+    if not socks:
+        return ""
+    try:
+        sock = max(socks, key=os.path.getmtime)
+    except OSError:
+        sock = socks[0]
+    try:
+        out = subprocess.run(
+            [tmux_bin, "-S", sock, "list-panes", "-a", "-F",
+             "#{pane_active}#{window_active} #{pane_current_path}"],
+            capture_output=True, text=True, timeout=4,
+        ).stdout
+    except (subprocess.SubprocessError, OSError):
+        return ""
+    path = ""
+    for line in out.splitlines():
+        if line.startswith("11 "):  # pane_active=1 AND window_active=1 → the on-top pane
+            path = line[3:].strip()
+            break
+    if not path:
+        return ""
+    if path == home or path.startswith(home + "/"):  # native Termux home → PRoot /root
+        path = "/root" + path[len(home):]
+    return _transcript_for_project(path)
+
+
 def _resolve_active_transcript() -> str:
     """Transcript jsonl for VolumeUp/read-back. Priority:
-    1) FOCUSED window the user is viewing — the Voice Typer switch key writes its
-       cwd to ACTIVE_WINDOW_FLAG; this is the only signal that tracks what's on
-       screen across multiple reading windows.
+    0) LIVE tmux active window — czytaj runs under Termux's uid (PRoot) so it can
+       read tmux's socket directly and ask which window is on top RIGHT NOW; the
+       most accurate signal and immune to the keyboard flag's switch-time lag.
+    1) keyboard-written focused-window flag (ACTIVE_WINDOW_FLAG) — fallback for
+       when tmux isn't in use / is unreachable.
     2) global active-session marker (last session that got a user prompt).
     3) most-recently-modified transcript anywhere.
-    Each step falls through, so it degrades cleanly while the keyboard side (1) or
-    the marker (2) is absent."""
+    Each step falls through, so it degrades cleanly when an earlier signal is absent."""
     import glob
+    # 0) live tmux active window — read at press time, immune to the keyboard
+    #    flag's switch-time off-by-one race. Falls through if tmux isn't in use.
+    t = _tmux_active_transcript()
+    if t:
+        return t
     # 1) keyboard-written focused window
     try:
         proj = open(ACTIVE_WINDOW_FLAG).read().strip()
@@ -1350,12 +1436,15 @@ def read_message_back(n: int = 1) -> bool:
         return False
     n = max(1, min(int(n), len(turns)))
     text = turns[-n]
-    # No explicit stop: speak_text_now plays via the single Android player, which
-    # replaces the current track (latest-wins), so a fresh read interrupts the
-    # previous one without a slow extra termux-media-player call. Same owner as a
-    # normal read so the channel isn't seen as a different window (no queue wait).
+    # Interrupt our OWN previous read-back first: speak_text_now's single-player
+    # "latest-wins" only cleanly replaces audio when one read runs at a time, but
+    # synth takes ~1.5s so a rapid second press would otherwise run concurrently
+    # with the first and the two collide on the shared player. Kill the prior child
+    # (targeted, same window only), then start this read and track it for the next.
+    _stop_previous_readback()
     _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text))
-    return speak_text_now(text, owner=os.path.basename(path), priority="active")
+    return speak_text_now(text, owner=os.path.basename(path), priority="active",
+                          track=True)
 
 
 def read_last_message() -> bool:
