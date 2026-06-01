@@ -32,6 +32,17 @@ PROBE_CACHE_TTL_S = 5.0  # mic + media probes
 # Prevents the X4 bug where 4 panes all read aloud when user prompts in one.
 ACTIVE_SESSION_FILE = os.path.expanduser("~/.claude/czytaj-active-session.txt")
 ACTIVE_SESSION_TTL_S = 300.0
+
+# Focused-window flag written by the Voice Typer switch key (see the keyboard
+# contract). One line = the PRoot cwd of the window the user just switched TO,
+# e.g. /root/projekty/KFG-Addons. VolumeUp/read-back targets THIS window — the one
+# actually on screen — instead of the last-prompted session. Same shared dir as the
+# mic flag so both the keyboard app and czytaj (PRoot) can reach it. Falls back
+# cleanly to the old behaviour while the keyboard side isn't deployed (flag absent).
+ACTIVE_WINDOW_FLAG = os.environ.get(
+    "CZYTAJ_ACTIVE_WINDOW_FLAG",
+    "/storage/emulated/0/Download/Termux-flags/czytaj-active-window.flag",
+)
 # Cross-window TTS arbitration (the "X4" bug: N open Claude windows each read the
 # same reply, N times). A content-hash ledger guarantees a message is spoken at
 # most ONCE across all panes; a shared last-folder file drives the spoken
@@ -923,6 +934,62 @@ def _maybe_folder_prefix(label: str) -> str:
     return f"{label}. " if announce else ""
 
 
+# --------------------------------------------------------------------------
+# Low-volume audible warning. The volume keys (and earlier a test) can drop the
+# media stream to ~0, so TTS plays but is inaudible with NO signal to the user
+# (this bit us once). When about to speak below the audible floor, buzz the
+# device so the user KNOWS something was said. User's choice: vibrate ONLY —
+# never change the volume. Threshold tunable via CZYTAJ_MIN_AUDIBLE_VOL.
+# --------------------------------------------------------------------------
+try:
+    MIN_AUDIBLE_VOL = int(os.environ.get("CZYTAJ_MIN_AUDIBLE_VOL", "3") or "3")
+except ValueError:
+    MIN_AUDIBLE_VOL = 3
+_VOL_CACHE = os.path.expanduser("~/.claude/czytaj-vol.cache")
+_VOL_CACHE_TTL_S = 5.0
+
+
+def _music_volume() -> "int | None":
+    """Current media (music) stream volume via termux-volume, cached 5s. None if
+    unknown (Termux:API missing/erroring) — caller then skips the warning."""
+    try:
+        if time.time() - os.stat(_VOL_CACHE).st_mtime < _VOL_CACHE_TTL_S:
+            return int(open(_VOL_CACHE).read().strip())
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run(["termux-volume"], capture_output=True, text=True, timeout=3)
+        for s in json.loads(r.stdout):
+            if s.get("stream") == "music":
+                vol = int(s.get("volume", -1))
+                try:
+                    with open(_VOL_CACHE, "w") as f:
+                        f.write(str(vol))
+                except OSError:
+                    pass
+                return vol
+    except (subprocess.SubprocessError, FileNotFoundError, OSError,
+            ValueError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def warn_if_inaudible() -> None:
+    """If the media volume is below the audible floor, buzz the device twice so
+    the user knows TTS is talking but they can't hear it. Per the user's choice
+    this NEVER changes the volume — it only alerts. Best-effort; silent on error."""
+    vol = _music_volume()
+    if vol is None or vol >= MIN_AUDIBLE_VOL:
+        return
+    _log("AUDIO", "low-volume warn (vibrate)", "vol=", vol, "floor=", MIN_AUDIBLE_VOL)
+    try:
+        # ~2s buzz — a short tick is easy to miss while walking/driving (user request).
+        subprocess.run(["termux-vibrate", "-d", "2000"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
+
+
 def speak_new_text(transcript_path: str, kill_previous: bool, cwd: str = "") -> int:
     caller = "Stop" if kill_previous else "PreToolUse"
     _log("ENTER", caller, "transcript=", os.path.basename(transcript_path or ""))
@@ -1056,6 +1123,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     # the single Android player's play (latest-wins); across windows piper_stream's
     # _reserve_channel makes a later window WAIT its turn (queue). The new-turn
     # flush (interrupt the previous turn's audio) still lives in the UPS hook.
+    warn_if_inaudible()  # buzz if the media volume is too low to hear this
     preheat_audio()
 
     # Piper is the only supported engine. termux-tts-speak fallback was
@@ -1170,13 +1238,47 @@ def speak_text_now(text: str, owner: str = "manual", priority: str = "active") -
     return True
 
 
-def _resolve_active_transcript() -> str:
-    """Full path to the active session's transcript jsonl, or '' if none found.
-    czytaj-active-session.txt holds only the stable basename (session id); we
-    resolve it under ~/.claude/projects/*/. If the marker is missing/unmatched,
-    fall back to the most-recently-modified transcript so read-last still works
-    in a single-window setup that never wrote the marker."""
+def _transcript_for_project(proj_path: str) -> str:
+    """Most-recent transcript jsonl for a project cwd (e.g. /root/projekty/KFG-Addons).
+    Claude Code stores transcripts under ~/.claude/projects/<cwd with '/'→'-'>/."""
     import glob
+    proj_path = (proj_path or "").strip()
+    if not proj_path:
+        return ""
+    encoded = "-" + proj_path.strip("/").replace("/", "-")
+    cands = glob.glob(os.path.expanduser(f"~/.claude/projects/{encoded}/*.jsonl"))
+    if not cands:  # fallback: match the encoded dir ending in the project basename
+        base = os.path.basename(proj_path.rstrip("/"))
+        if base:
+            cands = glob.glob(os.path.expanduser(f"~/.claude/projects/*{base}/*.jsonl"))
+    if not cands:
+        return ""
+    try:
+        return max(cands, key=os.path.getmtime)
+    except OSError:
+        return cands[0]
+
+
+def _resolve_active_transcript() -> str:
+    """Transcript jsonl for VolumeUp/read-back. Priority:
+    1) FOCUSED window the user is viewing — the Voice Typer switch key writes its
+       cwd to ACTIVE_WINDOW_FLAG; this is the only signal that tracks what's on
+       screen across multiple reading windows.
+    2) global active-session marker (last session that got a user prompt).
+    3) most-recently-modified transcript anywhere.
+    Each step falls through, so it degrades cleanly while the keyboard side (1) or
+    the marker (2) is absent."""
+    import glob
+    # 1) keyboard-written focused window
+    try:
+        proj = open(ACTIVE_WINDOW_FLAG).read().strip()
+    except OSError:
+        proj = ""
+    if proj:
+        t = _transcript_for_project(proj)
+        if t:
+            return t
+    # 2) active-session marker (basename), then 3) most-recent anywhere
     tid = ""
     try:
         with open(ACTIVE_SESSION_FILE) as f:
@@ -1196,16 +1298,66 @@ def _resolve_active_transcript() -> str:
         return candidates[0]
 
 
-def read_last_message() -> bool:
-    """Re-read the latest assistant message of the active session. Bound to
-    VolumeUp. Returns True if something was spoken."""
+def _turn_texts(transcript_path: str) -> list[str]:
+    """Each assistant message (one transcript entry's concatenated text), oldest→
+    newest — the granularity VolumeUp steps back through (n-th from the end). Each
+    reply bubble is its own entry even when several are emitted in one turn around
+    tool calls, which matches how the user thinks of 'messages'."""
+    if not transcript_path or not os.path.isfile(transcript_path):
+        return []
+    home_real = os.path.realpath(os.path.expanduser("~/.claude"))
+    try:
+        path_real = os.path.realpath(transcript_path)
+    except OSError:
+        return []
+    if not path_real.startswith(home_real + os.sep):
+        return []
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    msgs: list[str] = []
+    for line in lines:
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        if msg.get("type") != "assistant":
+            continue
+        content = msg.get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            continue
+        parts = [c["text"] for c in content
+                 if isinstance(c, dict) and c.get("type") == "text" and c.get("text")]
+        joined = "\n".join(parts).strip()
+        if joined:
+            msgs.append(joined)
+    return msgs
+
+
+def read_message_back(n: int = 1) -> bool:
+    """Read the n-th assistant turn counting back from the most recent (1 = last
+    message, 2 = the one before, …). Clamped to the oldest available. Stops the
+    current track first so it's a fresh read from the top. Bound to VolumeUp."""
     path = _resolve_active_transcript()
     if not path:
-        _log("ACTION", "read_last", "no-active-transcript")
+        _log("ACTION", "read_back", "no-active-transcript")
         return False
-    _uuid, text = current_turn_text(path)
-    if not text.strip():
-        _log("ACTION", "read_last", "empty-turn-text")
+    turns = _turn_texts(path)
+    if not turns:
+        _log("ACTION", "read_back", "no-turns")
         return False
-    _log("ACTION", "read_last", "transcript=", os.path.basename(path), "len=", len(text))
+    n = max(1, min(int(n), len(turns)))
+    text = turns[-n]
+    # No explicit stop: speak_text_now plays via the single Android player, which
+    # replaces the current track (latest-wins), so a fresh read interrupts the
+    # previous one without a slow extra termux-media-player call. Same owner as a
+    # normal read so the channel isn't seen as a different window (no queue wait).
+    _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text))
     return speak_text_now(text, owner=os.path.basename(path), priority="active")
+
+
+def read_last_message() -> bool:
+    """Re-read the latest assistant turn (n=1). Kept for compatibility."""
+    return read_message_back(1)

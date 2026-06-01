@@ -315,9 +315,16 @@ def _play_via_termux_blocking(audio: Path) -> None:
         # the Termux bridge is intermittently "command not found" on PRoot.
         _log("PLAY-FAIL termux-media-player:", exc)
         return
-    deadline = time.monotonic() + _wav_duration_s(audio) + 3.0
+    # Pause-aware poll. VolumeDown pauses via termux-media-player, flipping `info`
+    # to "Paused" — that must NOT read as "finished" (else we'd release the channel
+    # + delete the wav, and resume would break). While paused we keep holding and
+    # FREEZE the play-budget so a long pause can't trip the duration deadline; a
+    # hard cap bounds a pause the user never resumes.
+    play_budget = _wav_duration_s(audio) + 3.0
+    hard_cap = time.monotonic() + 1800.0
+    last = time.monotonic()
     time.sleep(0.3)  # let `info` flip to Playing before we poll
-    while time.monotonic() < deadline:
+    while time.monotonic() < hard_cap:
         # Voice Typer started dictation → stop talking over the user at once.
         if _vt_recording():  # F10/F27: heartbeat-aware, not bare presence
             try:
@@ -335,7 +342,17 @@ def _play_via_termux_blocking(audio: Path) -> None:
             )
         except (OSError, subprocess.SubprocessError):
             break
-        if "Playing" not in (r.stdout or ""):
+        out = r.stdout or ""
+        now = time.monotonic()
+        if "Paused" in out:
+            last = now          # freeze the budget while paused (VolumeDown)
+            time.sleep(0.3)
+            continue
+        if "Playing" not in out:
+            break               # finished or stopped
+        play_budget -= now - last
+        last = now
+        if play_budget <= 0:
             break
         time.sleep(0.3)
 

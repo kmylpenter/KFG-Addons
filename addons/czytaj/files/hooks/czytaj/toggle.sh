@@ -21,13 +21,13 @@ if [ -f "$FLAG" ]; then
     termux-media-player stop >/dev/null 2>&1
     # F21: anchor the python scripts so the pattern can't match an editor/grep
     # whose argv contains these names; bare binaries (daemon/paplay/tts) stay.
-    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak 'python.*volume_watcher\.py' 'rish.*getevent'; do
+    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak 'python.*volume_watcher\.py' 'rish.*dd if=/dev/input' 'rish.*getevent'; do
       pkill -9 -f "$pat" >/dev/null 2>&1
     done
-    # The getevent the watcher reads runs under the Shizuku SERVICE (shell uid),
-    # not as a child of the PRoot client — killing the client above can leave it.
-    # Reap it by process name via rish (best-effort; ignored if Shizuku is down).
-    timeout 8 rish -c "pkill -9 getevent" >/dev/null 2>&1
+    # The volume watcher's reader (dd) — and the getevent used for device discovery —
+    # run under the Shizuku SERVICE (shell uid), not as a child of the PRoot client,
+    # so killing the client above can leave them. Reap on the Android side via rish.
+    timeout 8 rish -c "pkill -f 'dd if=/dev/input' 2>/dev/null; pkill -9 getevent 2>/dev/null" >/dev/null 2>&1
     rm -rf "$RUN_DIR"
     rm -f "$HOME/.claude/czytaj-pause.flag"   # F40: clear a stale global pause
   fi
