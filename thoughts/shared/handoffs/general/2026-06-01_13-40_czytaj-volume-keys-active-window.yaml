@@ -1,0 +1,90 @@
+---
+session: general
+date: 2026-06-01
+status: partial
+outcome: PARTIAL_PLUS
+---
+
+goal: >
+  czytaj (TTS hands-free na PRoot/Termux) — sterowanie klawiszami głośności (VolDown=pauza/wznów,
+  VolUp=czytaj ostatnią / cofaj wstecz) + multi-okno: VolUp czyta wiadomość z OKNA NA WIERZCHU.
+  Przełom: active-window flag pisany przez klawiaturę Voice Typer DZIAŁA, czytaj poprawnie celuje.
+now: >
+  NAPRAW bug licznika read-back: szybkie podwójne VolUp wyścig/nadpisuje — słychać ułamek poprzedniej
+  ("świetnie"), potem nadpisuje ją następna ("wszystko zgrane"). Czyli druga funkcjonalność (cofanie
+  N-wstecz) nie działa w 100%. Potem przetestuj end-to-end przełączanie okien (user jeszcze nie zrobił).
+test: >
+  bash ~/.claude/hooks/czytaj/toggle.sh (ON) → na oknie X przełącz klawiaturą ⇄, naciśnij VolUp,
+  sprawdź czy czyta wiadomość X. Log: grep -E 'VOLKEY|ACTION read' ~/.claude/czytaj.log | tail
+
+architecture_context: >
+  Android 16 (SDK 36), Pixel. Claude Code w PRoot/Debian (HOME=/root). Termux POZA PRoot.
+  Wiele okien Claude = wiele sesji Termuksa, KAŻDA /root/projekty/<Projekt> (PRoot). Klawiatura =
+  projekt UtilityHub (pakiet com.utilityhub.voicekeyboard), utrzymywany przez INNEGO Klauda.
+  User pisze/woła PO POLSKU; odpowiedzi po polsku (kod/commity EN). rish relay buforuje wieloliniowe
+  wyjście — pytaj małymi kawałkami. pkill -f łatwo łapie własny shell — używaj klasy znaków [x].
+
+done_this_session:
+  - task: "rish z PRoot NAPRAWIONY (Android 14+ writable-dex false-positive pod fake-rootem) + reproducible w setup-shizuku.sh; commit 64bf829/aa9fecc PUSHED na origin"
+    files: [/root/.shizuku/rish, addons/czytaj/files/hooks/czytaj/setup-shizuku.sh]
+  - task: "Pauza/wznów (VolDown) przez termux-media-player pause/play + pause-aware pętla w piper_stream (nie myli pauzy z końcem); read-back (VolUp) + licznik cofania"
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py, addons/czytaj/files/hooks/czytaj/volume_watcher.py]
+  - task: "Czytnik klawiszy przepisany na BINARNY dd (rish -c 'dd if=/dev/input/event0 bs=24') zamiast getevent-tekst; auto-heal stale readera (60s); device cache; single-instance flock"
+    files: [addons/czytaj/files/hooks/czytaj/volume_watcher.py]
+  - task: "ACTIVE-WINDOW FLAG (przełom multi-okno): _resolve_active_transcript() czyta flagę pisaną przez klawiaturę i celuje w okno na wierzchu; _transcript_for_project() mapuje cwd→transkrypt; fallback czysty gdy flagi brak"
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py]
+  - task: "Kontrakt flagi napisany i WDROŻONY przez Klauda od klawiatury (UtilityHub). Flaga pisze się na ⇄, treść=cwd, czytaj rozwiązuje POPRAWNIE (zweryfikowane: flaga=UtilityHub→UtilityHub, =KFG→KFG)"
+    files: [thoughts/shared/petla/voice-typer-active-window-CONTRACT.md, /root/projekty/UtilityHub/KONTRAKT-czytaj-active-window.md]
+
+blockers: []
+
+questions:
+  - "Bug licznika read-back: czy to wyścig dwóch szybkich odczytów (każdy stop+synth+play, brak serializacji), czy relay Shizuku dostarcza naciśnięcia w paczce/odwrotnej kolejności? Sprawdzić log z czasami."
+  - "Czy READBACK_WINDOW_S=45 + batching relay powoduje złe liczenie n?"
+
+decisions:
+  - keyboard_writes_flag: "Wykrycie okna na wierzchu z PRoot/shell NIEMOŻLIWE (statusline=aktywność wszystkich okien; brak hooka fokusu w Claude Code; /dev/pts i shared_prefs Termuksa = permission denied). JEDYNE wyjście: klawiatura (którą kontrolujemy) pisze flagę na przełączeniu. Wdrożone."
+  - flag_path: "/storage/emulated/0/Download/Termux-flags/czytaj-active-window.flag (= ~/storage/downloads/Termux-flags/ przez symlink Termuksa). Treść = 1 linia = cwd PRoot okna, np. /root/projekty/KFG-Addons."
+  - vol_keys_passive: "getevent pasywne — klawisze nadal zmieniają głośność; Termux je przechwytuje gdy foreground (user potwierdził). Gating na czytaj-ON."
+  - adb_deferred: "ADB dałoby natychmiastowy odczyt (bez 11s lagu Shizuku) ALE wymaga Wi-Fi (brak w aucie); Shizuku-tcp przez setprop ZABLOKOWANE (permission denied). Odłożone do Wi-Fi/domu."
+
+findings:
+  - active_window_flag_WORKS: "Klawiatura pisze flagę na ⇄ (Klaud od klawiatury potwierdził '[ActiveWindow] probe fired'); czytaj _resolve_active_transcript czyta ją z priorytetem i celuje poprawnie. Multi-okno ROZWIĄZANE."
+  - shizuku_latency_floor: "VolUp→odczyt ~11s. To podłoga mostka Shizuku dla POJEDYNCZYCH zdarzeń (echo-test pokazał ~2s batching relay; pojedyncze naciśnięcie gorzej, prawdopodobnie + doze przy zgaszonym ekranie). NIE skróci się bez ADB. Przetwarzanie samo (VOLKEY→STREAM ENTER) jest ~0-2s — wina jest w dostarczeniu naciśnięcia."
+  - reader_goes_stale: "dd/getevent przez Shizuku potrafi zamilknąć (proces żyje, 0 dostaw) po doze. Stąd READER_IDLE_RESTART_S=60 (select-timeout respawn). Było 1800 → blokada na 30 min (zły)."
+  - statusline_is_activity_not_focus: "Log renderów statusline pokazał WSZYSTKIE aktywne okna renderują non-stop (Terminator/TimeTracking/KFG/GAS) — render = aktywność, nie fokus. Próba porzucona, statusline-wrapper.mjs przywrócony."
+  - termux_intercepts_keys: "termux.properties: volume-keys zakomentowane (default = klawisze terminala, nie głośność) — ale głośność mimo to spadała; przyczyną były naciśnięcia POZA Termuksem / niejasne. Volume floor NIE dodany (user odrzucił auto-zmianę głośności, wybrał wibrację)."
+
+worked:
+  - "dd binarny (bs=24, struct '<qqHHi', EV_KEY=1 code 114/115 value 1) — parsing 10/10 testów; ominął stdio-buffering getevent"
+  - "Flaga aktywnego okna = czysty kontrakt klawiatura↔czytaj (wzorzec jak voice-typer-recording.flag); _transcript_for_project koduje cwd '/'→'-' na ~/.claude/projects/<enc>/"
+  - "Pytanie rish małymi kawałkami (relay tnie wieloliniowe); pkill wzorcem z klasą znaków [x] by nie zabić własnego shella"
+
+failed:
+  - "Statusline jako sygnał fokusu — renderuje dla wszystkich aktywnych okien (aktywność≠fokus)"
+  - "ADB w aucie — Wireless Debugging wymaga Wi-Fi; setprop service.adb.tcp.port jako shell = permission denied"
+  - "Read-back przez globalny marker active-session — szedł za ostatnio-promptowaną sesją, nie oglądaną (stąd flaga)"
+
+next:
+  - "Bug licznika read-back: w volume_watcher.py _read_back + _speak.py read_message_back/speak_text_now — szybkie podwójne VolUp daje wyścig odczytów (ułamek poprzedniej, potem nadpis). Rozważ: serializację odczytów (lock), twardszy debounce, albo pewne przerwanie poprzedniego przed startem nowego. Sprawdź log z czasami który odczyt nadpisuje który."
+  - "Przetestuj END-TO-END przełączanie okien (user NIE zrobił): ⇄ na Terminator → VolUp → ma czytać Terminator, nie KFG. Flaga+resolve zweryfikowane statycznie, brakuje testu uchem."
+  - "OPCJA na zero-lag: przycisk 'czytaj' w klawiaturze odpalający odczyt wprost (bez VolUp/Shizuku) — sidestep 11s. Do uzgodnienia z Klaudem od klawiatury."
+  - "Gdy będzie Wi-Fi/dom: rozważ ADB dla natychmiastowego VolUp (setup-adb-pairing.sh istnieje)."
+  - "Po naprawie: zsynchronizuj installed→repo (cp ~/.claude/hooks/czytaj/* addons/czytaj/files/hooks/czytaj/) i commit."
+
+state_runtime:
+  - "Demon klawiszy: volume_watcher.py, single-instance flock ~/.claude/czytaj-volume-watcher.lock. Spawn przez toggle.sh ON; restart: kill <pid z fuser locka> + 'rish -c pkill -f dd if=/dev/input' + nohup."
+  - "INSTALLED (żywe) = ~/.claude/hooks/czytaj/ ; REPO = addons/czytaj/files/hooks/czytaj/. Po edycji installed PAMIĘTAJ zsync do repo (te 4 pliki są zsync'owane na teraz)."
+  - "Reading per-projekt: flagi ~/.claude/czytaj-flags/<sha1(cwd)>.flag. Aktywne: KFG-Addons + Terminator-Umowy + (czasem inne)."
+  - "Branch: fix/czytaj-audit-2026-05-31 (pushed). Pierwsza partia (rish+vol-keys v1) zacommitowana; reszta (pauza/dd/read-back/active-window) commitowana TYM commitem."
+
+key_paths:
+  - "Hooki: ~/.claude/hooks/czytaj/{_speak.py,piper_stream.py,volume_watcher.py,toggle.sh,setup-shizuku.sh,user-prompt-submit.sh}"
+  - "Flaga active-window: /storage/emulated/0/Download/Termux-flags/czytaj-active-window.flag"
+  - "Kontrakt klawiatury: thoughts/shared/petla/voice-typer-active-window-CONTRACT.md (+ kopia w UtilityHub/)"
+  - "Poprzedni handoff (sesja 1-2): thoughts/shared/handoffs/2026-05-31_czytaj-session-state.md + jego sekcja UPDATE"
+  - "Log: ~/.claude/czytaj.log (VOLKEY=klawisze, ACTION read_back=odczyt, STREAM ENTER=piper_stream)"
+
+files:
+  created: [thoughts/shared/petla/voice-typer-active-window-CONTRACT.md, thoughts/shared/handoffs/general/2026-06-01_13-40_czytaj-volume-keys-active-window.yaml]
+  modified: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py, addons/czytaj/files/hooks/czytaj/toggle.sh, addons/czytaj/files/hooks/czytaj/volume_watcher.py]
