@@ -34,7 +34,7 @@ def _precache_latest(transcript_path: str) -> None:
     try:
         import subprocess
         subprocess.Popen(
-            [sys.executable or "python3", script, transcript_path, "1"],
+            [sys.executable or "python3", script, transcript_path, "5"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True,
         )

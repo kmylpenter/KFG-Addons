@@ -25,6 +25,7 @@ from __future__ import annotations
 import fcntl
 import os
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -311,15 +312,30 @@ def _stream(device: str) -> None:
     finally:
         try:
             proc.kill()
-        except OSError:
+            proc.wait(timeout=2)   # reap the dd child so it doesn't pile up as <defunct>
+        except (OSError, subprocess.TimeoutExpired):
             pass
+
+
+def _on_sigterm(signum, frame):
+    # Turn a SIGTERM (toggle.sh teardown) into a clean exit so the finally blocks run:
+    # _stream's finally kills the reader, main()'s finally releases the wakelock — else a
+    # bare SIGTERM would skip them and leave the CPU pinned awake (battery drain).
+    raise SystemExit(0)
 
 
 def main() -> int:
     lock_fd = _single_instance()
     if lock_fd is None:
         return 0  # another watcher already owns the lock
+    signal.signal(signal.SIGTERM, _on_sigterm)
     _log("VOLKEY", "watcher start pid=", os.getpid())
+    # Clear a wakelock a previously-crashed watcher may have left held (SIGKILL skips finally).
+    try:
+        subprocess.run(["termux-wake-unlock"], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=4)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
     device = ""
     try:
         while True:

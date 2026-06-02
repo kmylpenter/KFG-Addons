@@ -1,0 +1,91 @@
+meta:
+  mode: audit
+  target: "~/.claude/hooks/czytaj (SSOT)"
+  status: completed
+  iterations: 1
+  confidence: MEDIUM   # 1 thorough iter (5 lenses, all files read, several findings live-verified); not the 2x-clean converge
+  lenses: [bugs-races, resource-leaks, regressions, android-proot, cache-correctness]
+summary:
+  total: 11
+  critical: 1
+  major: 5
+  minor: 5
+issues:
+  - id: C1
+    severity: critical
+    lens: cache-correctness
+    item: "Read-back cache is functionally INERT — 0 CACHE-HIT in practice. precache fires only n=1 (stop.py passes '1'), background-delayed, and the active turn keeps shifting, so the last 5 turns are NOT all kept warm; re-reads miss and cold-synth."
+    location: "stop.py:_precache_latest (n=1 only); _speak.py:precache_turn/read_message_back"
+    suggestion: "Pre-cache a RANGE n=1..5 on each Stop (precache_turn already skips already-cached, so cost is ~the one new turn). Keeps the last 5 turns of the active window warm so re-reads hit."
+    status: open
+  - id: M1
+    severity: major
+    lens: bugs-races
+    item: "struct.error (truncated/odd-length raw PCM) is NOT caught. synthesize_one_shot handler is `except (TimeoutExpired, OSError)` (struct.error is not OSError); synthesize_warm's terminal fallback runs inside `except Exception` so its struct.error escapes; piper_stream.main():~655 calls synthesize_warm unguarded → uncaught crash → silent TTS."
+    location: "piper_stream.py: synthesize_one_shot unpack + handler; synthesize_warm unpack; main() native caller"
+    suggestion: "Slice raw to n*4 before unpack (salvages a usable wav) AND add struct.error to the except clauses."
+    status: open
+  - id: M2
+    severity: major
+    lens: bugs-races
+    item: "precache tmp clobber: two detached precache.py for the same turn write the SAME deterministic tmp (dst + '.tmp') concurrently (stop.py n=1 + read-back miss n=1), interleaving writes → a corrupt dst can survive."
+    location: "_speak.py:precache_turn (tmp = dst + '.tmp')"
+    suggestion: "Make tmp unique per process: dst + f'.{os.getpid()}.tmp' (clean up own tmp); the os.replace stays atomic."
+    status: open
+  - id: M3
+    severity: major
+    lens: bugs-races
+    item: "Rapid 2nd VolumeUp does NOT stop cache-hit audio. _stop_previous_readback killpg's only the python wrapper, but termux-media-player plays detached on the Android side; the wrapper exits immediately after handing off, so the previous read keeps playing."
+    location: "_speak.py:_stop_previous_readback"
+    suggestion: "When stopping a previous read-back, also issue `termux-media-player stop` (like stop_now), not just killpg of the wrapper group."
+    status: open
+  - id: M4
+    severity: major
+    lens: regressions
+    item: "Auto-read tempo self-heal (F9) lost on the warm path. _ensure_voice_length_scale() (patches length_scale=0.6 into the voice .onnx.json — the only thing the binary honors) runs ONLY in synthesize_one_shot; the warm daemon path bypasses it and loads tempo at spawn. Latent: a voice re-download/reset → slow default tempo with no self-heal."
+    location: "piper_stream.py:synthesize_warm / piper_server daemon spawn"
+    suggestion: "Call _ensure_voice_length_scale() before using the daemon (in synthesize_warm or piper_server before _spawn_daemon)."
+    status: open
+  - id: M5
+    severity: major
+    lens: resource-leaks
+    item: "wakelock held forever on SIGKILL/SIGTERM. _wake_unlock runs only in main()'s finally; a SIGTERM (no handler) or SIGKILL of the watcher leaves the Android PARTIAL_WAKE_LOCK held → battery drain until reboot."
+    location: "volume_watcher.py: _wake_lock/_wake_unlock, main()"
+    suggestion: "Install a SIGTERM handler that releases the wakelock (and kills the reader); optionally termux-wake-unlock unconditionally on watcher start to clear a stale lock."
+    status: open
+  - id: m1
+    severity: minor
+    lens: resource-leaks
+    item: "Orphaned .raw/.srv.raw/.tmp scratch files leak on SIGKILL and are never pruned (_prune_scratch globs only tmp*.wav and not the readback tree)."
+    location: "piper_stream.py:_prune_scratch"
+    suggestion: "Extend _prune_scratch to also remove *.raw/*.srv.raw/*.wav.tmp; age-prune the readback session dirs."
+    status: open
+  - id: m2
+    severity: minor
+    lens: resource-leaks
+    item: "Watcher reader subprocess killed but never wait()'d → a <defunct> adb/rish dd child accumulates every 60s idle-restart."
+    location: "volume_watcher.py:_stream finally (proc.kill without wait)"
+    suggestion: "proc.wait(timeout=...) after proc.kill()."
+    status: open
+  - id: m3
+    severity: minor
+    lens: bugs-races
+    item: "Read-back cache hit guard accepts any file >44 bytes; a torn write could be served. (Mitigated by atomic os.replace, but defense-in-depth.)"
+    location: "_speak.py:_readback_cache_get"
+    suggestion: "Per-process tmp + atomic replace already mostly covers it; optionally validate wave.getnframes()>0."
+    status: open
+  - id: m4
+    severity: minor
+    lens: android-proot
+    item: "Reader falls back to /dev/input/event0 when discovery returns empty; fragile across devices where volume keys are not event0 (silent no-keys)."
+    location: "volume_watcher.py:_stream (dev or event0)"
+    suggestion: "Treat empty discovery as 'skip this cycle' rather than defaulting to event0."
+    status: open
+  - id: m5
+    severity: minor
+    lens: android-proot
+    item: "adb chosen per _stream spawn; a mid-stream WiFi-adb drop is unresponsive up to ~60s before the rish fallback re-engages."
+    location: "volume_watcher.py:_stream"
+    suggestion: "Acceptable; optionally shorten idle-restart when adb is the reader, or detect adb drop faster."
+    status: open
+notes: "Verified-SAFE by lenses (no action): cache key write==read (content sha1, no strip/truncate on key); CZYTAJ_PLAY_WAV cannot leak into auto-read child; cached playback keeps pause/Voice-Typer/channel; reading-off read-back path safe; spoken-ledger not corrupted; EXDEV not hit (cache + /root same f2fs); session-dir traversal-safe; all subprocess calls timeout-bounded."

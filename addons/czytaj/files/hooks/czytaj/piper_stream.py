@@ -252,7 +252,7 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
         n = len(raw) // 4
         if n == 0:
             return False
-        floats = struct.unpack(f"<{n}f", raw)
+        floats = struct.unpack(f"<{n}f", raw[:n * 4])   # slice: a truncated/odd tail must not raise struct.error
         shorts = struct.pack(
             f"<{n}h",
             *(max(-32767, min(32767, int(x * 32767))) for x in floats),
@@ -263,7 +263,7 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             w.setframerate(PIPER_SAMPLE_RATE)
             w.writeframes(shorts)
         return True
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except (subprocess.TimeoutExpired, OSError, struct.error) as exc:
         _log("SYNTH-FAIL exception:", exc)
         return False
     finally:
@@ -284,6 +284,8 @@ def synthesize_warm(text: str, out_wav: Path) -> bool:
             return synthesize_one_shot(text, out_wav)
     except Exception:
         return synthesize_one_shot(text, out_wav)
+    _ensure_voice_length_scale()   # F9: keep length_scale patched in the voice .onnx.json on
+    #                                the WARM path too, else a re-downloaded voice loses the tempo fix
     raw_path = out_wav.with_suffix(".srv.raw")
     try:
         rate = speak_raw(text, raw_path)
@@ -297,7 +299,7 @@ def synthesize_warm(text: str, out_wav: Path) -> bool:
         n = len(raw) // 4
         if n == 0:
             return synthesize_one_shot(text, out_wav)
-        floats = struct.unpack(f"<{n}f", raw)
+        floats = struct.unpack(f"<{n}f", raw[:n * 4])   # slice: a truncated/odd tail must not raise struct.error
         shorts = struct.pack(
             f"<{n}h",
             *(max(-32767, min(32767, int(x * 32767))) for x in floats),
@@ -516,12 +518,13 @@ def _prune_scratch(max_age_s: float = 120.0) -> None:
         return
     try:
         now = time.time()
-        for p in d.glob("tmp*.wav"):
-            try:
-                if now - p.stat().st_mtime > max_age_s:
-                    p.unlink()
-            except OSError:
-                pass
+        for pat in ("tmp*.wav", "*.raw", "*.srv.raw"):   # also reap raw intermediates a
+            for p in d.glob(pat):                        # SIGKILL'd synth left behind
+                try:
+                    if now - p.stat().st_mtime > max_age_s:
+                        p.unlink()
+                except OSError:
+                    pass
     except OSError:
         pass
 

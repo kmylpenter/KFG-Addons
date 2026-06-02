@@ -1210,6 +1210,14 @@ def _stop_previous_readback() -> None:
             proc.kill()
         except OSError:
             pass
+    # The wrapper we just killed had already handed the audio to the Android player
+    # (detached); killpg of the wrapper group does NOT silence it, so stop the player too —
+    # else the previous read keeps playing on a rapid second VolumeUp (cache-hit or synth).
+    try:
+        subprocess.run(["termux-media-player", "stop"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        pass
 
 
 def stop_now() -> None:
@@ -1481,12 +1489,23 @@ def _readback_cache_get(session: str, text: str) -> str:
 
 
 def _readback_cache_evict(session: str) -> None:
-    """Keep only the newest READBACK_CACHE_MAX wavs in a session dir."""
+    """Keep only the newest READBACK_CACHE_MAX wavs in a session dir, and reap any leaked
+    intermediates (.tmp / .raw / .srv.raw) a SIGKILL'd precache left behind."""
     d = _readback_session_dir(session)
     try:
-        wavs = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".wav")]
+        entries = os.listdir(d)
     except OSError:
         return
+    now = time.time()
+    for f in entries:
+        if f.endswith(".tmp") or f.endswith(".raw"):   # ".raw" also matches ".srv.raw"
+            fp = os.path.join(d, f)
+            try:
+                if now - _safe_mtime(fp) > 120:
+                    os.unlink(fp)
+            except OSError:
+                pass
+    wavs = [os.path.join(d, f) for f in entries if f.endswith(".wav")]
     wavs.sort(key=_safe_mtime, reverse=True)
     for old in wavs[READBACK_CACHE_MAX:]:
         try:
@@ -1539,8 +1558,8 @@ def precache_turn(transcript_path: str, n: int = 1) -> None:
     except Exception as e:
         _log("PRECACHE", "setup-fail", repr(e))
         return
-    tmp = dst + ".tmp"
-    try:
+    tmp = dst + ".%d.tmp" % os.getpid()   # per-process tmp: two concurrent precache.py
+    try:                                  # for the same turn must not clobber one shared tmp
         ok = piper_stream.synthesize_warm(speakable, Path(tmp))
     except Exception as e:
         _log("PRECACHE", "synth-fail", repr(e))
