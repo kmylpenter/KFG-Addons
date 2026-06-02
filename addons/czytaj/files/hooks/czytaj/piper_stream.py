@@ -273,6 +273,51 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             pass
 
 
+def synthesize_warm(text: str, out_wav: Path) -> bool:
+    """Synthesise `text` to a playable 16-bit wav via the WARM piper daemon (model
+    already loaded → ~0.7s, NO per-call cold start). The daemon emits raw float32, so
+    convert it to wav exactly like synthesize_one_shot. Falls back to the cold one-shot
+    binary if the daemon is unavailable — so callers always get a wav."""
+    try:
+        from piper_server import speak_raw, ensure_running
+        if not ensure_running():
+            return synthesize_one_shot(text, out_wav)
+    except Exception:
+        return synthesize_one_shot(text, out_wav)
+    raw_path = out_wav.with_suffix(".srv.raw")
+    try:
+        rate = speak_raw(text, raw_path)
+    except Exception:
+        rate = None
+    try:
+        if not rate or not raw_path.exists():
+            return synthesize_one_shot(text, out_wav)
+        with open(raw_path, "rb") as f:
+            raw = f.read()
+        n = len(raw) // 4
+        if n == 0:
+            return synthesize_one_shot(text, out_wav)
+        floats = struct.unpack(f"<{n}f", raw)
+        shorts = struct.pack(
+            f"<{n}h",
+            *(max(-32767, min(32767, int(x * 32767))) for x in floats),
+        )
+        with wave.open(str(out_wav), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(int(rate))
+            w.writeframes(shorts)
+        return True
+    except Exception as exc:
+        _log("WARM-SYNTH-FAIL", exc)
+        return synthesize_one_shot(text, out_wav)
+    finally:
+        try:
+            raw_path.unlink()
+        except OSError:
+            pass
+
+
 def _pulse_available() -> bool:
     """Is a PulseAudio server reachable? The old Termux-app install had one;
     native PRoot/Debian has none (no pulse/ALSA/pipewire) — only the Termux:API
@@ -481,7 +526,29 @@ def _prune_scratch(max_age_s: float = 120.0) -> None:
         pass
 
 
+def _play_cached_wav(path: str) -> int:
+    """Play a PRE-SYNTHESISED wav (read-back CACHE HIT) — no synthesis, instant start.
+    Reuses the normal playback path (pause-aware poll, Voice-Typer interrupt, cross-window
+    channel reservation) but does NOT delete the file — it is the persistent read-back cache."""
+    p = Path(path)
+    if not p.is_file():
+        _log("PLAYWAV-MISSING", path)
+        return 3
+    _log("PLAYWAV len=", p.stat().st_size, "name=", p.name)
+    _prune_scratch()
+    if not _pulse_available():
+        _reserve_channel(p)   # cross-window QUEUE on the shared player (same as synth path)
+    unlock_audio_routing()
+    play_blocking(p)
+    return 0
+
+
 def main() -> int:
+    # Read-back CACHE HIT: a pre-synthesised wav path is handed in via env — skip synth
+    # entirely and just play it (instant). stdin is /dev/null in this mode.
+    play_wav = os.environ.get("CZYTAJ_PLAY_WAV", "")
+    if play_wav:
+        return _play_cached_wav(play_wav)
     # F23: decode stdin explicitly as UTF-8 (the writer pins utf-8). sys.stdin.read()
     # uses the process locale and crashes on Polish diacritics under LANG=C/POSIX.
     # F31: collapse newlines like the daemon path so both synth routes are consistent.
@@ -585,7 +652,7 @@ def main() -> int:
         os.close(fd)
         wav = Path(name)
         try:
-            if synthesize_one_shot(text, wav):
+            if synthesize_warm(text, wav):   # warm daemon (~0.7s) → wav; cold fallback inside
                 # Cross-window QUEUE: wait here until no OTHER window owns the shared
                 # player, then claim it. Same window / free channel → no wait.
                 _reserve_channel(wav)

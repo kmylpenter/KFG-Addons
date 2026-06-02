@@ -17,11 +17,29 @@ def main() -> int:
     # / CLAUDE_PROJECT_DIR), not os.getcwd() — read data BEFORE the is_active check.
     if not is_active(data.get("cwd", "")) or is_recording() or is_in_call():
         return 0
-    return speak_new_text(
-        data.get("transcript_path", ""),
-        kill_previous=True,
-        cwd=data.get("cwd", ""),
-    )
+    transcript = data.get("transcript_path", "")
+    rc = speak_new_text(transcript, kill_previous=True, cwd=data.get("cwd", ""))
+    # Background pre-synth of the latest turn → read-back cache (instant re-read).
+    # Only here, where reading is confirmed on for this window. Fire-and-forget.
+    _precache_latest(transcript)
+    return rc
+
+
+def _precache_latest(transcript_path: str) -> None:
+    if not transcript_path:
+        return
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "precache.py")
+    if not os.path.isfile(script):
+        return
+    try:
+        import subprocess
+        subprocess.Popen(
+            [sys.executable or "python3", script, transcript_path, "1"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

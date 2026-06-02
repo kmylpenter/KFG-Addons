@@ -1422,10 +1422,189 @@ def _turn_texts(transcript_path: str) -> list[str]:
     return msgs
 
 
+# ── Read-back audio cache (instant re-read of recent messages) ──────────────
+# Synthesising a whole message is ~4.7s/438ch — most of read-back's perceived lag
+# (the key itself arrives in ~3s). So we keep the last N assistant turns PER SESSION
+# pre-synthesised on disk: a VolumeUp re-read of a recent message then plays a ready
+# wav with ZERO synth. Hard-capped (max 5/session, oldest evicted; old session dirs
+# pruned) so the phone never clutters. Files live in a Termux-shared dir that
+# termux-media-player can open (PRoot paths are invisible to it).
+READBACK_CACHE_MAX = 5             # wavs kept per session (oldest evicted)
+READBACK_CACHE_MAX_SESSIONS = 8    # session dirs kept (older pruned)
+
+
+def _safe_mtime(p: str) -> float:
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0.0
+
+
+def _readback_cache_base() -> str:
+    for d in ("/data/data/com.termux/files/home/.cache/czytaj/readback",
+              "/data/data/com.termux/files/usr/tmp/czytaj-readback"):
+        try:
+            os.makedirs(d, exist_ok=True)
+            return d
+        except OSError:
+            continue
+    return ""
+
+
+def _readback_session_dir(session: str) -> str:
+    base = _readback_cache_base()
+    if not base:
+        return ""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", session or "pane")[:80]
+    return os.path.join(base, safe)
+
+
+def _readback_cache_path(session: str, text: str) -> str:
+    d = _readback_session_dir(session)
+    if not d:
+        return ""
+    key = hashlib.sha1((text or "").encode("utf-8", "replace")).hexdigest()
+    return os.path.join(d, key + ".wav")
+
+
+def _readback_cache_get(session: str, text: str) -> str:
+    """Path to the cached wav for (session, turn-text), or '' if absent. Touches it so
+    eviction is LRU (the just-played one survives)."""
+    p = _readback_cache_path(session, text)
+    try:
+        if p and os.path.getsize(p) > 44:   # > an empty wav header
+            os.utime(p, None)
+            return p
+    except OSError:
+        pass
+    return ""
+
+
+def _readback_cache_evict(session: str) -> None:
+    """Keep only the newest READBACK_CACHE_MAX wavs in a session dir."""
+    d = _readback_session_dir(session)
+    try:
+        wavs = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".wav")]
+    except OSError:
+        return
+    wavs.sort(key=_safe_mtime, reverse=True)
+    for old in wavs[READBACK_CACHE_MAX:]:
+        try:
+            os.unlink(old)
+        except OSError:
+            pass
+
+
+def _readback_cache_prune_sessions() -> None:
+    """Keep only the newest READBACK_CACHE_MAX_SESSIONS session dirs — no clutter."""
+    base = _readback_cache_base()
+    if not base:
+        return
+    try:
+        dirs = [os.path.join(base, x) for x in os.listdir(base)]
+        dirs = [x for x in dirs if os.path.isdir(x)]
+    except OSError:
+        return
+    if len(dirs) <= READBACK_CACHE_MAX_SESSIONS:
+        return
+    dirs.sort(key=_safe_mtime, reverse=True)
+    import shutil
+    for old in dirs[READBACK_CACHE_MAX_SESSIONS:]:
+        shutil.rmtree(old, ignore_errors=True)
+
+
+def precache_turn(transcript_path: str, n: int = 1) -> None:
+    """Pre-synthesise the n-th-from-last assistant turn into the read-back cache so the
+    next VolumeUp on it is instant. Run in the BACKGROUND (Stop hook when reading is on,
+    or after a read-back miss). No-op if already cached or nothing speakable."""
+    turns = _turn_texts(transcript_path)
+    if not turns:
+        return
+    n = max(1, min(int(n), len(turns)))
+    text = turns[-n]
+    session = os.path.basename(transcript_path)
+    if _readback_cache_get(session, text):
+        return  # already cached
+    dst = _readback_cache_path(session, text)
+    if not dst:
+        return
+    speakable = _truncate_to_sentence(strip_markdown(text or ""), 2000)
+    if not speakable or not any(ch.isalnum() for ch in speakable):
+        return
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import piper_stream
+        from pathlib import Path
+    except Exception as e:
+        _log("PRECACHE", "setup-fail", repr(e))
+        return
+    tmp = dst + ".tmp"
+    try:
+        ok = piper_stream.synthesize_warm(speakable, Path(tmp))
+    except Exception as e:
+        _log("PRECACHE", "synth-fail", repr(e))
+        ok = False
+    if ok and os.path.exists(tmp):
+        try:
+            os.replace(tmp, dst)
+            _readback_cache_evict(session)
+            _readback_cache_prune_sessions()
+            _log("PRECACHE", "ok", session[:20], "n=", n, "len=", len(speakable))
+        except OSError:
+            pass
+    else:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _play_cached(wav_path: str, owner: str) -> bool:
+    """Play a cached read-back wav via piper_stream's PLAY_WAV mode (instant — no synth)
+    with the same pause / Voice-Typer / channel handling. Tracked so a rapid next
+    VolumeUp can interrupt it (mirrors speak_text_now)."""
+    global _readback_proc
+    if not os.path.isfile(PIPER_STREAM):
+        return False
+    preheat_audio()
+    child_env = dict(os.environ)
+    child_env["CZYTAJ_TID"] = owner or "manual"
+    child_env["CZYTAJ_PRIORITY"] = "active"
+    child_env["CZYTAJ_PLAY_WAV"] = wav_path
+    try:
+        proc = subprocess.Popen(
+            [sys.executable or "python3", PIPER_STREAM],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True, env=child_env,
+        )
+    except (FileNotFoundError, OSError) as e:
+        _log("ACTION", "play_cached", "spawn-fail", repr(e))
+        return False
+    _readback_proc = proc
+    return True
+
+
+def _spawn_precache(transcript_path: str, n: int = 1) -> None:
+    """Fire-and-forget background pre-synth of a turn into the cache."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "precache.py")
+    if not (transcript_path and os.path.isfile(script)):
+        return
+    try:
+        subprocess.Popen(
+            [sys.executable or "python3", script, transcript_path, str(n)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+    except (FileNotFoundError, OSError):
+        pass
+
+
 def read_message_back(n: int = 1) -> bool:
     """Read the n-th assistant turn counting back from the most recent (1 = last
-    message, 2 = the one before, …). Clamped to the oldest available. Stops the
-    current track first so it's a fresh read from the top. Bound to VolumeUp."""
+    message, 2 = the one before, …). Clamped to the oldest available. Bound to VolumeUp.
+    CACHE HIT → play a pre-synthesised wav instantly; MISS → synth on demand and
+    background-cache it for next time."""
     path = _resolve_active_transcript()
     if not path:
         _log("ACTION", "read_back", "no-active-transcript")
@@ -1436,15 +1615,18 @@ def read_message_back(n: int = 1) -> bool:
         return False
     n = max(1, min(int(n), len(turns)))
     text = turns[-n]
-    # Interrupt our OWN previous read-back first: speak_text_now's single-player
-    # "latest-wins" only cleanly replaces audio when one read runs at a time, but
-    # synth takes ~1.5s so a rapid second press would otherwise run concurrently
-    # with the first and the two collide on the shared player. Kill the prior child
-    # (targeted, same window only), then start this read and track it for the next.
+    session = os.path.basename(path)
+    # Interrupt our OWN previous read-back first (rapid second press) — kill the prior
+    # child before starting the next so two reads can't collide on the shared player.
     _stop_previous_readback()
-    _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text))
-    return speak_text_now(text, owner=os.path.basename(path), priority="active",
-                          track=True)
+    cached = _readback_cache_get(session, text)
+    if cached:
+        _log("ACTION", "read_back", "n=", n, "of", len(turns), "CACHE-HIT")
+        return _play_cached(cached, owner=session)
+    _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text), "miss")
+    ok = speak_text_now(text, owner=session, priority="active", track=True)
+    _spawn_precache(path, n)   # cache this turn so the next re-read is instant
+    return ok
 
 
 def read_last_message() -> bool:
