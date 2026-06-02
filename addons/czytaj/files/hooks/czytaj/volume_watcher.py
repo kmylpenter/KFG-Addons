@@ -36,6 +36,7 @@ from _speak import _log, read_message_back  # noqa: E402
 FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")
 SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
 LOCK_FILE = os.path.expanduser("~/.claude/czytaj-volume-watcher.lock")
+ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
 # struct input_event on 64-bit Linux (aarch64): struct timeval {long sec; long usec;}
 # = 16 bytes, then __u16 type + __u16 code + __s32 value = 8 bytes -> 24 total.
@@ -231,12 +232,36 @@ def _read_back() -> None:
         _log("VOLKEY", "read-back-error", repr(e))
 
 
+def _adb_serial() -> str:
+    """Serial of a live adb device for the LOW-LATENCY reader path (a direct adb
+    connection, no Shizuku relay → no ~11s rish floor). '' when adb isn't connected,
+    so the caller falls back to rish (e.g. no Wi-Fi in the car). Only a device showing
+    'device' (authorised) counts — 'offline'/'unauthorized' are ignored."""
+    try:
+        out = subprocess.run([ADB, "devices"], capture_output=True, text=True,
+                             timeout=4).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[1].strip() == "device":
+            return parts[0].strip()
+    return ""
+
+
 def _stream(device: str) -> None:
-    """Read raw input_event structs from `device` via `dd` (raw write() per event,
-    NO stdio buffering) and dispatch volume-key presses. Returns when the reader
-    exits OR after READER_IDLE_RESTART_S of silence (self-heal a stale link)."""
+    """Read raw input_event structs from `device` and dispatch volume-key presses.
+    PREFERS adb exec-out (a direct connection — raw write() per event, NO Shizuku
+    relay, so a press arrives at once instead of the ~11s rish floor) when an adb
+    device is connected; FALLS BACK to rish/Shizuku when adb is down (no Wi-Fi).
+    Returns when the reader exits OR after READER_IDLE_RESTART_S of silence."""
     dev = device or "/dev/input/event0"
-    cmd = ["rish", "-c", f"dd if={dev} bs={_EV_SIZE} 2>/dev/null"]
+    serial = _adb_serial()
+    if serial:
+        cmd = [ADB, "-s", serial, "exec-out", f"dd if={dev} bs={_EV_SIZE} 2>/dev/null"]
+    else:
+        cmd = ["rish", "-c", f"dd if={dev} bs={_EV_SIZE} 2>/dev/null"]
+    _log("VOLKEY", "reader via", "adb" if serial else "rish", dev)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, bufsize=0)
