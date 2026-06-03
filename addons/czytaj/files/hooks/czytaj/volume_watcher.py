@@ -29,15 +29,38 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import _log, read_message_back  # noqa: E402
+from _speak import _log, read_message_back, is_readback_playing  # noqa: E402
 
 FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")
 SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
 LOCK_FILE = os.path.expanduser("~/.claude/czytaj-volume-watcher.lock")
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
+
+# INSTANT path: the Voice Typer accessibility service writes this flag the moment a
+# volume key is pressed (see thoughts/shared/petla/czytaj-volume-keys-CONTRACT.md),
+# bypassing the ~3s Shizuku/adb key-DELIVERY floor that the evdev reader below is
+# stuck with. One line "up <ms>" / "down <ms>"; the ms timestamp is unique per press
+# so the poller tells a NEW press from a stale flag. VERIFIED on-device: accessibility
+# onKeyEvent fires even with the SCREEN OFF, so this path covers all cases.
+KEYTRIGGER_FLAG = os.environ.get(
+    "CZYTAJ_KEYTRIGGER_FLAG",
+    "/storage/emulated/0/Download/Termux-flags/czytaj-keytrigger.flag",
+)
+KEYTRIGGER_POLL_S = 0.08      # how often to poll the trigger flag (~instant, negligible cost)
+FLAG_ECHO_WINDOW_S = 20.0     # (evdev fallback only) suppression window for the echo of an
+                             # accessibility press — unreliable here, hence evdev is off by default.
+# The evdev/Shizuku reader was the original key path, but delivery is slow (~3-11s) and
+# flaky, and its DELAYED echo of an accessibility press double-fired the action (read the
+# last message, then a beat later scrubbed to the 2nd-last). Suppressing that echo proved
+# unreliable in this runtime (FUSE file mtimes stale; in-memory flags not seen across the
+# poller/evdev threads). Since accessibility covers screen-on AND screen-off, the evdev
+# reader is OFF by default; set CZYTAJ_EVDEV_FALLBACK=1 to re-enable it (e.g. if the
+# accessibility service can't be granted) — accepting that its echo may double-fire.
+EVDEV_FALLBACK = os.environ.get("CZYTAJ_EVDEV_FALLBACK", "0") == "1"
 
 # struct input_event on 64-bit Linux (aarch64): struct timeval {long sec; long usec;}
 # = 16 bytes, then __u16 type + __u16 code + __s32 value = 8 bytes -> 24 total.
@@ -76,10 +99,11 @@ _paused = False
 # the last message once playback has finished (idle) before the next press.
 _readback_n = 0
 _last_read_ts = 0.0
-READBACK_WINDOW_S = 45.0  # consecutive VolumeUp presses within this window step further back.
-                          # Generous because the Shizuku relay + a full read can put 10-40s
-                          # between presses; a shorter window reset to 1 every time (the bug
-                          # where it always re-read the same message). Reset also on VolumeDown.
+READBACK_WINDOW_S = 5.0   # rapid-tap window for scrubbing further back. Short now that the
+                          # accessibility path delivers presses INSTANTLY (the old 45s was for
+                          # the slow ~10-40s relay and made SEPARATE presses chain into a scrub,
+                          # so a single press read the 3rd-from-last). Scrub ALSO triggers while a
+                          # read is still playing (is_readback_playing). Reset to 1 on VolumeDown.
 
 
 def _reading_on() -> bool:
@@ -217,20 +241,142 @@ def _toggle_pause() -> None:
 
 
 def _read_back() -> None:
-    """VolumeUp: read the last message; pressed again within READBACK_WINDOW_S of the
-    previous press, step one message further back (rapid presses scrub back). A press
-    after a longer gap resets to the last message. No media-status query — that
-    Android call cost ~1.7s; the time window approximates 'still scrubbing'."""
+    """VolumeUp: read the LAST message. Step one further back (scrub) only when the user
+    is clearly continuing — either a read-back is still PLAYING (pressed while listening)
+    OR this press follows the last within READBACK_WINDOW_S (rapid taps). Otherwise reset
+    to the last message. is_readback_playing() polls our own child (no slow media query)."""
     global _paused, _readback_n, _last_read_ts
     _paused = False
     now = time.monotonic()
-    _readback_n = _readback_n + 1 if (now - _last_read_ts) < READBACK_WINDOW_S else 1
+    scrub = is_readback_playing() or (now - _last_read_ts) < READBACK_WINDOW_S
+    _readback_n = _readback_n + 1 if scrub else 1
     _last_read_ts = now
-    _log("VOLKEY", "VolumeUp -> read-back", _readback_n)
+    _log("VOLKEY", "VolumeUp -> read-back", _readback_n, "scrub" if scrub else "fresh")
     try:
         read_message_back(_readback_n)
     except Exception as e:  # never let one bad action kill the watcher
         _log("VOLKEY", "read-back-error", repr(e))
+
+
+# Shared dispatch for BOTH input paths (evdev reader + accessibility trigger flag).
+# A module-level debounce makes the SAME physical press act once even if both paths
+# deliver it. The evdev path also stands down while the accessibility flag was written
+# recently (`_flag_recent`) — its echo of that same press arrives seconds late and would
+# double-fire. NB: that liveness check reads the flag FILE's mtime, NOT an in-memory flag.
+# A bool set by the poller thread was observed NOT to be visible to the evdev thread in
+# this runtime (while `_paused` was), so the filesystem is the reliable shared channel.
+_dispatch_lock = threading.Lock()
+_last_fire: "dict[int, float]" = {}
+
+
+def _flag_recent() -> bool:
+    """True iff the accessibility trigger flag (or its .tmp) was written within
+    FLAG_ECHO_WINDOW_S — i.e. the accessibility path is live and a concurrent evdev event
+    is just its slow echo. Filesystem-based (file mtime) so it is reliable across the
+    poller thread and the evdev thread."""
+    now = time.time()
+    for p in (KEYTRIGGER_FLAG, KEYTRIGGER_FLAG + ".tmp"):
+        try:
+            if now - os.path.getmtime(p) < FLAG_ECHO_WINDOW_S:
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def _dispatch_key(code: int, *, trusted_fg: bool) -> None:
+    """Act on one volume-key press. `trusted_fg=True` (accessibility flag path) skips
+    the ~1.8s foreground check — the service already gated on Termux-foreground before
+    writing the flag, and that skip is what keeps the flag path INSTANT. The evdev path
+    (`trusted_fg=False`) is a FALLBACK for when the accessibility service isn't granted:
+    while the flag was written recently (`_flag_recent`) the evdev reader stands down so
+    its slow echo can't double-fire the action."""
+    if code not in (KEY_VOLUMEDOWN, KEY_VOLUMEUP):
+        return
+    if not trusted_fg:
+        if _flag_recent():
+            _log("VOLKEY", "evdev-standdown (accessibility live)")
+            return  # accessibility handled this press; we're just its slow echo
+        if not _termux_foreground():
+            return  # Termux not focused → leave the keys to their normal volume job
+        _log("VOLKEY", "evdev-act (fallback; no recent accessibility flag)")
+    with _dispatch_lock:
+        now = time.monotonic()
+        if now - _last_fire.get(code, 0.0) < DEBOUNCE_S:
+            return
+        _last_fire[code] = now
+    # action outside the lock: termux-media-player / read calls are slow and must not
+    # block the other path's debounce check.
+    if code == KEY_VOLUMEDOWN:
+        _toggle_pause()
+    else:
+        _read_back()
+
+
+def _parse_keytrigger(path: str) -> "tuple[str, str] | None":
+    """Parse one trigger file into (key, ts), or None when absent/empty/garbage.
+    `key` is 'up'/'down'; `ts` is the app's per-press millis token used to dedup."""
+    try:
+        with open(path) as f:
+            line = f.readline().strip()
+    except OSError:
+        return None
+    if not line:
+        return None
+    parts = line.split()
+    key = parts[0].lower()
+    if key not in ("up", "down"):
+        return None
+    ts = parts[1] if len(parts) > 1 else line  # tolerate a no-timestamp flag (can't dedup)
+    return key, ts
+
+
+def _read_keytrigger() -> "tuple[str, str] | None":
+    """Most-recent press as (key, ts). The app writes czytaj-keytrigger.flag atomically
+    (temp + rename), but Android's File.renameTo can FAIL on emulated/FUSE shared
+    storage — leaving the valid content orphaned in the .tmp (observed on-device). So
+    read BOTH the final flag and its .tmp and return whichever carries the newer ts;
+    ts-dedup in the poller makes reading the same press from either file idempotent."""
+    cands = []
+    for p in (KEYTRIGGER_FLAG, KEYTRIGGER_FLAG + ".tmp"):
+        r = _parse_keytrigger(p)
+        if r:
+            cands.append(r)
+    if not cands:
+        return None
+
+    def _newest(rt: "tuple[str, str]"):
+        try:
+            return (1, int(rt[1]))   # numeric millis → compare as numbers
+        except (ValueError, TypeError):
+            return (0, rt[1])        # non-numeric token → lexical fallback
+    return max(cands, key=_newest)
+
+
+def _poll_keytrigger() -> None:
+    """Daemon loop: watch the accessibility-written trigger flag and dispatch the
+    instant the app reports a press. Diffs the per-press timestamp so each physical
+    press fires once; seeds from the current flag at startup so a stale flag left by a
+    previous session doesn't fire on launch. This is the path that removes the ~3s
+    key-delivery floor while the screen is ON."""
+    seen = None
+    cur = _read_keytrigger()
+    if cur:
+        seen = cur[1]  # whatever is there at startup counts as already handled
+    while True:
+        time.sleep(KEYTRIGGER_POLL_S)
+        cur = _read_keytrigger()
+        if not cur:
+            continue
+        key, ts = cur
+        if ts == seen:
+            continue  # no new press
+        seen = ts
+        # the app's write already refreshed the flag's mtime → evdev sees it via
+        # _flag_recent() and stands down (filesystem is the reliable cross-thread channel).
+        code = KEY_VOLUMEUP if key == "up" else KEY_VOLUMEDOWN
+        _log("VOLKEY", "keytrigger", key)
+        _dispatch_key(code, trusted_fg=True)
 
 
 def _adb_serial() -> str:
@@ -270,7 +416,6 @@ def _stream(device: str) -> None:
         _log("VOLKEY", "reader-spawn-fail", repr(e))
         return
     buf = b""
-    last_fire: dict[int, float] = {}
     try:
         assert proc.stdout is not None
         fd = proc.stdout.fileno()
@@ -291,22 +436,11 @@ def _stream(device: str) -> None:
                     continue
                 if etype != EV_KEY or value != PRESS:
                     continue  # release / autorepeat / non-key
-                if code not in (KEY_VOLUMEDOWN, KEY_VOLUMEUP):
-                    continue
-                if not _termux_foreground():
-                    continue  # Termux not the focused app → leave the volume keys to
-                    #            their normal job. The keys are a GLOBAL remote now,
-                    #            independent of czytaj on/off (czytaj on/off gates only
-                    #            AUTO-reading); on-demand read-back/pause work any time
-                    #            you're in the terminal, whether reading mode is on or off.
-                now = time.monotonic()
-                if now - last_fire.get(code, 0.0) < DEBOUNCE_S:
-                    continue
-                last_fire[code] = now
-                if code == KEY_VOLUMEDOWN:
-                    _toggle_pause()
-                else:
-                    _read_back()
+                # Shared dispatch: foreground gate + debounce + dedup against the instant
+                # accessibility flag path (evdev stands down while flags are flowing). The
+                # keys are a GLOBAL remote — read-back/pause work whenever Termux is focused,
+                # independent of czytaj on/off (on/off gates only AUTO-reading).
+                _dispatch_key(code, trusted_fg=False)
     except OSError:
         pass
     finally:
@@ -330,6 +464,12 @@ def main() -> int:
         return 0  # another watcher already owns the lock
     signal.signal(signal.SIGTERM, _on_sigterm)
     _log("VOLKEY", "watcher start pid=", os.getpid())
+    # PRIMARY path: poll the accessibility trigger flag in a daemon thread. The Voice Typer
+    # service delivers presses here at ~0ms (verified screen-on AND screen-off), so this is
+    # the sole key path by default. Daemon so teardown (SIGTERM/lock release) isn't blocked.
+    threading.Thread(target=_poll_keytrigger, name="keytrigger", daemon=True).start()
+    if not EVDEV_FALLBACK:
+        _log("VOLKEY", "evdev reader DISABLED — accessibility is the sole key path")
     # Clear a wakelock a previously-crashed watcher may have left held (SIGKILL skips finally).
     try:
         subprocess.run(["termux-wake-unlock"], stdout=subprocess.DEVNULL,
@@ -346,6 +486,11 @@ def main() -> int:
                 _wake_lock()
             else:
                 _wake_unlock()
+            if not EVDEV_FALLBACK:
+                # accessibility poller (daemon thread) handles keys; the main loop just
+                # keeps the wakelock fresh so the device can't doze and freeze the poller.
+                time.sleep(IDLE_RECHECK_S)
+                continue
             if not _shizuku_ready():
                 time.sleep(IDLE_RECHECK_S)
                 continue

@@ -57,7 +57,7 @@ def _log(*parts: object) -> None:
     """Append timestamped event line to ~/.claude/czytaj.log. Never raises."""
     try:
         with open(LOG_FILE, "a") as f:
-            ts = time.strftime("%H:%M:%S")
+            ts = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
             f.write(f"{ts} pid={os.getpid()} {' '.join(str(p) for p in parts)}\n")
     except OSError:
         pass
@@ -376,9 +376,17 @@ def is_screen_unlocked() -> bool:
     if not ok:
         _write_screen_cache(True)
         return True
-    unlocked = "mWakefulness=Awake" in out
-    _write_screen_cache(unlocked)
-    return unlocked
+    # Decide from a CONFIDENT sleep token only. Under rish-relay contention the grep
+    # returns ok=True but with EMPTY/TORN output lacking "Awake" — treating that as
+    # locked was the flapping bug (auto-read SKIP "other-audio" for the whole 5s TTL).
+    # Honor the docstring's "fail OPEN": only an explicit Asleep/Dozing/Dreaming locks;
+    # empty/garbled/Awake → unlocked.
+    if any(tok in out for tok in
+           ("mWakefulness=Asleep", "mWakefulness=Dozing", "mWakefulness=Dreaming")):
+        _write_screen_cache(False)
+        return False
+    _write_screen_cache(True)
+    return True
 
 
 _IME_PACKAGES_CACHE: tuple[float, frozenset[str] | None] = (0.0, None)  # None = list unknown (F48)
@@ -1303,7 +1311,25 @@ def _transcript_for_project(proj_path: str) -> str:
         return cands[0]
 
 
+_tmux_active_cache = {"t": 0.0, "v": ""}
+TMUX_ACTIVE_TTL_S = 1.5  # the live tmux probe spawns a subprocess (~0.2-0.4s); the active
+                         # window can't change between rapid scrub presses, so cache it briefly.
+
+
 def _tmux_active_transcript() -> str:
+    """Cached wrapper around the live tmux probe — caches the resolved transcript for
+    TMUX_ACTIVE_TTL_S so rapid VolumeUp presses don't each pay a tmux subprocess spawn
+    (the measured ~0.3-0.5s pre-synth gap). A real window switch is picked up within ~1.5s."""
+    now = time.monotonic()
+    if now - _tmux_active_cache["t"] < TMUX_ACTIVE_TTL_S:
+        return _tmux_active_cache["v"]
+    v = _tmux_active_transcript_raw()
+    _tmux_active_cache["t"] = now
+    _tmux_active_cache["v"] = v
+    return v
+
+
+def _tmux_active_transcript_raw() -> str:
     """Transcript of the tmux window currently on TOP, read LIVE from the tmux
     server at press time. czytaj runs under Termux's uid (via PRoot), so — unlike
     the Voice Keyboard, a separate app uid that must relay through a Termux
@@ -1604,6 +1630,13 @@ def _play_cached(wav_path: str, owner: str) -> bool:
     return True
 
 
+def is_readback_playing() -> bool:
+    """True iff our last read-back is still audibly playing — a VolumeUp now means
+    'go one further back' (scrub). Cheap: polls our tracked child, no media query."""
+    p = _readback_proc
+    return p is not None and p.poll() is None
+
+
 def _spawn_precache(transcript_path: str, n: int = 1) -> None:
     """Fire-and-forget background pre-synth of a turn into the cache."""
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "precache.py")
@@ -1639,10 +1672,11 @@ def read_message_back(n: int = 1) -> bool:
     # child before starting the next so two reads can't collide on the shared player.
     _stop_previous_readback()
     cached = _readback_cache_get(session, text)
+    snippet = repr(text[:40])  # which message actually played, to compare vs press count
     if cached:
-        _log("ACTION", "read_back", "n=", n, "of", len(turns), "CACHE-HIT")
+        _log("ACTION", "read_back", "n=", n, "of", len(turns), "CACHE-HIT", "first40=", snippet)
         return _play_cached(cached, owner=session)
-    _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text), "miss")
+    _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text), "miss", "first40=", snippet)
     ok = speak_text_now(text, owner=session, priority="active", track=True)
     _spawn_precache(path, n)   # cache this turn so the next re-read is instant
     return ok

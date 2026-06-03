@@ -182,8 +182,8 @@ def unlock_audio_routing() -> None:
             ["termux-media-player", "stop"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=1,
-        )
+            timeout=0.4,   # was 1s — clearing leftover playback; the tone play below replaces
+        )                  # it anyway, so don't burn up to a full second waiting on `stop`.
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     try:
@@ -194,7 +194,9 @@ def unlock_audio_routing() -> None:
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-        time.sleep(0.9)
+        # was 0.9s — just enough for the tone to start and wake BT/Android Auto routing;
+        # the tone keeps playing (Popen) and the real message replaces it right after.
+        time.sleep(0.3)
         try:
             PREHEAT_MARKER.touch()
         except OSError:
@@ -320,18 +322,27 @@ def synthesize_warm(text: str, out_wav: Path) -> bool:
             pass
 
 
+_PULSE_CACHE: "bool | None" = None
+
+
 def _pulse_available() -> bool:
     """Is a PulseAudio server reachable? The old Termux-app install had one;
     native PRoot/Debian has none (no pulse/ALSA/pipewire) — only the Termux:API
-    bridge. `pactl info` returncode 0 = server up. Any failure -> unavailable."""
+    bridge. `pactl info` returncode 0 = server up. Any failure -> unavailable.
+    Memoized for the process lifetime — pulse never appears mid-process on this device,
+    and this is called 2-3× per synth (each a ~50-150ms `pactl info` fork)."""
+    global _PULSE_CACHE
+    if _PULSE_CACHE is not None:
+        return _PULSE_CACHE
     try:
         r = subprocess.run(
             ["pactl", "info"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
         )
-        return r.returncode == 0
+        _PULSE_CACHE = (r.returncode == 0)
     except (OSError, subprocess.SubprocessError):
-        return False
+        _PULSE_CACHE = False
+    return _PULSE_CACHE
 
 
 def _wav_duration_s(audio: Path) -> float:
@@ -362,6 +373,14 @@ def _play_via_termux_blocking(audio: Path) -> None:
         # the Termux bridge is intermittently "command not found" on PRoot.
         _log("PLAY-FAIL termux-media-player:", exc)
         return
+    # The play command has fired and returned → audible playback is starting NOW. Logged
+    # AFTER the command (so the log write can't delay the sound), giving the true
+    # press→audio latency when diffed against the keytrigger timestamp.
+    _log("AUDIO-START")
+    try:  # a real message play just woke BT/Android Auto routing → refresh the marker so a
+        PREHEAT_MARKER.touch()  # consecutive read within PREHEAT_VALID_S skips the ~0.7s wake tone
+    except OSError:
+        pass
     # Pause-aware poll. VolumeDown pauses via termux-media-player, flipping `info`
     # to "Paused" — that must NOT read as "finished" (else we'd release the channel
     # + delete the wav, and resume would break). While paused we keep holding and
@@ -402,6 +421,7 @@ def _play_via_termux_blocking(audio: Path) -> None:
         if play_budget <= 0:
             break
         time.sleep(0.3)
+    _log("AUDIO-END")  # playback finished/stopped — diff vs AUDIO-START = play duration
 
 
 def play_blocking(audio: Path, raw_rate: int | None = None) -> None:
@@ -444,7 +464,7 @@ def play_blocking(audio: Path, raw_rate: int | None = None) -> None:
 def _log(*parts: object) -> None:
     try:
         with open(os.path.expanduser("~/.claude/czytaj.log"), "a") as f:
-            ts = time.strftime("%H:%M:%S")
+            ts = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
             f.write(f"{ts} pid={os.getpid()} STREAM {' '.join(str(p) for p in parts)}\n")
     except OSError:
         pass
@@ -654,12 +674,16 @@ def main() -> int:
         fd, name = tempfile.mkstemp(suffix=".wav", dir=str(scratch))
         os.close(fd)
         wav = Path(name)
+        _t0 = time.monotonic()
         try:
             if synthesize_warm(text, wav):   # warm daemon (~0.7s) → wav; cold fallback inside
+                _log(f"SYNTH-DONE +{time.monotonic() - _t0:.2f}s")   # how long synth took
                 # Cross-window QUEUE: wait here until no OTHER window owns the shared
                 # player, then claim it. Same window / free channel → no wait.
                 _reserve_channel(wav)
+                _log(f"CHANNEL-OK +{time.monotonic() - _t0:.2f}s")   # + any channel-queue wait
                 unlock_audio_routing()
+                _log(f"UNLOCK-DONE +{time.monotonic() - _t0:.2f}s")   # BT/Auto routing-wake tone cost
                 play_blocking(wav)  # blocks until done, then we delete
                 return 0
             return 1
