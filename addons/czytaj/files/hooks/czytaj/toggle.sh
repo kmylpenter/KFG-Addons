@@ -38,6 +38,10 @@ else
   chmod 700 "$RUN_DIR" 2>/dev/null
   nohup python3 "$HOME/.claude/hooks/czytaj/piper_server.py" start >/dev/null 2>&1 &   # F20: race-safe
   disown
+  # FD1: warm the synth inference graph + BT/Android-Auto routing now (detached), so the
+  # FIRST read-back of the session isn't a cold JIT inference + a ~0.7s routing-wake tone.
+  nohup python3 "$HOME/.claude/hooks/czytaj/piper_stream.py" warmup >/dev/null 2>&1 &
+  disown
   # Volume-key watcher (VolumeDown=stop, VolumeUp=read-last via Shizuku getevent).
   # Self-gates on Shizuku readiness + holds a single-instance lock, so spawning it
   # on every ON is safe — a second project's toggle just exits immediately.

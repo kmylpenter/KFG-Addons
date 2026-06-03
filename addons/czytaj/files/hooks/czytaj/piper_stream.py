@@ -720,4 +720,31 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "warmup":
+        # FD1: prime the session at /czytaj ON so the FIRST read-back isn't a cold JIT
+        # inference + a routing-wake tone. (1) Synthesize a throwaway through the warm
+        # daemon to exercise the ONNX inference graph (silent — never played, temp unlinked).
+        # (2) Fire unlock_audio_routing once to wake BT/Android-Auto routing and set
+        # PREHEAT_MARKER, so the user's first VolumeUp within the marker window skips the
+        # tone prelude entirely. Both best-effort; warmup runs detached so toggle returns now.
+        try:
+            _scratch = _audio_scratch_dir()
+            if _scratch is not None:
+                _fd, _name = tempfile.mkstemp(suffix=".wav", dir=str(_scratch))
+                os.close(_fd)
+                _w = Path(_name)
+                try:
+                    synthesize_warm("gotowe", _w)
+                finally:
+                    try:
+                        _w.unlink()
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        try:
+            unlock_audio_routing()
+        except Exception:
+            pass
+        sys.exit(0)
     sys.exit(main())
