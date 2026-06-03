@@ -1222,13 +1222,18 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
 _readback_proc: "subprocess.Popen | None" = None
 
 
-def _stop_previous_readback() -> None:
+def _stop_previous_readback(stop_player: bool = True) -> None:
     """Terminate the piper_stream started by the PREVIOUS VolumeUp read-back so a
     fast second press doesn't leave two synth/playback processes racing on the
     shared player. Targets only OUR last read-back child (its process group, since
-    speak_text_now starts it new-session); the next read's play replaces any audio
-    it already emitted (latest-wins). Best-effort — a dead/finished child is a
-    no-op, and any error is swallowed so the watcher never dies on a stray press."""
+    speak_text_now starts it new-session). Best-effort — a dead/finished child is a
+    no-op, and any error is swallowed so the watcher never dies on a stray press.
+
+    stop_player=False skips the ~1.7s `termux-media-player stop` am-boot: the caller is
+    about to `play` a replacement IMMEDIATELY (cache HIT), and the single Android player is
+    latest-wins, so the new play silences the old one — paying a separate stop just adds a
+    ~1.7s am-boot of dead air per scrub press. Pass True only on a cache MISS, where the
+    ~5s synth would otherwise let the old read keep talking before the new audio starts."""
     global _readback_proc
     proc = _readback_proc
     _readback_proc = None
@@ -1241,9 +1246,11 @@ def _stop_previous_readback() -> None:
             proc.kill()
         except OSError:
             pass
+    if not stop_player:
+        return  # the caller's imminent play replaces the old audio (latest-wins) — no am-boot stop
     # The wrapper we just killed had already handed the audio to the Android player
     # (detached); killpg of the wrapper group does NOT silence it, so stop the player too —
-    # else the previous read keeps playing on a rapid second VolumeUp (cache-hit or synth).
+    # else the previous read keeps playing during the ~5s MISS synth before the new audio.
     try:
         subprocess.run(["termux-media-player", "stop"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
@@ -1699,14 +1706,19 @@ def read_message_back(n: int = 1) -> bool:
     n = max(1, min(int(n), len(turns)))
     text = turns[-n]
     session = os.path.basename(path)
-    # Interrupt our OWN previous read-back first (rapid second press) — kill the prior
-    # child before starting the next so two reads can't collide on the shared player.
-    _stop_previous_readback()
+    # Check the cache BEFORE interrupting the prior read, so we know whether the next play
+    # is immediate (HIT) or ~5s away (MISS) — that decides whether the prior-read stop needs
+    # the ~1.7s `termux-media-player stop` am-boot at all.
     cached = _readback_cache_get(session, text)
     snippet = repr(text[:40])  # which message actually played, to compare vs press count
     if cached:
+        # HIT: kill the old wrapper but DON'T pay the stop am-boot — _play_cached's play
+        # replaces the old audio (latest-wins) in ~0.3s. Saves ~1.7s per scrub press.
+        _stop_previous_readback(stop_player=False)
         _log("ACTION", "read_back", "n=", n, "of", len(turns), "CACHE-HIT", "first40=", snippet)
         return _play_cached(cached, owner=session)
+    # MISS: synth is ~5s away — stop the old audio NOW so it isn't still talking during synth.
+    _stop_previous_readback(stop_player=True)
     _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text), "miss", "first40=", snippet)
     ok = speak_text_now(text, owner=session, priority="active", track=True,
                         save_wav=_readback_cache_path(session, text))  # RC2: miss synth fills the cache
