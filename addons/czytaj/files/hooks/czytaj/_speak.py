@@ -554,19 +554,36 @@ def is_other_audio_playing(check_self: bool = True) -> bool:
          check_self=False, otherwise the new turn would skip itself
          instead of killing the stale one.
     """
-    if is_paused_by_user():
+    if is_paused_by_user():   # cheap local flag — keep first so /pauza short-circuits the probes
         return True
-    if not is_screen_unlocked():
-        return True
-    if is_mic_recording_global():
-        return True
-    if is_external_media_playing():
-        return True
-    if is_device_silenced():
-        return True
+    # AR1 (parallelized): the four independent signals below are each a separate
+    # rish/termux-volume subprocess (~1.2-1.5s). Run SERIALLY they summed to ~5s on the
+    # auto-read hot path (the dominant auto-read latency). Run them CONCURRENTLY in a thread
+    # pool so the whole group costs ~one probe (~1.2s). Every probe fails OPEN (a thread that
+    # errors contributes False), so concurrency can't make us falsely skip — worst case it is
+    # no slower than before. Each probe self-caches 5s, so a 2nd Stop within the window is ~0.
+    import concurrent.futures
+    _probes = (is_screen_locked_probe, is_mic_recording_global,
+               is_external_media_playing, is_device_silenced)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(_probes)) as _ex:
+            _futs = [_ex.submit(_p) for _p in _probes]
+            if any(_f.result() for _f in concurrent.futures.as_completed(_futs)):
+                return True
+    except Exception:
+        # Thread-pool failure must not suppress TTS — fall back to the serial chain.
+        if is_screen_locked_probe() or is_mic_recording_global() \
+                or is_external_media_playing() or is_device_silenced():
+            return True
     if check_self and is_self_already_speaking():
         return True
     return False
+
+
+def is_screen_locked_probe() -> bool:
+    """`not is_screen_unlocked()` as a single callable, so the parallel guard pool can treat
+    'screen locked' uniformly with the other 'should-skip' probes (each returns True == skip)."""
+    return not is_screen_unlocked()
 
 
 # Removed: is_mic_busy(). The mic-probe approach was unreliable because
