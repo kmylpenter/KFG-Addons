@@ -1341,8 +1341,10 @@ def _transcript_for_project(proj_path: str) -> str:
 
 
 _tmux_active_cache = {"t": 0.0, "v": ""}
-TMUX_ACTIVE_TTL_S = 1.5  # the live tmux probe spawns a subprocess (~0.2-0.4s); the active
-                         # window can't change between rapid scrub presses, so cache it briefly.
+TMUX_ACTIVE_TTL_S = 2.5  # RC4: was 1.5 — the live tmux probe spawns a subprocess (~0.2-0.4s);
+                         # the active window can't change between rapid scrub presses, so cache it
+                         # a bit longer to also cover slightly slower repeat presses (still well
+                         # under a real window switch the user would make between separate reads).
 
 
 def _tmux_active_transcript() -> str:
