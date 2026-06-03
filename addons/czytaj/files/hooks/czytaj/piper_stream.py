@@ -678,6 +678,20 @@ def main() -> int:
         try:
             if synthesize_warm(text, wav):   # warm daemon (~0.7s) → wav; cold fallback inside
                 _log(f"SYNTH-DONE +{time.monotonic() - _t0:.2f}s")   # how long synth took
+                # Auto-read populates the read-back cache here: COPY the just-synthesized
+                # wav to the path _speak precomputed (sha1 of the raw last turn) so a later
+                # VolumeUp on this message is an INSTANT cache HIT instead of a re-synth.
+                # Copy, not move — we still play `wav` below. Best-effort; never blocks audio.
+                _save = os.environ.get("CZYTAJ_SAVE_WAV", "")
+                if _save:
+                    try:
+                        _tmp = f"{_save}.{os.getpid()}.tmp"
+                        with open(str(wav), "rb") as _s, open(_tmp, "wb") as _d:
+                            _d.write(_s.read())
+                        os.replace(_tmp, _save)
+                        _log("CACHED-READBACK", os.path.basename(_save))
+                    except OSError as e:
+                        _log("CACHE-SAVE-FAIL", repr(e))
                 # Cross-window QUEUE: wait here until no OTHER window owns the shared
                 # player, then claim it. Same window / free channel → no wait.
                 _reserve_channel(wav)

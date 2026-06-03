@@ -1150,6 +1150,20 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     child_env = dict(os.environ)
     child_env["CZYTAJ_TID"] = os.path.basename(transcript_path or "") or "pane"
     child_env["CZYTAJ_PRIORITY"] = "active" if kill_previous else "background"
+    # Populate the read-back cache with THIS auto-read's wav: piper_stream copies the
+    # synthesized wav to CZYTAJ_SAVE_WAV (below) so a later VolumeUp on the just-spoken
+    # message is an INSTANT cache HIT instead of a ~3-6s re-synth. Key it by the SAME raw
+    # last-turn text read-back/precache use (_turn_texts[-1] + _readback_cache_path), so
+    # the keys line up. Best-effort: any error just skips the cache populate.
+    try:
+        _turns = _turn_texts(transcript_path)
+        if _turns:
+            _save = _readback_cache_path(child_env["CZYTAJ_TID"], _turns[-1])
+            if _save:
+                os.makedirs(os.path.dirname(_save), exist_ok=True)
+                child_env["CZYTAJ_SAVE_WAV"] = _save
+    except Exception:
+        pass
     try:
         proc = subprocess.Popen(
             [sys.executable or "python3", PIPER_STREAM],
