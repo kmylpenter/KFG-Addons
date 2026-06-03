@@ -116,6 +116,11 @@ SILENT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "silent.wav"
 
 PREHEAT_MARKER = Path(os.path.expanduser("~/.claude/czytaj-preheat.ts"))
 PREHEAT_VALID_S = 60
+# FD2: the volume_watcher writes this on a VolumeDown pause (see volume_watcher.py
+# KEYPAUSE_STATE). Checked every play cycle as a FAST local pause signal so we freeze the
+# play-budget instantly instead of waiting for the ~3s `termux-media-player info` round-trip.
+# MUST match volume_watcher.py KEYPAUSE_STATE.
+KEYPAUSE_STATE = Path(os.path.expanduser("~/.claude/czytaj-keypause.state"))
 
 
 def _audio_scratch_dir() -> Path | None:
@@ -401,6 +406,13 @@ def _play_via_termux_blocking(audio: Path) -> None:
             except (OSError, subprocess.SubprocessError):
                 pass
             break
+        # FD2: fast local pause signal (the watcher's VolumeDown marker) — freeze the
+        # play-budget WITHOUT a ~3s `termux-media-player info` round-trip, so a pause is
+        # honored instantly and we stop hammering `info` while the user is paused.
+        if KEYPAUSE_STATE.exists():
+            last = time.monotonic()
+            time.sleep(0.3)
+            continue
         try:
             r = subprocess.run(
                 ["termux-media-player", "info"],

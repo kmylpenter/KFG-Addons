@@ -65,7 +65,12 @@ try:
 except ValueError:
     DEFAULT_SAMPLE_RATE = 22050
 SERVER_IDLE_TIMEOUT_S = int(os.environ.get("PIPER_IDLE_TIMEOUT", "1800"))
-DAEMON_READ_TIMEOUT_S = float(os.environ.get("PIPER_DAEMON_TIMEOUT", "30"))
+DAEMON_READ_TIMEOUT_S = float(os.environ.get("PIPER_DAEMON_TIMEOUT", "10"))  # SD1: was 30 — a hung
+# daemon stalled a synth ~30s before the cold fallback. 10s leaves comfortable margin for the
+# longest real synth (a 2000-char read-back is a few seconds on this device) while cutting the
+# hung-daemon stall to ~10s. speak_raw's socket timeout is set slightly higher so the server's
+# own kill+respawn fires first.
+_daemon_err_count = 0  # FD4: consecutive synth-failure counter; recycle the daemon after 2 (below)
 
 
 def _is_alive(pid: int) -> bool:
@@ -229,8 +234,24 @@ def synthesize_via_daemon(daemon: subprocess.Popen, text: str, raw_path: Path) -
             break
         line_bytes += chunk
         if b"\n" in line_bytes:
+            global _daemon_err_count
             line = line_bytes.split(b"\n", 1)[0].decode("utf-8", errors="ignore").strip()
-            return line == "OK" and raw_path.exists()
+            ok = line == "OK" and raw_path.exists()
+            if ok:
+                _daemon_err_count = 0
+            else:
+                # FD4: a persistent synth fault (ERR / missing out file) used to return False
+                # WITHOUT recycling the daemon, so every later read failed silently. Recycle after
+                # 2 consecutive failures (get_daemon respawns a clean one); a single transient ERR
+                # keeps the warm daemon — no ~5s cold respawn for a one-off bad path.
+                _daemon_err_count += 1
+                if _daemon_err_count >= 2:
+                    _daemon_err_count = 0
+                    try:
+                        daemon.kill()
+                    except OSError:
+                        pass
+            return ok
     try:
         daemon.kill()
     except OSError:
@@ -406,7 +427,7 @@ def run_server() -> None:
         shutdown()
 
 
-def speak_raw(text: str, raw_out: Path, timeout_s: float = 30.0) -> int | None:
+def speak_raw(text: str, raw_out: Path, timeout_s: float = 12.0) -> int | None:  # SD1: was 30.0
     """Synthesize text into raw float32 PCM at raw_out via the daemon.
     Returns the sample rate on success, None on failure."""
     if not ensure_running():
@@ -445,7 +466,7 @@ def speak_raw(text: str, raw_out: Path, timeout_s: float = 30.0) -> int | None:
             pass
 
 
-def speak(text: str, wav_out: Path, timeout_s: float = 30.0) -> bool:
+def speak(text: str, wav_out: Path, timeout_s: float = 12.0) -> bool:  # SD1: was 30.0
     return speak_raw(text, wav_out, timeout_s) is not None
 
 

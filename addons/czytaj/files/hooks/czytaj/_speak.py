@@ -371,7 +371,7 @@ def is_screen_unlocked() -> bool:
         return cached
     ok, out = _run_shell(
         "dumpsys power | grep -m1 mWakefulness=",
-        timeout_s=5.0,
+        timeout_s=1.2,
     )
     if not ok:
         _write_screen_cache(True)
@@ -405,7 +405,7 @@ def _enabled_ime_packages() -> frozenset[str] | None:
         return cached
     if _shell_cmd_prefix() is None:
         return None
-    ok, out = _run_shell("ime list -s", timeout_s=5.0)
+    ok, out = _run_shell("ime list -s", timeout_s=1.2)
     if not ok:
         return cached  # None if never cached → caller fails open
     pkgs = set()
@@ -437,7 +437,7 @@ def is_mic_recording_global() -> bool:
         pass
     ok, out = _run_shell(
         "dumpsys audio | grep -E 'source client=.*silenced:false.*pack:'",
-        timeout_s=5.0,
+        timeout_s=1.2,
     )
     recording = False
     if ok and out.strip():
@@ -483,7 +483,7 @@ def is_external_media_playing() -> bool:
         pass
     ok, out = _run_shell(
         "cmd media_session list-sessions",
-        timeout_s=5.0,
+        timeout_s=1.2,
     )
     playing = False
     if ok and out:
