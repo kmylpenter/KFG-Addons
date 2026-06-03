@@ -119,8 +119,17 @@ def server_alive() -> bool:
     return True
 
 
+def _flags_present() -> bool:
+    """True if ANY project flag exists (czytaj ON somewhere). Exception-safe so a
+    FLAG_DIR that vanishes mid-scandir can't crash the daemon loop (RG2)."""
+    try:
+        return FLAG_DIR.is_dir() and any(FLAG_DIR.iterdir())
+    except OSError:
+        return False
+
+
 def ensure_running() -> bool:
-    if not (FLAG_DIR.is_dir() and any(FLAG_DIR.iterdir())):  # F1: stay up while ANY project reads
+    if not _flags_present():  # F1: stay up while ANY project reads
         return False
     if server_alive():
         return True
@@ -384,7 +393,7 @@ def run_server() -> None:
                 # cold start. Idle cost is ~0% CPU (sleeping). Only self-reap when reading
                 # is fully off. Re-checked each timeout, so it reaps within one window
                 # after the last /czytaj OFF.
-                if FLAG_DIR.is_dir() and any(FLAG_DIR.iterdir()):
+                if _flags_present():   # RG2: exception-safe (no crash if FLAG_DIR vanishes mid-scan)
                     continue
                 shutdown()
                 return
@@ -449,7 +458,12 @@ if __name__ == "__main__":
         ensure_running()
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
-        run_server()
+        # SD2: the old bare run_server() bound the socket with NO lock, so a stray
+        # `serve` could double-bind and steal the socket from the warm daemon. Route
+        # it through the same flock-guarded spawn as `start` (nothing calls `serve`
+        # today — toggle.sh uses `start` — so this only hardens a latent entrypoint;
+        # run_server() stays the in-fork server body invoked under ensure_running's lock).
+        ensure_running()
         sys.exit(0)
     if len(sys.argv) < 2:
         print("usage: piper_server.py start | serve | <text>", file=sys.stderr)

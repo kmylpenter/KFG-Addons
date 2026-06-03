@@ -1022,7 +1022,10 @@ def speak_new_text(transcript_path: str, kill_previous: bool, cwd: str = "") -> 
             _log("SKIP", caller, "reason=channel-busy-nonactive")
             return 0
         kill_previous = False  # a background pane must never cut off the active one
-    if is_other_audio_playing(check_self=not kill_previous):
+    _t_guard = time.monotonic()
+    _other = is_other_audio_playing(check_self=not kill_previous)
+    _log("GUARD", caller, f"+{time.monotonic() - _t_guard:.2f}s", "skip" if _other else "pass")  # AR4: time the rish guard chain
+    if _other:
         _log("SKIP", caller, "reason=other-audio")
         return 0
     # Global lock — serializes concurrent hook fires (e.g. 5 PreToolUse hooks
