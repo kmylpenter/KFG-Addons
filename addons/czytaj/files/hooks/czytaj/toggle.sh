@@ -2,7 +2,7 @@
 # Toggle voice reading mode flag + (re)spawn Piper daemon.
 # Prints exactly "ON" or "OFF" so the skill can branch on a single read.
 
-RUN_DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/piper-server"   # F19: SSOT with piper_server.py
+RUN_DIR="$HOME/.cache/czytaj/piper-server"   # FIXED path, SSOT with piper_server.py (was env-derived → daemon-split → cold synth)
 FLAG_DIR="$HOME/.claude/czytaj-flags"
 
 # Per-project key — MUST match _speak.py _project_dir/_project_flag and

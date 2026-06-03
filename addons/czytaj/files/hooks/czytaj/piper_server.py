@@ -49,10 +49,12 @@ PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-d
 PIPER_VOICES = PIPER_HOME / "voices"
 FLAG_DIR = Path.home() / ".claude" / "czytaj-flags"   # F1: per-project (was global czytaj.flag)
 
-# F19: `or` chain (empty-as-unset) to match bash ${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}
-# in toggle.sh + install.sh — .get(k, default) would return "" for a set-but-empty
-# XDG_RUNTIME_DIR, giving "/piper-server" and a dir mismatch.
-RUN_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or os.environ.get("TMPDIR") or "/tmp") / "piper-server"
+# FIXED path (was XDG_RUNTIME_DIR/TMPDIR/-derived): those env vars DIFFER across czytaj
+# processes — Claude-Code-spawned hooks get TMPDIR=/tmp/claude-*, others get none → each
+# computed a DIFFERENT RUN_DIR → separate daemons that never shared the socket → synth was
+# ALWAYS cold (~3-7s) and zombies piled up. A stable HOME path makes every process (watcher,
+# Stop hook, precache, piper_stream) share ONE warm, persistent daemon. MUST match toggle.sh.
+RUN_DIR = Path.home() / ".cache" / "czytaj" / "piper-server"
 SOCKET_PATH = RUN_DIR / "server.sock"
 PID_FILE = RUN_DIR / "server.pid"
 LOCK_FILE = RUN_DIR / "server.lock"
@@ -377,6 +379,13 @@ def run_server() -> None:
             try:
                 conn, _ = sock.accept()
             except socket.timeout:
+                # Idle for SERVER_IDLE_TIMEOUT_S — but stay WARM while ANY project is
+                # reading (a flag exists), so the next read-back/auto-read isn't a ~3-7s
+                # cold start. Idle cost is ~0% CPU (sleeping). Only self-reap when reading
+                # is fully off. Re-checked each timeout, so it reaps within one window
+                # after the last /czytaj OFF.
+                if FLAG_DIR.is_dir() and any(FLAG_DIR.iterdir()):
+                    continue
                 shutdown()
                 return
             except OSError:

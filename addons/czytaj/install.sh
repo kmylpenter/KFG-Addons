@@ -105,7 +105,7 @@ rm -rf "$CLAUDE_DIR/skills/czytaj"
 # reinstall never silently turns a project off. F49: pause flag also preserved.
 # Only the transient daemon + state.json are reset below.
 rm -f "$HOME/.claude/czytaj-state.json"
-PIPER_RUN="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/piper-server"   # F19: SSOT with piper_server.py
+PIPER_RUN="$HOME/.cache/czytaj/piper-server"   # FIXED path, SSOT with piper_server.py + toggle.sh
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f 'python.*piper_server\.py' >/dev/null 2>&1 || true   # F21: anchored (final-sweep)
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true
