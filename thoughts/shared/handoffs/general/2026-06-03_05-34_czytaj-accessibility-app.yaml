@@ -1,0 +1,85 @@
+---
+session: general
+date: 2026-06-03
+status: complete
+outcome: SUCCEEDED
+---
+
+goal: >
+  czytaj read-back made INSTANT (per-session audio cache + warm-daemon synth); ADB
+  Wireless-Debugging paired to self (split-screen); /petla audit+solve hardened it;
+  all committed + PUSHED on fix/czytaj-audit-2026-05-31 (HEAD 4d253ba).
+now: >
+  Build an Android ACCESSIBILITY-SERVICE app that intercepts hardware volume keys and
+  triggers czytaj read-back/pause INSTANTLY — to kill the ~3s key-DELIVERY floor (the
+  ONLY remaining latency; synth is already solved by the cache). This is a NEW app
+  project, not a czytaj edit.
+test: >
+  Read-back today: press VolumeUp on a recent message of the focused window → near-
+  instant play (cache HIT, zero synth). Verify cache: grep CACHE-HIT ~/.claude/czytaj.log
+  after a re-read. The app's win: accessibility onKeyEvent must fire on a volume press
+  with ~0ms latency (vs the ~3s adb/Shizuku floor).
+
+done_this_session:
+  - task: "Read-back AUDIO CACHE: last 5 turns/session pre-synth'd to Android-readable wavs (sha1(turn-text) key); cache HIT plays the ready wav via piper_stream PLAY_WAV mode = ZERO synth. Hard caps 5 wavs/session + 8 session dirs (no clutter). Stop hook pre-synths in background (precache.py, range n=1..5); read-back miss caches on demand."
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py, addons/czytaj/files/hooks/czytaj/stop.py, addons/czytaj/files/hooks/czytaj/precache.py]
+  - task: "WARM synth: synthesize_warm() routes synth through the already-running piper daemon (model warm ~0.7s vs ~2.7s cold; raw float32 -> wav) with cold fallback; used by pre-cache + native auto-read."
+    files: [addons/czytaj/files/hooks/czytaj/piper_stream.py]
+  - task: "ADB Wireless-Debugging PAIRED to self (127.0.0.1). volume_watcher reads keys via `adb -s <serial> exec-out dd if=/dev/input/event0` with rish/Shizuku fallback (_adb_serial)."
+    files: [addons/czytaj/files/hooks/czytaj/volume_watcher.py]
+  - task: "/petla audit (5 lenses) -> found read-back cache was INERT (0 hits: precache only n=1, goes stale on next turn) + bugs. /petla solve fixed: C1 range precache (verified 3/3 hits); M1 struct.error slice; M2 per-pid tmp; M3 stop Android player on rapid 2nd press; M4 warm-path tempo self-heal (F9); M5 SIGTERM wakelock release; m1/m2 prune raw + reap reader."
+    files: [thoughts/shared/petla/audit-czytaj-2026-06-02.yaml, addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py, addons/czytaj/files/hooks/czytaj/volume_watcher.py]
+  - task: "Committed (f83333a, 28b15d3, 4dcd36b, 4d253ba) and PUSHED. Remote switched HTTPS->SSH (HTTPS had no token; SSH key works as kmylpenter)."
+    files: []
+
+blockers: []
+
+questions:
+  - "WHERE does the accessibility service live? UtilityHub keyboard app (com.utilityhub.voicekeyboard — already builds APKs, already writes czytaj-active-window.flag, maintained by ANOTHER Claude → coordinate via contract) vs a NEW minimal app? Leaning UtilityHub (reuse build + existing czytaj integration)."
+  - "How does the native app TRIGGER czytaj read-back, which is Python in PRoot (_speak.read_message_back / _toggle_pause)? Option A (lowest latency): app writes a TRIGGER FLAG (e.g. /storage/emulated/0/Download/Termux-flags/czytaj-keytrigger.flag = 'up'|'down'+ts); a tiny fast poller in PRoot reads it and calls read_message_back/pause — REPLACING the evdev volume_watcher reader. Option B: app fires a Termux RUN_COMMAND running a script that invokes read-back (RUN_COMMAND adds ~hundreds ms but no Shizuku floor)."
+  - "Should the service CONSUME volume keys (onKeyEvent return true → volume won't change) or PASS them (return false) and only ALSO trigger read? User wants volume keys to still work normally; likely pass-through + trigger, gated on Termux being foreground (mirror the watcher's _termux_foreground gate)."
+  - "Does accessibility onKeyEvent fire with the SCREEN OFF (hands-free driving)? Must verify — if not, the floor isn't fully removed for screen-off use."
+
+decisions:
+  - cache_over_chunking: "Chunked/streamed synth REVERTED — the piper BINARY cold-starts ~2-3s PER chunk (2 sentences = 6.7s). Warm daemon is the real win. The CACHE (instant hit) is what removes the synth latency, not chunking."
+  - adb_did_not_cut_latency: "ADB pairing was won (split-screen — see memory czytaj-adb-self-pairing) but the ~3s read-back floor is COMMON to adb-exec-out AND Shizuku-rish (measured via VolDown pause = ~3s both). It's KEY DELIVERY to a background reader, not transport. Hence the accessibility-app plan."
+  - cache_key_is_content_hash: "Cache keyed sha1(raw turns[-n]) (content, not index) — write==read verified. The inert-cache bug was precache only n=1 going stale; fix = precache range n=1..5 each Stop."
+  - remote_ssh: "origin switched to git@github.com:kmylpenter/KFG-Addons.git (SSH works; HTTPS lacked a token). Future pushes just work."
+
+findings:
+  - latency_breakdown: "Read-back 11s = ~3s key-delivery (Shizuku/adb floor, common) + ~5-8s synth-whole-message. Cache killed the synth part (instant hit). Only the ~3s key floor remains → accessibility app is the fix (Android delivers KeyEvents to a service instantly, no background-reader throttle)."
+  - build_toolchain_present: "java/javac (OpenJDK 21), gradle, aapt/aapt2, apksigner, d8 all present in Termux (verified). /usr/lib/android-sdk exists. APK build is feasible here. No kotlinc (javac only)."
+  - czytaj_runtime: "watcher = volume_watcher.py (single-instance flock ~/.claude/czytaj-volume-watcher.lock; spawned by toggle.sh ON + respawned by user-prompt-submit.sh; reads adb exec-out dd, rish fallback; wakelock while reading-on). read-back entry = _speak.read_message_back(n) (resolves active window via LIVE tmux socket → cache HIT/_play_cached or MISS/speak_text_now+precache). pause = _toggle_pause (termux-media-player)."
+
+worked:
+  - "Per-session audio cache + warm-daemon synth → instant read-back of recent messages (the synth half of the 11s, gone)"
+  - "Split-screen for adb self-pairing (the 'protocol fault' was the pairing dialog dying on app-switch — see memory czytaj-adb-self-pairing)"
+  - "/petla audit (5 tailored lenses, subagents) caught the INERT-cache design flaw I missed; direct-fix solve + functional tests (budget-lean vs per-fix 5-agent verify)"
+
+failed:
+  - "Chunked synth on native (cold-start per chunk → slower)"
+  - "adb to reduce key latency (floor is delivery-to-background-reader, not transport)"
+  - "HTTPS push (no token) → switched remote to SSH"
+
+next:
+  - "Decide app home (UtilityHub vs new) + read the UtilityHub manifest/build (apps/voice-keyboard/) to see how to add an AccessibilityService; it already writes czytaj-active-window.flag so it knows the czytaj contract pattern."
+  - "Implement AccessibilityService: accessibility-service config XML with canRequestFilterKeyEvents=true + flagRequestFilterKeyEvents; onKeyEvent catches KEYCODE_VOLUME_UP/DOWN; gate on Termux foreground; PASS the key through (return false) + fire the czytaj trigger."
+  - "Implement the trigger bridge (Option A preferred): app writes czytaj-keytrigger.flag (up/down + ts) to the shared Downloads/Termux-flags dir; add a tiny fast PRoot poller (or fold into the existing watcher loop) that reads the flag and calls _speak.read_message_back / _toggle_pause — then RETIRE or keep the adb/rish evdev reader as fallback."
+  - "VERIFY screen-off behavior (accessibility key events with screen off) — the real hands-free test."
+  - "Coordinate with the UtilityHub Claude via a contract doc (like thoughts/shared/petla/voice-typer-active-window-CONTRACT.md) if the service lives there."
+
+files:
+  created:
+    - addons/czytaj/files/hooks/czytaj/precache.py
+    - thoughts/shared/plans/czytaj-readback-cache.md
+    - thoughts/shared/petla/audit-czytaj-2026-06-02.yaml
+    - thoughts/shared/czytaj-adb-parowanie.md
+    - thoughts/shared/czytaj-adb-natywny-termux.md
+    - "memory: czytaj-adb-self-pairing.md, czytaj-tmux-active-from-proot.md"
+  modified:
+    - addons/czytaj/files/hooks/czytaj/_speak.py
+    - addons/czytaj/files/hooks/czytaj/piper_stream.py
+    - addons/czytaj/files/hooks/czytaj/volume_watcher.py
+    - addons/czytaj/files/hooks/czytaj/stop.py
+    - addons/czytaj/files/hooks/czytaj/toggle.sh
+    - addons/czytaj/files/hooks/czytaj/user-prompt-submit.sh
