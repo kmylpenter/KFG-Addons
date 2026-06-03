@@ -1160,7 +1160,13 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     # the keys line up. Best-effort: any error just skips the cache populate.
     try:
         _turns = _turn_texts(transcript_path)
-        if _turns:
+        # RG1: only PRE-FILL the read-back cache when the audio we're about to synth
+        # EQUALS what a read-back of the last turn would say — i.e. no folder prefix AND
+        # the new suffix IS the whole last turn. Otherwise a cache HIT would replay a stray
+        # "Label." announcement or a partial multi-bubble span. When this gate skips, the
+        # read-back MISS path (speak_text_now save_wav, RC2) still fills the cache faithfully
+        # on the first press.
+        if _turns and not prefix and new_text.strip() == _turns[-1].strip():
             _save = _readback_cache_path(child_env["CZYTAJ_TID"], _turns[-1])
             if _save:
                 os.makedirs(os.path.dirname(_save), exist_ok=True)
@@ -1261,7 +1267,7 @@ def stop_now() -> None:
 
 
 def speak_text_now(text: str, owner: str = "manual", priority: str = "active",
-                   track: bool = False) -> bool:
+                   track: bool = False, save_wav: str = "") -> bool:
     """Synthesize + play arbitrary text immediately, bypassing the spoken-ledger
     so already-spoken content is re-read on demand. Mirrors _speak_inner's
     piper_stream hand-off (stdin + CZYTAJ_TID/CZYTAJ_PRIORITY). Returns True if
@@ -1278,6 +1284,12 @@ def speak_text_now(text: str, owner: str = "manual", priority: str = "active",
     child_env = dict(os.environ)
     child_env["CZYTAJ_TID"] = owner or "manual"
     child_env["CZYTAJ_PRIORITY"] = priority
+    if save_wav:                    # RC2: fill the read-back cache with THIS on-demand synth
+        try:                        # so the next identical VolumeUp is an instant HIT. Keyed by
+            os.makedirs(os.path.dirname(save_wav), exist_ok=True)  # the SAME raw turn text the
+            child_env["CZYTAJ_SAVE_WAV"] = save_wav                # caller reads with → no prefix,
+        except OSError:                                           # always faithful (RG1-immune).
+            pass
     try:
         proc = subprocess.Popen(
             [sys.executable or "python3", PIPER_STREAM],
@@ -1694,8 +1706,9 @@ def read_message_back(n: int = 1) -> bool:
         _log("ACTION", "read_back", "n=", n, "of", len(turns), "CACHE-HIT", "first40=", snippet)
         return _play_cached(cached, owner=session)
     _log("ACTION", "read_back", "n=", n, "of", len(turns), "len=", len(text), "miss", "first40=", snippet)
-    ok = speak_text_now(text, owner=session, priority="active", track=True)
-    _spawn_precache(path, n)   # cache this turn so the next re-read is instant
+    ok = speak_text_now(text, owner=session, priority="active", track=True,
+                        save_wav=_readback_cache_path(session, text))  # RC2: miss synth fills the cache
+    _spawn_precache(path, n)   # also warm look-back turns in the background (no-ops n if already saved)
     return ok
 
 

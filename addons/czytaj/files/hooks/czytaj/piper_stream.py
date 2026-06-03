@@ -684,10 +684,21 @@ def main() -> int:
                 # Copy, not move — we still play `wav` below. Best-effort; never blocks audio.
                 _save = os.environ.get("CZYTAJ_SAVE_WAV", "")
                 if _save:
+                    # FD5: hardlink (instant, same FS — no read-into-RAM) so the populate
+                    # completes before a supersede-kill can interrupt it; the link keeps the
+                    # cached wav alive after the source `wav` is unlinked below (same inode).
+                    # Copy only as a cross-FS fallback. Atomic rename via a per-pid tmp.
+                    _tmp = f"{_save}.{os.getpid()}.tmp"
                     try:
-                        _tmp = f"{_save}.{os.getpid()}.tmp"
-                        with open(str(wav), "rb") as _s, open(_tmp, "wb") as _d:
-                            _d.write(_s.read())
+                        try:
+                            os.unlink(_tmp)
+                        except OSError:
+                            pass
+                        try:
+                            os.link(str(wav), _tmp)
+                        except OSError:
+                            import shutil
+                            shutil.copyfile(str(wav), _tmp)
                         os.replace(_tmp, _save)
                         _log("CACHED-READBACK", os.path.basename(_save))
                     except OSError as e:
