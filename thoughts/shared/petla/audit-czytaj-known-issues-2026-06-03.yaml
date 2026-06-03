@@ -1,0 +1,401 @@
+meta:
+  mode: audit
+  target: "addons/czytaj/files/hooks/czytaj/ (latency core)"
+  seed: "thoughts/shared/petla/czytaj-known-issues-2026-06-03.md"
+  started: "2026-06-03"
+  updated: "2026-06-03"
+  status: completed
+  iterations: 2
+  exit_confidence: MEDIUM_HIGH
+  exit_rationale: >
+    Not the strict 2x-clean "converged HIGH" (every iteration found issues), BUT: (a) the
+    fix-plan-coherence completeness-critic VERIFIED every press->audio stage has a finding
+    (no coverage gap); (b) iter-2 discovery tailed (12 new vs 20, rate 0.6, mostly on-device
+    MEASUREMENTS refining known areas, not new problem classes); (c) iter-2 fresh sweeps hit
+    convergence on growth/teardown/atomicity/wakelock/channel/scratch (nothing new). A 3rd
+    iteration would surface more timing refinements, not new classes. Trustworthy as a
+    solve-ready list; minor on-device-measurement items may still exist.
+  lenses_iter1: [synth-daemon, playback-floor, resolve-cache, auto-read, regression-correctness]
+  lenses_iter2: [audio-path-reconcile, fresh-sweep-bugs, fresh-sweep-daemon-playback, fix-plan-coherence]
+  target_files:
+    - "addons/czytaj/files/hooks/czytaj/piper_server.py"
+    - "addons/czytaj/files/hooks/czytaj/piper_stream.py"
+    - "addons/czytaj/files/hooks/czytaj/_speak.py"
+    - "addons/czytaj/files/hooks/czytaj/precache.py"
+    - "addons/czytaj/files/hooks/czytaj/stop.py"
+    - "addons/czytaj/files/hooks/czytaj/volume_watcher.py"
+
+headline: >
+  Iteration 2 OVERTURNED the #1 lever from iteration 1. The big latency picture, corrected
+  by on-device measurement:
+  (1) PB1 (route playback via the resident am.sock with rish) is INVALID and must be DROPPED:
+      termux-media-player ALREADY execs `am broadcast` to TermuxApiReceiver (proven from the
+      termux-api-broadcast ELF), and `rish` is ~3x SLOWER (rish -c true ~3.9-4.7s vs am ~1.5-1.7s).
+      Wrapping play in rish REGRESSES ~2-3s. The ~1.7s am-broadcast play floor is STRUCTURAL —
+      irreducible from inside PRoot without a resident audio sink (needs PulseAudio/ALSA, absent).
+  (2) The read-back cache DOES work (live log: PRECACHE ok x87 -> 13 cache HITs) via the
+      background precache_turn route. The e814624 inline auto-read populate is unreliable because
+      281/300 synth processes are KILLED by supersede/latest-wins before the copy (AP1), plus the
+      RG1 prefix divergence. The device is genuinely no-pulse (live `pactl info` rc=1), so it runs
+      ONLY the native synth path that already contains the populate.
+  (3) The honest achievable target: read-back = ~1.7s (one am broadcast) + instant cached audio,
+      i.e. ~2s, NOT "instant"/sub-1s. Getting there = make the cache reliably hit (RC2/RC3 +
+      corrected RC1) + kill the ~2.4s routing-wake tone PRELUDE that gates even cache HITs (FD6) +
+      warm synth & routing at toggle (FD1). The remaining ~1.7s floor stands.
+
+# ============================ CONFIRMED FINDINGS ============================
+issues:
+  # ----- CRITICAL -----
+  - id: AR1
+    severity: critical
+    confidence: HIGH
+    status: confirmed
+    lens: auto-read
+    p_item: P6
+    title: "Cold guard chain = up to 4 serial rish probes, each timeout 5s -> ~9-21s worst / ~2-4s typical before any audio"
+    location: "_speak.py:557-569 is_other_audio_playing -> is_screen_unlocked:372, is_mic_recording_global:438(+_enabled_ime_packages:408), is_external_media_playing:484; each _run_shell timeout_s=5.0"
+    evidence: "Pure short-circuit chain; when unlocked+quiet (common) NONE short-circuits so all run serial, each one 5s subprocess.run, no retry. Prior log: SKIP other-audio x460 / DID speak x345."
+    latency_impact: "~2-4s typical, up to ~9-21s cold/contended on the Stop path before synth; gates the cache populate too"
+    fix: "(1) lower rish probe timeout on auto-read path 5.0->~1.2s (we fail-OPEN anyway, so only the worst case shrinks). (2) order cheapest-local-first; each probe already 5s-file-cached so 2nd Stop within 5s ~0. Land WITH AR4 (instrument first). DO NOT shrink the 5s PROBE_CACHE_TTL. risk: low"
+
+  - id: FD6
+    severity: critical
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-daemon-playback (refines PB2)
+    p_item: P3
+    title: "unlock_audio_routing runs SERIAL stop(0.4s)+play-fire(~1.7s)+sleep(0.3s) ~= 2.4s PRELUDE before the message audio — gates even cache HITs on the first read per 60s"
+    location: "piper_stream.py:165-205 unlock_audio_routing, called at :564 (_play_cached_wav HIT) and :699 (synth) before play_blocking"
+    evidence: "MEASURED termux-media-player play-fire ~1.7-1.9s (Popen returns after the broadcast round-trip). PREHEAT_MARKER (60s) hides it on back-to-back reads, but the first read-back per minute eats ~2.4s BEFORE audio — even a zero-synth cache HIT. This is most of the 'instant read-back isn't instant' complaint once synth is removed."
+    latency_impact: "~2.4s added to the first read-back per 60s window, including cache HITs"
+    fix: "Make the routing-wake a single fire-and-forget broadcast (it already is Popen at :190) WITHOUT the 0.3s sleep, keep the PREHEAT_MARKER 60s gate, and prime the marker at toggle (FD1). AVOID PB2's 'fold tone into the wav' as written — it replays the tone on every cache re-read (see overturned/PB2). risk: medium"
+
+  - id: RC-CACHE
+    severity: critical
+    confidence: HIGH
+    status: confirmed_reframed
+    lens: resolve-cache (RC1/RC2/RC3) + reconcile (AP1) + fresh-sweep (FS5)
+    p_item: P5
+    title: "First VolumeUp on a freshly-produced message is a ~2-7s synth MISS — the inline auto-read populate is unreliable; the working cache fill is the slower background precache that loses the press race"
+    location: "piper_stream.py:685 inline populate (reached on the live native path but the process is usually killed first); _speak.py:1260 speak_text_now (MISS synth, never sets CZYTAJ_SAVE_WAV -> discarded); stop.py:24 precache fires AFTER speak_new_text; precache_turn synth 5-16s"
+    evidence: "Live log: 388 auto-reads, CACHED-READBACK logged 1x (a .save-test). AP1 proved device is no-pulse (pactl rc=1) so it runs the native path that HAS the populate at :685; SYNTH-DONE fires 13/302 because 281 processes are SUPERSEDE-KILLED mid-synth before :680. Cache still HITS 13x via precache_turn (PRECACHE ok x87). On a quick (~3s) press the precache wav isn't on disk yet -> guaranteed miss -> ~2-7s on-demand synth."
+    latency_impact: "first read of a new message ~2-7s synth; HIT only on a 2nd press or a later re-visit"
+    fix: >
+      Reframed from iter-1 'hoist to all branches' (those branches are PULSE-gated and DEAD on this
+      device). Coherent fix, land as a unit:
+      (a) RC2 (SAFEST): add save_wav= to speak_text_now so the read-back MISS synth ITSELF fills the
+          cache (it synthesizes the RAW turn text, no folder prefix -> immune to RG1). Then the very
+          next press hits without waiting for precache.
+      (b) RC1-corrected: make the inline auto-read populate kill-resistant + instant: use os.link(wav,
+          _save) (same FS, instant, no read-into-RAM — FD5) done as EARLY as possible after synth, and
+          GATE it on RG1 (prefix=="" AND new_text.strip()==_turns[-1].strip()) so cached audio == key.
+      (c) RC3: precache pre-synths only look-back n=2..5 (n=1 now filled by (a)/(b); existing
+          _readback_cache_get short-circuit no-ops it). Keep the miss-path precache until (a) is verified.
+      Keys already align (basename TID + sha1(raw _turns[-1]); MISS keys turns[-n] -> same for n=1). risk: medium
+
+  # ----- MAJOR -----
+  - id: FD1
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-daemon-playback
+    p_item: NEW
+    title: "No warm-up at /czytaj ON -> the FIRST read-back of a session pays cold JIT inference + the full ~2.4s routing-wake tone in series"
+    location: "toggle.sh:39 (spawns daemon `start`, no warm synth, no routing wake); piper-daemon.cpp:50,63 (model loaded before READY but inference graph never exercised)"
+    evidence: "toggle spawns the daemon (model loads) but never runs a throwaway synth (cold ONNX inference allocators/threadpool) nor fires unlock_audio_routing once. So the first real read-back hits a cold graph AND the full ~2.4s tone."
+    latency_impact: "worst single-press latency of a fresh session (cold inference + ~2.4s tone) on the very first VolumeUp"
+    fix: "After `start` in toggle.sh ON branch, fire ONE detached (`nohup ... &`) throwaway synth ('gotowe') to JIT the graph AND one unlock_audio_routing() to prime the tone + PREHEAT_MARKER. Toggle still returns ON instantly. risk: low"
+
+  - id: FD2
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-daemon-playback (measured version of iter-1 PB4)
+    p_item: NEW
+    title: "Pause-aware playback poll calls termux-media-player `info` every cycle, and each `info` MEASURED ~2.8-3.3s -> channel release + cleanup lags true playback end by up to ~3s"
+    location: "piper_stream.py:404-423 _play_via_termux_blocking poll loop (sleep 0.3 then `info`)"
+    evidence: "MEASURED `termux-media-player info` = 3.27s/2.80s/2.92s. Code's sleep(0.3) assumes `info` is cheap; real loop period ~3.3s. _reserve_channel is released only when this returns, so a SECOND queued window waits up to ~3s of dead air after the first finishes."
+    latency_impact: "up to ~3s extra silence between consecutive cross-window reads + ~3s late temp-wav cleanup"
+    fix: "Drive the wait off the wav DURATION (_wav_duration_s already at :389): sleep(play_budget) up front, poll the fast local _vt_recording() for the Voice-Typer interrupt, use `info` at most once to confirm finish (and only poll frequently after a Paused was seen). risk: medium"
+
+  - id: FS1
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-bugs
+    p_item: NEW
+    title: "Single key-poller thread BLOCKS ~3-9s inside read_message_back -> rapid VolumeUp scrub presses are dropped/coalesced, not queued"
+    location: "volume_watcher.py:379 _poll_keytrigger calls _dispatch_key synchronously -> _speak.py:1687/1694 read_message_back (stop timeout=3 + miss synth communicate timeout=2 + tmux timeout=4)"
+    evidence: "The poller sets seen=ts BEFORE dispatch and runs the action inline, so a press arriving during the ~5-9s block is only seen as the latest ts after dispatch returns — intermediate presses lost. Defeats the rapid-tap scrub the shortened READBACK_WINDOW_S targets."
+    latency_impact: "~5-9s window where no further key (up or down) is acted on; 2nd/3rd scrub press swallowed"
+    fix: "Run the action OFF the poller: _dispatch_key spawns threading.Thread(target=_read_back/_toggle_pause, daemon=True). The _dispatch_lock + _last_fire debounce + _stop_previous_readback already serialize/interrupt. Keeps the poller free for the next press. risk: medium"
+
+  - id: FS3
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-bugs
+    p_item: NEW
+    title: "Watcher in-memory `_paused` desyncs across a new turn -> first VolumeDown after an auto-read sends the WRONG command (resume instead of pause)"
+    location: "volume_watcher.py:95 _paused global + _toggle_pause:227-240; never reset on a new turn / UPS media-stop"
+    evidence: "Log: user pauses (_paused=True), then UPS new prompt stops the player + new turn auto-reads, _paused still True. Next VolumeDown hits _toggle_pause with _paused==True -> sends `play` (resume) to already-playing audio and fails to pause; user must press twice. The :92-94 'self-correcting after one press' comment breaks across the UPS media-stop boundary."
+    latency_impact: "a VolumeDown that should pause does nothing audible; compounds with FS2's 1.5-3s/press"
+    fix: "Reset _paused=False when a NEW turn begins: clear it on the UPS media-stop (UPS hook already runs termux-media-player stop -> also clear a shared pause marker the watcher reads), or do a one-shot `info` check on the first press after idle. risk: medium"
+
+  - id: FS2
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-bugs (on-device measure; supersedes iter-1 PB3's hypothesis)
+    p_item: P1/P3
+    title: "VolumeDown pause/resume has a measured ~1.5-3.1s ACTION latency on EVERY press (termux-media-player am/dalvik broadcast)"
+    location: "volume_watcher.py:186-191 _media() -> subprocess.run(['termux-media-player', cmd], timeout=4)"
+    evidence: "Live log: down->pause = 3.08s, 1.46s, 1.48s, 1.61s. The accessibility flag is ~0ms; the cost is the am broadcast per press. NOTE: the iter-1 PB3 'route via socket-am' fix is INVALID (see overturned/PB1) — the floor is structural."
+    latency_impact: "~1.5-3.1s from VolumeDown to audio pausing/resuming, every press"
+    fix: "The ~1.7s broadcast floor is irreducible (PB1 dead). Mitigate: fire _media from a worker thread (FS1) so it doesn't also block key detection, and fix FS3 so the first press isn't wasted on the wrong command. risk: medium"
+
+  - id: SD1
+    severity: major
+    confidence: HIGH
+    status: confirmed
+    lens: synth-daemon
+    p_item: P2
+    title: "server_alive()/_can_connect never PINGs -> a connectable-but-hung daemon stalls a synth ~30s before cold fallback"
+    location: "piper_server.py:79-94 _can_connect (connect+close, no byte), 110-119 server_alive; speak_raw:406 settimeout(30.0); synthesize_via_daemon:211 DAEMON_READ_TIMEOUT_S=30s"
+    evidence: "UNIX connect() succeeds whenever the socket is bound even if the C++ daemon is wedged -> server_alive True -> ~30s stall -> None -> cold one-shot (+~5s). Mechanism HIGH; 30s is a code-derived upper bound."
+    latency_impact: "~30s stall + ~5s cold on a hung daemon (intermittent)"
+    fix: "Lower BOTH timeouts (per fix-plan GAP): speak_raw default 30->~8s AND synthesize_via_daemon DAEMON_READ_TIMEOUT_S 30->~8s (the server-side handle() blocks on the inner one). Optional: a {\"ping\":true} health probe answered without daemon_lock. risk: low"
+
+  # ----- MINOR -----
+  - id: SD2
+    severity: minor
+    confidence: HIGH
+    status: confirmed_latent
+    lens: synth-daemon
+    p_item: P8
+    title: "`serve` subcommand binds the socket with NO flock -> can double-bind / steal from a warm daemon"
+    location: "piper_server.py:451-452 serve branch (bare run_server) vs 122-169 ensure_running flock guard"
+    fix: "Have run_server() itself acquire a NON-blocking fcntl.flock(LOCK_FILE) at the top and return if it can't -> double-bind impossible regardless of entrypoint. risk: low"
+
+  - id: FD4
+    severity: minor
+    confidence: MEDIUM
+    status: partial
+    lens: fresh-sweep-daemon-playback
+    p_item: NEW
+    title: "Daemon `ERR` reply does not recycle the daemon -> a persistently faulting daemon never self-heals (silent repeated failures)"
+    location: "piper_server.py:222-224 ERR path (returns False, no kill) vs 225-228 timeout path (kills)"
+    fix: "Track consecutive ERR/False per daemon; after N (e.g. 2), d.kill() inside daemon_lock so get_daemon() respawns fresh. risk: low"
+
+  - id: FD5
+    severity: minor
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-daemon-playback
+    p_item: NEW
+    title: "Read-back cache populate reads the ENTIRE wav into RAM and rewrites it, synchronously on the auto-read critical path before play"
+    location: "piper_stream.py:685-694 (_save copy: open().read() + write + os.replace) runs before _reserve_channel(:697) and play(:701)"
+    fix: "Use os.link(wav,_save) when same filesystem (instant, no copy; also more kill-resistant for RC-CACHE) with shutil.copyfile fallback; or move the copy AFTER the play fires. risk: low"
+
+  - id: FS4
+    severity: minor
+    confidence: HIGH
+    status: confirmed
+    lens: fresh-sweep-bugs
+    p_item: NEW
+    title: "is_readback_playing() is a false-NEGATIVE on the MISS (synth) path -> scrub-while-listening only works on cache HITs"
+    location: "_speak.py:1647-1651 is_readback_playing + speak_text_now:1279-1292 (the piper_stream wrapper exits while the detached Android player is still audibly playing)"
+    fix: "Track actual audio not the wrapper: route the MISS path through a wrapper that plays blocking (like _play_cached), or fall back to `termux-media-player info` Playing in is_readback_playing(). Low urgency (READBACK_WINDOW_S 5s covers rapid taps). risk: low"
+
+  - id: AR3
+    severity: minor
+    confidence: MEDIUM
+    status: partial
+    lens: auto-read
+    p_item: P6
+    title: "active-session marker is multi-window-only desync: a backgrounded window's reply can be silently eaten while another window's audio plays"
+    location: "_speak.py:147-190 mark/is_active_session, :1020-1024 demotion; user-prompt-submit.sh:53 (marker = last window to receive a USER PROMPT, not the one emitting output)"
+    fix: "Queue the demoted turn to the read-back cache (precache its hash) so VolumeUp can replay it; distinct log reason 'deferred-nonactive'. Do NOT widen who may interrupt (X4 overlap). risk: low"
+
+  - id: AR4
+    severity: minor
+    confidence: HIGH
+    status: confirmed
+    lens: auto-read
+    p_item: NEW
+    title: "Guard chain is UN-INSTRUMENTED — no per-probe timing between ENTER and the other-audio decision -> a slow/contended probe is invisible in the log"
+    location: "_speak.py:1003 ENTER .. 1025-1026 other-audio decision (no _log between)"
+    fix: "Add one timing line: t=monotonic(); res=is_other_audio_playing(...); _log('GUARD', caller, f'+{..}s', 'skip' if res else 'pass'). PREREQUISITE for trusting AR1's win. ~3 lines, no behavior change. risk: low"
+
+  - id: RG1
+    severity: minor
+    confidence: MEDIUM
+    status: partial
+    lens: regression-correctness
+    p_item: NEW
+    title: "Auto-read caches a wav whose AUDIO can differ from the keyed message (folder prefix + multi-bubble suffix span)"
+    location: "_speak.py:_speak_inner (key=_turns[-1]@1161; synth text=audio_text@1124 = folder-prefix + strip_markdown(SUFFIX))"
+    note: "MUST land WITH RC-CACHE (RC1 part) — see fix_plan conflicts. RC2's fill is RG1-immune (raw text)."
+    fix: "Gate the SAVE_WAV set on (prefix=='' AND new_text.strip()==_turns[-1].strip()); else skip and let precache produce a faithful wav. risk: low"
+
+  - id: RG2
+    severity: minor
+    confidence: LOW
+    status: theoretical
+    lens: regression-correctness
+    p_item: NEW
+    title: "iterdir() race in the idle-off guard could crash run_server (theoretical, unreachable today)"
+    location: "piper_server.py:387 any(FLAG_DIR.iterdir()) not wrapped; sibling except OSError doesn't cover the socket.timeout block"
+    fix: "Wrap in _flags_present(): try/except OSError -> False; reuse at :123 and :387 (de-dups the expression). risk: low"
+
+  - id: SD4
+    severity: minor
+    confidence: MEDIUM
+    status: partial
+    lens: synth-daemon
+    p_item: NEW
+    title: "Leaked/stale project flag pins the warm daemon (and its ~70MB C++ child) alive forever"
+    location: "piper_server.py:387-389 idle guard any(FLAG_DIR.iterdir())"
+    fix: "Heartbeat-touch the active flag each turn (user-prompt-submit.sh); treat flags older than ~2x idle-timeout as stale in the guard. risk: low (defer to flag-lifecycle owner)"
+
+  - id: FS6
+    severity: minor
+    confidence: HIGH
+    status: confirmed_maybe_by_design
+    lens: fresh-sweep-bugs
+    p_item: NEW
+    title: "VolumeDown pause does NOT set PAUSE_FLAG -> the next turn's auto-read ignores the user's 'pause' intent"
+    location: "volume_watcher.py:_toggle_pause:227-240 (only _media, never writes PAUSE_FLAG) vs _speak.py:is_paused_by_user"
+    fix: "If a longer mute is desired, have VolumeDown also write PAUSE_FLAG (now+60s) on pause, unlink on resume (mirror /pauza). If pause-current-clip-only is intended, document + won't-fix. risk: low"
+
+  - id: SD3
+    severity: minor
+    confidence: HIGH
+    status: confirmed_inherent_defer
+    lens: synth-daemon
+    p_item: P7
+    title: "Single daemon_lock serializes ALL windows' synth -> focused window starved behind background synth"
+    location: "piper_server.py:265 daemon_lock, 353-358 handle holds it across get_daemon+synthesize"
+    fix: "DEFER. Instrument first. Mitigation: priority-aware lock via CZYTAJ_PRIORITY. Full fix = N-daemon pool (more RAM). risk: medium"
+
+  - id: RC4
+    severity: minor
+    confidence: HIGH
+    status: refuted_mostly_mitigated
+    lens: resolve-cache
+    p_item: P4
+    title: "Active-window tmux probe IS cached (TTL 1.5s) and hit on the read-back path — P4 is largely a non-issue"
+    location: "_speak.py:1328-1343 _tmux_active_cache (TTL 1.5s), per-process in long-lived volume_watcher"
+    fix: "Optional: raise TMUX_ACTIVE_TTL_S to ~2.5-3s. Low value. P4's '~2s every press' is REFUTED."
+
+# ============================ OVERTURNED / REFUTED ============================
+overturned:
+  - id: PB1
+    was: "CRITICAL (iter-1): route termux-media-player play/pause/stop through the resident am.sock server via rish -> ~3.5s -> sub-1s"
+    now: "INVALID — DROP. (iter-2 FD3, hard measurement)"
+    proof: "termux-media-player -> libexec/termux-api (termux-api-broadcast ELF) -> execv(/usr/bin/am) broadcast --es ... com.termux.api/.TermuxApiReceiver. So play ALREADY uses the am socket. MEASURED: rish -c true ~3.9-4.7s (fresh app_process JVM/call) vs am broadcast ~1.5-1.7s. Wrapping in rish REGRESSES ~2-3s. The ~1.7s broadcast round-trip floor is structural; no PRoot-visible bypass without a resident audio sink (PulseAudio/ALSA, absent)."
+  - id: PB3
+    was: "MAJOR (iter-1): route pause/resume via PB1's transport"
+    now: "DROP (depends on the invalid PB1). The pause latency is REAL (FS2: 1.5-3.1s measured) but the floor stands; mitigate via FS1 (worker thread) + FS3 (pause-flag desync)."
+  - id: PB2
+    was: "MAJOR (iter-1): fold the wake tone INTO the wav, drop unlock_audio_routing"
+    now: "UNSAFE AS WRITTEN (fix-plan-coherence). A baked-in tone replays on EVERY cache re-read of that wav, not once-per-60s. Use FD6 instead: keep the marker-gated fire-and-forget tone, drop the 0.3s sleep, prime the marker at toggle (FD1)."
+  - id: P5c
+    was: "hypothesis: multi-window cache-dir/key mismatch"
+    now: "REFUTED. All three paths key on basename(transcript) TID + sha1(raw _turns[-n]); they align. The cache works (13 hits); the real issue is the WRITE losing the press race (RC-CACHE)."
+  - id: P6-torn-output
+    was: "hypothesis: screen/other-audio guards false-SKIP on torn dumpsys output"
+    now: "REFUTED (AR2). 9568d56 screen fail-open is applied; mic/media probes default fail-OPEN. Residual P6 is LATENCY (AR1) + no instrumentation (AR4)."
+  - id: P4-2s-resolve
+    was: "hypothesis: ~2s tmux resolve every press"
+    now: "REFUTED/mitigated (RC4). The probe is cached (TTL 1.5s) and hit; ~0.3-0.5s only on the first press after idle."
+
+# ============================ SOLVE-READY FIX PLAN ============================
+# Phased so it is SAFE to apply in order (from the fix-plan-coherence lens).
+fix_plan:
+  expected_outcome: >
+    Best achievable read-back = ~1.7s (one irreducible am broadcast) + instant cached audio (~2s
+    total), NOT sub-1s. "Instant" in the strict sense needs a resident foreground-service MediaSession
+    player in the Voice-Typer app (out of scope). The wins below remove synth (~2-7s) on re-reads and
+    the ~2.4s tone prelude, leaving the structural ~1.7s floor.
+  phases:
+    - phase: 1
+      label: "Observability + latent-safety (zero behavior change)"
+      fixes: [AR4, RG2, SD2]
+      rationale: "AR4 is a prerequisite to trust AR1's effect; RG2/SD2 are independent hardening."
+    - phase: 2
+      label: "Make the cache reliably hit (the #1 win)"
+      fixes: [RC-CACHE_RC2, RC-CACHE_RG1, RC-CACHE_RC1, FD5]
+      rationale: "RC2 (read-back miss synth fills cache, RG1-immune) is the safest; RC1-corrected uses os.link (FD5) + RG1 gate. Verify a CACHE-HIT appears in czytaj.log before proceeding."
+    - phase: 3
+      label: "Cut the routing-wake prelude + warm at toggle"
+      fixes: [FD6, FD1]
+      rationale: "FD6 removes ~2.4s prelude from the first read per 60s (incl. cache HITs); FD1 warms synth+routing at /czytaj ON. Transport-independent — help regardless of the floor."
+    - phase: 4
+      label: "Pause/scrub correctness + key responsiveness"
+      fixes: [FS1, FS3, FS4, FS6]
+      rationale: "FS1 frees the poller (rapid scrub); FS3 fixes the wrong-first-press pause; FS4/FS6 are correctness."
+    - phase: 5
+      label: "Daemon + guard timeout shortening"
+      fixes: [AR1, SD1, FD2, FD4]
+      rationale: "AR1 (needs AR4) + SD1 (BOTH timeouts) shorten worst-case stalls; FD2 stops the ~3s info-poll tail; FD4 self-heals a faulting daemon."
+    - phase: 6
+      label: "Deferred / optional"
+      fixes: [SD3, SD4, RC4, AR3]
+      rationale: "Each flagged 'defer'/'low value'; none block the latency win."
+  conflicts_must_land_together:
+    - "RC1-corrected + RG1 (same populate block; RC1 fires it, RG1 gates what it caches)."
+  experiment_gates: []   # PB1's benchmark is removed — proven invalid, no experiment needed.
+  unsafe_or_gaps:
+    - "PB2 (fold tone into wav) — UNSAFE, replaced by FD6."
+    - "SD1 must lower BOTH speak_raw AND DAEMON_READ_TIMEOUT_S or the win is partial."
+    - "The cache-HIT ~1.7s am-broadcast play floor is irreducible without PB1 (dropped). State ~2s, not sub-1s, as the target."
+
+iterations:
+  - number: 1
+    new_issues_found: 20
+    consensus: "dirty — 5 lenses, all met the evidence bar"
+  - number: 2
+    new_issues_found: 12
+    consensus: "dirty but tailing (rate 0.6, mostly on-device measurements); completeness-critic verified no coverage gap; PB1 overturned by measurement"
+    verdicts:
+      - {lens: audio-path-reconcile, status: issues_found, note: "device no-pulse (pactl rc=1); :685 inert via supersede-kill not pulse-bypass"}
+      - {lens: fresh-sweep-bugs, status: issues_found, note: "6 new (poller-block, pause desync); growth/atomic/wakelock/scrub converged"}
+      - {lens: fresh-sweep-daemon-playback, status: issues_found, note: "6 new; PB1 INVALID (measured); channel/scratch sound"}
+      - {lens: fix-plan-coherence, status: issues_found, note: "3 conflict clusters, phased order, every stage covered, PB2 unsafe"}
+
+summary:
+  total_confirmed: 22
+  critical: 3       # AR1, FD6, RC-CACHE
+  major: 6          # FD1, FD2, FS1, FS3, FS2, SD1
+  minor: 13
+  overturned_or_refuted: 6   # PB1, PB3, PB2, P5c, P6-torn, P4-2s
+  biggest_correction: "PB1 (socket-am via rish) was the iter-1 #1 lever — proven INVALID by on-device measurement. The ~1.7s am-broadcast play floor is structural."
+
+# ============================ SOLVE RESULT (2026-06-03) ============================
+solve_result:
+  status: completed
+  verified_by: "2 fresh final-sweep subagents (correctness+regression PASS, completeness PASS) + per-phase verifiers + py_compile/bash -n on every change"
+  commits:  # on fix/czytaj-audit-2026-05-31, NOT yet pushed
+    - "9c912d5 + e814624 (pre-audit, validated by the audit): RUN_DIR pin + initial cache populate"
+    - "ada56ec  P1: AR4 (guard timing), RG2 (_flags_present), SD2 (serve->ensure_running)"
+    - "e9bf52b  P2: RC2 (miss-synth fills cache) + RG1 (gate auto-read populate) + FD5 (os.link)"
+    - "0cc22a4  P3: FD1 (toggle warmup: JIT synth + prime routing marker) [FD6 via marker-prime]"
+    - "4fadec2  P4: FS1 (non-blocking dispatch thread) + FS3 (KEYPAUSE cross-process marker)"
+    - "e1c3626  P5: AR1 (rish probes 5->1.2s) + SD1 (daemon 30->10s/client 12s) + FD4 (recycle) + FD2 (marker pause-freeze)"
+    - "acd023a  P6: RC4 (tmux TTL 1.5->2.5s); SD3/SD4/AR3 deferred per audit guidance"
+  fixed: [AR4, RG2, SD2, RC2, RG1, RC1, RC3, FD5, FD1, FS1, FS3, AR1, SD1, FD4, RC4]
+  fixed_partial: [FD2]   # marker pause-freeze landed; full info-churn reduction deferred (cutoff risk, blind)
+  addressed_via_other: [FD6, FS2]   # FD6 via FD1 marker-prime; FS2 via FS1+FS3 (floor irreducible)
+  refuted_or_by_design: [FS4, FS6]  # FS4 non-bug on no-pulse device; FS6 intended contract (documented)
+  deferred:
+    SD3: "daemon-pool/priority-lock redesign — audit said do-not-land-lightly; instrument first"
+    SD4: "stale-flag staleness needs heartbeat + threshold; idle=1800s, mis-tune would reap an active daemon for minor RAM"
+    AR3: "multi-window demoted-turn cache-queue — edge case, not worth read-path churn; skip already logged distinctly"
+  dropped: [PB1, PB2, PB3]   # PB1 invalid (rish slower than am); confirmed no rish wraps playback
+  sd1_choice: "DAEMON_READ_TIMEOUT_S=10s / client=12s (not the audit's 8s) to keep margin for a long 2000-char synth"
+  action_items:
+    - "DEPLOY: the on-device runtime (~/.claude/hooks/czytaj/) is STALE vs repo HEAD — P2-P6 take effect only after a re-install/sync + a volume_watcher restart. The repo code is verified; the running copy is not yet updated."
+    - "OPTIONAL: time a ~2000-char read-back through the WARM daemon on-device; if >7s, bump PIPER_DAEMON_TIMEOUT (env, no code change). Benign if exceeded (cold-fallback still plays)."
+    - "All commit messages note 'on-device verification pending' — the static/code correctness is verified; the real latency numbers need a drive test once deployed."
+  expected_after_deploy: "read-back ~2s (one ~1.7s am play + instant cached audio) on a HIT instead of ~6s; first read of a fresh message fills the cache via RC2 so the 2nd press hits; no cold tone prelude after toggle (FD1); first-VolumeDown-after-a-turn pauses correctly (FS3); rapid scrub taps no longer dropped (FS1). The ~1.7s am play floor REMAINS (structural)."

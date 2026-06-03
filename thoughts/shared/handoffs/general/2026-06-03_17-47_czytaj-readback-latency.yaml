@@ -1,0 +1,85 @@
+---
+session: general
+date: 2026-06-03
+status: partial
+outcome: PARTIAL_MINUS
+---
+
+goal: >
+  czytaj volume-key read-back: accessibility key path is INSTANT (screen-on AND
+  screen-off, verified), double-fire fixed (evdev off), scrub-back fixed. BUT the full
+  read-back is still ~4-6s on a cache HIT and ~11-14s on a MISS — NOT "instant". Latency
+  root-caused across synth/playback/resolve; several low-risk cuts applied; an honest
+  known-issues list was prepared for a fresh audit.
+now: >
+  Audit thoughts/shared/petla/czytaj-known-issues-2026-06-03.md (8 problems, NO fix
+  history, by design) with a fresh head. FIRST decide whether to commit the IN-PROGRESS
+  changes (wav-cache + warm-daemon) — they are currently UNCOMMITTED in the working tree
+  but already synced to the runtime (~/.claude/hooks/czytaj/). The three biggest latency
+  levers: (1) synth daemon won't stay warm in the live multi-process flow → cold ~7s;
+  (2) termux-media-player ~1.6-2.3s per play (hard BT floor, no PulseAudio); (3) active-
+  window resolve ~2s/press (tmux subprocess).
+test: >
+  Press VolumeUp, then read ~/.claude/czytaj.log ms markers: keytrigger → ACTION read_back
+  (CACHE-HIT|miss) → SYNTH-DONE → CHANNEL-OK → UNLOCK-DONE → AUDIO-START. AUDIO-START minus
+  keytrigger = true press→audio. grep CACHED-READBACK to see if auto-read populated the cache.
+
+done_this_session:
+  - task: "Accessibility volume-key path INSTANT, verified screen-on AND screen-off (the open risk from the prior handoff — resolved POSITIVELY). volume_watcher polls czytaj-keytrigger.flag the Voice Typer writes; reads BOTH .flag and .tmp (Android atomic rename fails on FUSE). Double-fire fixed: evdev reader is opt-in (CZYTAJ_EVDEV_FALLBACK=1), off by default. Scrub steps back only while a read is PLAYING or within 5s (was 45s)."
+    files: [addons/czytaj/files/hooks/czytaj/volume_watcher.py, addons/czytaj/files/hooks/czytaj/_speak.py]
+  - task: "ms-precision timing instrumentation across the whole read-back path (SYNTH-DONE/CHANNEL-OK/UNLOCK-DONE/AUDIO-START/AUDIO-END + which-message snippet). This is what pinned the latency breakdown."
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py]
+  - task: "Low-risk latency cuts (COMMITTED in 9568d56): cache the tmux active-window probe (~0.4s/press, verified 2nd call 0.000s), trim the BT wake tone (1.9s→0.7s), memoize _pulse_available, refresh preheat marker on every play, fail-open the screen probe (auto-read flapping)."
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py]
+  - task: "IN-PROGRESS, UNCOMMITTED (synced to runtime, did NOT move the real numbers enough): (a) wav-cache — auto-read copies its synthesized wav into the read-back cache so re-read is a HIT (verified: save works + key round-trip matches); (b) warm daemon — pinned RUN_DIR to a fixed ~/.cache/czytaj/piper-server (was XDG/TMPDIR-derived → daemon-split → always cold) + idle-off while a reading flag exists."
+    files: [addons/czytaj/files/hooks/czytaj/_speak.py, addons/czytaj/files/hooks/czytaj/piper_stream.py, addons/czytaj/files/hooks/czytaj/piper_server.py, addons/czytaj/files/hooks/czytaj/toggle.sh, addons/czytaj/install.sh]
+  - task: "Retired the duplicate /czytaj skill (command-only now) — COMMITTED in 2453a78."
+    files: [addons/czytaj/addon.json, addons/czytaj/install.sh]
+
+blockers: []
+
+questions:
+  - "Commit the uncommitted wav-cache + warm-daemon changes, or revert them for the audit? They're sound in principle but did not collapse the real-device latency (still ~6s HIT)."
+  - "Is truly-instant read-back worth a resident warm media-player (the only way past the ~2s termux-media-player floor)? That's a bigger redesign."
+
+decisions:
+  - committed_vs_uncommitted: "HEAD 9568d56 has the accessibility feature + instrumentation + the 4 low-risk cuts + skill removal (PUSHED). The wav-cache + warm-daemon are UNCOMMITTED working-tree changes (synced to runtime)."
+  - no_fix_history_in_issues_file: "Per user request, czytaj-known-issues-2026-06-03.md lists ONLY problems (symptom + location + impact), no attempt narrative — for a clean fresh audit."
+  - over_claimed_progress: "Component tests (warm synth 0.78s) did NOT survive the live multi-process flow (real: 14s/6s). LESSON: never claim progress without END-TO-END on-device timing."
+
+findings:
+  - latency_breakdown_HIT: "cache HIT ~6s = ~2s active-window resolve (tmux subprocess) + ~2s termux-media-player play start + overhead. No synth on a hit."
+  - latency_breakdown_MISS: "~11-14s = resolve + COLD synth ~7s + ~2s play. Daemon cold because it isn't reused across czytaj's short-lived processes."
+  - daemon_cold_in_live_flow: "A warm daemon can exist yet a fresh synth process gets ~7s cold — server_alive() accepts a connectable-but-unresponsive daemon (no ping) → cold fallback; zombies/duplicates accrue. RUN_DIR pin + idle-off help but a server_alive PING is still missing."
+  - media_player_floor: "termux-media-player is the ONLY BT/Android-Auto route (no PulseAudio); ~1.6-2.3s MediaPlayer cold-start PER play. tinyplay/direct-PCM bypass the router → won't reach the car. Hard floor without a resident player."
+  - auto_read_flaky: "Claude responses often not auto-read (only manual read-back reliably plays). Slow ~9s serial rish/dumpsys guard chain + screen-probe flapping under rish contention → false SKIP other-audio/locked."
+
+worked:
+  - "Accessibility onKeyEvent for instant key delivery, incl. SCREEN-OFF (overturns the prior 'verify screen-off' risk)"
+  - "ms instrumentation to get a real press→audio breakdown (do this FIRST next time, before optimizing)"
+  - "4 parallel Opus audit agents (synth/playback/cache/IO) — gave the concrete cut list"
+
+failed:
+  - "Claiming speedups from isolated component tests — they didn't hold in the live flow (real 14s/6s)"
+  - "Keeping the synth daemon warm purely via code changes that can't be deployed without a fresh run_server (PRoot can't cleanly restart it live)"
+  - "Chasing the daemon live (socket clears, kills) destabilized it mid-session"
+
+next:
+  - "Read thoughts/shared/petla/czytaj-known-issues-2026-06-03.md and audit P1-P8 fresh."
+  - "Decide commit-or-revert on the uncommitted wav-cache + warm-daemon (git status shows 5 modified files)."
+  - "Highest-value real fixes if pursuing: server_alive() PING (stop cold-fallback), cut the ~2s active-window resolve, and evaluate a resident warm media-player for the ~2s play floor."
+  - "Separately fix auto-read reliability (slow/flapping screen + other-audio guard chain) — it gates the wav-cache populate."
+
+files:
+  created:
+    - thoughts/shared/petla/czytaj-volume-keys-CONTRACT.md
+    - thoughts/shared/petla/czytaj-latency-audit-2026-06-03.md
+    - thoughts/shared/petla/czytaj-known-issues-2026-06-03.md
+  modified:
+    - addons/czytaj/files/hooks/czytaj/volume_watcher.py
+    - addons/czytaj/files/hooks/czytaj/_speak.py
+    - addons/czytaj/files/hooks/czytaj/piper_stream.py
+    - addons/czytaj/files/hooks/czytaj/piper_server.py
+    - addons/czytaj/files/hooks/czytaj/toggle.sh
+    - addons/czytaj/install.sh
+    - addons/czytaj/addon.json
