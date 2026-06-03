@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Czytaj — Termux installer.
-# Copies hook scripts + skill into ~/.claude/, validates Piper runtime,
+# Copies hook scripts + commands into ~/.claude/, validates Piper runtime,
 # patches ~/.claude/settings.json idempotently with timestamped backup.
 
 set -e
@@ -65,7 +65,7 @@ if ! command -v paplay >/dev/null 2>&1; then
 fi
 
 # --- Copy files ---
-mkdir -p "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks/czytaj" "$CLAUDE_DIR/skills/czytaj"
+mkdir -p "$CLAUDE_DIR/commands" "$CLAUDE_DIR/hooks/czytaj"
 
 cp "$ADDON_DIR/files/commands/czytaj.md" "$CLAUDE_DIR/commands/"
 chmod 644 "$CLAUDE_DIR/commands/czytaj.md"
@@ -93,12 +93,11 @@ chmod 644 "$HOOK_DST/"*.py "$HOOK_DST/"*.wav 2>/dev/null || true
 chmod 755 "$HOOK_DST/"*.sh 2>/dev/null || true
 echo "  [OK] hooks/czytaj/ (synced)"
 
-# --- Skill ---
-if [ -f "$ADDON_DIR/files/skills/czytaj/SKILL.md" ]; then
-  cp "$ADDON_DIR/files/skills/czytaj/SKILL.md" "$CLAUDE_DIR/skills/czytaj/SKILL.md"
-  chmod 644 "$CLAUDE_DIR/skills/czytaj/SKILL.md"
-  echo "  [OK] skills/czytaj/SKILL.md"
-fi
+# --- Remove the legacy czytaj skill ---
+# Superseded by the /czytaj command (both just delegate to toggle.sh). Shipping
+# both put a duplicate "czytaj" in the slash menu, so the skill was retired; this
+# rm self-heals installs that still have it.
+rm -rf "$CLAUDE_DIR/skills/czytaj"
 
 # --- Stale state cleanup (allow safe re-install) ---
 # F32/F50: reading mode is per-project (~/.claude/czytaj-flags/<sha1>.flag). The

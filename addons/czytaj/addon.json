@@ -12,7 +12,6 @@
   "targets": {
     "files/commands/czytaj.md": "~/.claude/commands/",
     "files/commands/pauza.md": "~/.claude/commands/",
-    "files/skills/czytaj/": "~/.claude/skills/czytaj/",
     "files/hooks/czytaj/": "~/.claude/hooks/czytaj/"
   },
   "scripts": {
