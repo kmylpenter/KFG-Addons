@@ -34,6 +34,9 @@ fi
 # Stop the Android MediaPlayer service first (sync) — pkill alone doesn't
 # reach the underlying playback running inside the Termux:API APK.
 termux-media-player stop >/dev/null 2>&1
+# FS3: a new turn restarts audio → clear the VolumeDown pause-state marker so the watcher's
+# stale in-memory _paused re-syncs and the next VolumeDown PAUSES (not resumes nothing).
+rm -f "$HOME/.claude/czytaj-keypause.state" >/dev/null 2>&1
 echo "$(date +%H:%M:%S) pid=$$ UPS-MEDIA-STOPPED" >> "$LOG" 2>/dev/null
 
 # Mark THIS session as active + reset spoken-text state. Done via _speak

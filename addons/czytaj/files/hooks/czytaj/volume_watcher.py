@@ -93,6 +93,11 @@ FG_CACHE_TTL_S = 30.0  # foreground changes slowly; cache long so back-to-back p
 # Local pause state for a FAST VolumeDown toggle — avoids a slow `termux-media-player
 # info` round-trip on every press. Self-correcting: after one press it matches reality.
 _paused = False
+# FS3: filesystem mirror of _paused. The UPS hook removes this on every new prompt, so the
+# watcher's in-memory _paused (which goes stale when a new turn stops+restarts the player)
+# is re-synced across processes — the first VolumeDown after a new turn then PAUSES the
+# fresh audio instead of sending a resume to nothing.
+KEYPAUSE_STATE = os.path.expanduser("~/.claude/czytaj-keypause.state")
 
 # Read-back counter: VolumeUp reads the last message; pressed again while a read is
 # still playing it steps one message further back (2=previous, 3=older, …). Resets to
@@ -230,13 +235,27 @@ def _toggle_pause() -> None:
     response, sending termux-media-player pause/play accordingly."""
     global _paused, _readback_n
     _readback_n = 0  # VolumeDown breaks any VolumeUp read-back scrubbing sequence
+    # FS3: if we believe we're paused but the cross-process marker is gone, a new turn
+    # restarted the player since our pause → treat as NOT paused so this press PAUSES the
+    # fresh audio. (Contract: VolumeDown pauses the CURRENT clip only; it does NOT mute
+    # future turns — use /pauza for a timed mute. FS6: intentional, documented here.)
+    if _paused and not os.path.exists(KEYPAUSE_STATE):
+        _paused = False
     if _paused:
         _media("play")
         _paused = False
+        try:
+            os.unlink(KEYPAUSE_STATE)
+        except OSError:
+            pass
         _log("VOLKEY", "resume")
     else:
         _media("pause")
         _paused = True
+        try:
+            open(KEYPAUSE_STATE, "w").close()
+        except OSError:
+            pass
         _log("VOLKEY", "pause")
 
 
@@ -247,6 +266,10 @@ def _read_back() -> None:
     to the last message. is_readback_playing() polls our own child (no slow media query)."""
     global _paused, _readback_n, _last_read_ts
     _paused = False
+    try:
+        os.unlink(KEYPAUSE_STATE)   # FS3: reading clears the pause-state marker (no longer paused)
+    except OSError:
+        pass
     now = time.monotonic()
     scrub = is_readback_playing() or (now - _last_read_ts) < READBACK_WINDOW_S
     _readback_n = _readback_n + 1 if scrub else 1
@@ -305,12 +328,14 @@ def _dispatch_key(code: int, *, trusted_fg: bool) -> None:
         if now - _last_fire.get(code, 0.0) < DEBOUNCE_S:
             return
         _last_fire[code] = now
-    # action outside the lock: termux-media-player / read calls are slow and must not
-    # block the other path's debounce check.
-    if code == KEY_VOLUMEDOWN:
-        _toggle_pause()
-    else:
-        _read_back()
+    # FS1: run the (slow ~3-9s) action in a DETACHED thread so the poller/evdev reader
+    # returns IMMEDIATELY to detect the NEXT press. Inline, a 2nd/3rd VolumeUp arriving
+    # during the 1st read was dropped (the poller was blocked inside read_message_back).
+    # Safe: the debounce above already deduped THIS press, and _stop_previous_readback()
+    # inside read_message_back interrupts the prior child so a fresh tap scrubs one further
+    # back rather than overlapping — correct at human tap speed (> DEBOUNCE_S apart).
+    _action = _toggle_pause if code == KEY_VOLUMEDOWN else _read_back
+    threading.Thread(target=_action, daemon=True).start()
 
 
 def _parse_keytrigger(path: str) -> "tuple[str, str] | None":
