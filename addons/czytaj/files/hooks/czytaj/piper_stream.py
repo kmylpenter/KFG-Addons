@@ -121,6 +121,12 @@ PREHEAT_VALID_S = 60
 # play-budget instantly instead of waiting for the ~3s `termux-media-player info` round-trip.
 # MUST match volume_watcher.py KEYPAUSE_STATE.
 KEYPAUSE_STATE = Path(os.path.expanduser("~/.claude/czytaj-keypause.state"))
+# Heartbeat marker: touched at AUDIO-START and on every play-loop cycle while czytaj audio
+# is actually playing, removed at AUDIO-END. volume_watcher reads its mtime to gate the
+# lock-screen behaviour (volume keys drive czytaj on a LOCKED screen only while something is
+# playing). A SIGKILL'd play stops heartbeating, so the marker goes stale within a few
+# seconds. MUST match volume_watcher.py PLAYING_MARKER.
+PLAYING_MARKER = Path(os.path.expanduser("~/.claude/czytaj-playing.flag"))
 
 
 def _audio_scratch_dir() -> Path | None:
@@ -386,6 +392,10 @@ def _play_via_termux_blocking(audio: Path) -> None:
         PREHEAT_MARKER.touch()  # consecutive read within PREHEAT_VALID_S skips the ~0.7s wake tone
     except OSError:
         pass
+    try:
+        PLAYING_MARKER.touch()  # signal "czytaj audio playing now" for the watcher's lock-screen gate
+    except OSError:
+        pass
     # Pause-aware poll. VolumeDown pauses via termux-media-player, flipping `info`
     # to "Paused" — that must NOT read as "finished" (else we'd release the channel
     # + delete the wav, and resume would break). While paused we keep holding and
@@ -396,6 +406,10 @@ def _play_via_termux_blocking(audio: Path) -> None:
     last = time.monotonic()
     time.sleep(0.3)  # let `info` flip to Playing before we poll
     while time.monotonic() < hard_cap:
+        try:
+            PLAYING_MARKER.touch()  # heartbeat — a SIGKILL'd play stops touching → marker goes stale in ~6s
+        except OSError:
+            pass
         # Voice Typer started dictation → stop talking over the user at once.
         if _vt_recording():  # F10/F27: heartbeat-aware, not bare presence
             try:
@@ -434,6 +448,10 @@ def _play_via_termux_blocking(audio: Path) -> None:
             break
         time.sleep(0.3)
     _log("AUDIO-END")  # playback finished/stopped — diff vs AUDIO-START = play duration
+    try:
+        PLAYING_MARKER.unlink()  # clean finish → clear the playing signal at once (don't wait for staleness)
+    except OSError:
+        pass
 
 
 def play_blocking(audio: Path, raw_rate: int | None = None) -> None:

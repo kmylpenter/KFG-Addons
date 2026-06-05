@@ -89,6 +89,9 @@ TERMUX_PKG = "com.termux"
 FG_CACHE_TTL_S = 30.0  # foreground changes slowly; cache long so back-to-back presses (which
                        # land 10-40s apart through the slow relay) don't each re-pay the ~1.8s
                        # dumpsys focus check. 30s still re-blocks the bedtime stray-press case.
+FG_FALSE_TTL_S = 4.0   # but cache a NEGATIVE (not-foreground) only briefly: on the lock-screen
+                       # gate a stale False is the HARMFUL direction — it would suppress a legit
+                       # in-Termux read-back for up to 30s right after unlocking — so self-heal fast.
 
 # Local pause state for a FAST VolumeDown toggle — avoids a slow `termux-media-player
 # info` round-trip on every press. Self-correcting: after one press it matches reality.
@@ -98,6 +101,14 @@ _paused = False
 # is re-synced across processes — the first VolumeDown after a new turn then PAUSES the
 # fresh audio instead of sending a resume to nothing.
 KEYPAUSE_STATE = os.path.expanduser("~/.claude/czytaj-keypause.state")
+# Lock-screen gate: piper_stream heartbeats this marker while czytaj audio is actually
+# playing (see piper_stream.py PLAYING_MARKER). A volume key on a LOCKED screen drives czytaj
+# only while this is fresh (so pause/scrub work on what's playing) — otherwise the press was
+# meant only to change the volume and we must NOT fire a spurious read-back. MUST match
+# piper_stream.py PLAYING_MARKER.
+PLAYING_MARKER = os.path.expanduser("~/.claude/czytaj-playing.flag")
+PLAYING_MARKER_FRESH_S = 6.0   # > the longest play-loop cycle (the 5s `info` timeout + 0.3s sleep)
+                               # so genuinely-playing audio never reads stale mid-playback
 
 # Read-back counter: VolumeUp reads the last message; pressed again while a read is
 # still playing it steps one message further back (2=previous, 3=older, …). Resets to
@@ -133,7 +144,11 @@ def _termux_foreground() -> bool:
     Fails CLOSED (False) on error: if we can't confirm the user is in Termux, leave
     the keys to their normal volume job rather than risk a spurious re-read."""
     now = time.monotonic()
-    if now - _fg_cache["t"] < FG_CACHE_TTL_S:
+    # Asymmetric TTL: cache a True (Termux really foreground) long so snappy read-back bursts
+    # don't re-pay the ~1.8s dumpsys, but cache a False only briefly so a stale "not foreground"
+    # (which would wrongly suppress an in-Termux read-back right after unlocking) self-heals fast.
+    ttl = FG_CACHE_TTL_S if _fg_cache["v"] else FG_FALSE_TTL_S
+    if now - _fg_cache["t"] < ttl:
         return _fg_cache["v"]
     val = False
     try:
@@ -307,6 +322,39 @@ def _flag_recent() -> bool:
     return False
 
 
+def _czytaj_audio_playing() -> bool:
+    """True iff czytaj is actively playing audio right now — piper_stream heartbeats
+    PLAYING_MARKER during playback (covers auto-read AND read-back), or our own tracked
+    read-back child is still alive. Fast + cross-process; no slow media query."""
+    try:
+        if time.time() - os.path.getmtime(PLAYING_MARKER) < PLAYING_MARKER_FRESH_S:
+            return True
+    except OSError:
+        pass
+    try:
+        return is_readback_playing()
+    except Exception:
+        return False
+
+
+def _gated_action(code: int) -> None:
+    """Lock-screen GATE + the action. The accessibility service passes the volume key THROUGH
+    (volume always changes) and writes the trigger flag even on the keyguard, because it can't
+    tell Termux (FLAG_SECURE → package reads as null) from the lock screen. So gate HERE: drive
+    czytaj only if (a) czytaj is currently playing — so pause/scrub work on a LOCKED screen — or
+    (b) Termux is genuinely the foreground app (dumpsys mCurrentFocus DOES distinguish it from
+    the keyguard). Otherwise the press was meant only to change the volume; don't fire a spurious
+    read-back of the last message. Runs in the dispatch thread so a cold _termux_foreground
+    (~1.8s) never blocks key detection."""
+    if not (_czytaj_audio_playing() or _termux_foreground()):
+        _log("VOLKEY", "skip", "locked/other-app + no audio (volume-only)")
+        return
+    if code == KEY_VOLUMEDOWN:
+        _toggle_pause()
+    else:
+        _read_back()
+
+
 def _dispatch_key(code: int, *, trusted_fg: bool) -> None:
     """Act on one volume-key press. `trusted_fg=True` (accessibility flag path) skips
     the ~1.8s foreground check — the service already gated on Termux-foreground before
@@ -328,14 +376,12 @@ def _dispatch_key(code: int, *, trusted_fg: bool) -> None:
         if now - _last_fire.get(code, 0.0) < DEBOUNCE_S:
             return
         _last_fire[code] = now
-    # FS1: run the (slow ~3-9s) action in a DETACHED thread so the poller/evdev reader
-    # returns IMMEDIATELY to detect the NEXT press. Inline, a 2nd/3rd VolumeUp arriving
-    # during the 1st read was dropped (the poller was blocked inside read_message_back).
-    # Safe: the debounce above already deduped THIS press, and _stop_previous_readback()
-    # inside read_message_back interrupts the prior child so a fresh tap scrubs one further
-    # back rather than overlapping — correct at human tap speed (> DEBOUNCE_S apart).
-    _action = _toggle_pause if code == KEY_VOLUMEDOWN else _read_back
-    threading.Thread(target=_action, daemon=True).start()
+    # FS1: run the (slow) action in a DETACHED thread so the poller/evdev reader returns
+    # IMMEDIATELY to detect the NEXT press. The lock-screen GATE runs inside the thread too
+    # (_gated_action), so a cold _termux_foreground (~1.8s) can't block key detection either.
+    # The debounce above already deduped THIS press; _stop_previous_readback() inside
+    # read_message_back interrupts the prior child so a fresh tap scrubs rather than overlaps.
+    threading.Thread(target=_gated_action, args=(code,), daemon=True).start()
 
 
 def _parse_keytrigger(path: str) -> "tuple[str, str] | None":
