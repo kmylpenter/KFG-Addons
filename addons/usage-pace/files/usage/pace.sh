@@ -49,6 +49,11 @@ NOTIFY_COOLDOWN_H="${NOTIFY_COOLDOWN_H:-6}"
 #   przeterminowane (segment oznaczany '?', zero powiadomien).
 STALE_HOURS="${STALE_HOURS:-2}"
 #
+# GRACE_HOURS_5H — ile godzin po resecie okna 5h NIE pokazywac jego projekcji
+#   (na starcie okna jest zbyt rozchwiana). 0.5 = pierwsze pol godziny bez strzalki.
+#   Projekcja 5h jest TYLKO informacyjna — nigdy nie wysyla powiadomien.
+GRACE_HOURS_5H="${GRACE_HOURS_5H:-0.5}"
+#
 # UA_VERSION_FALLBACK — wersja Claude Code do naglowka User-Agent, gdyby
 #   w cache nie bylo aktualnej (pasek statusu zapisuje ja automatycznie).
 UA_VERSION_FALLBACK="${UA_VERSION_FALLBACK:-2.1.170}"
@@ -128,6 +133,7 @@ CREDS_FILE="$CREDS_FILE" CACHE_TTL_S="$CACHE_TTL_S" GRACE_HOURS="$GRACE_HOURS" \
 EARLY_LOW_PROJECTION_PCT="$EARLY_LOW_PROJECTION_PCT" ENDGAME_HOURS="$ENDGAME_HOURS" \
 ENDGAME_REMAINING_PCT="$ENDGAME_REMAINING_PCT" NOTIFY_COOLDOWN_H="$NOTIFY_COOLDOWN_H" \
 STALE_HOURS="$STALE_HOURS" UA_VERSION_FALLBACK="$UA_VERSION_FALLBACK" \
+GRACE_HOURS_5H="$GRACE_HOURS_5H" \
 CAN_NOTIFY="$(can_notify && echo 1 || echo 0)" \
 python3 - <<'PYEOF'
 import json, os, sys, time, tempfile, datetime
@@ -264,10 +270,24 @@ if used is not None and resets:
                 status = "OK"
                 reason = "projekcja %.0f%%" % (proj if proj is not None else -1)
 
+# ---------- okno 5h: projekcja TYLKO informacyjna (zero alarmow) ----------
+proj5 = None
+fh_b = cache.get("five_hour") or {}
+fh_used, fh_resets = fh_b.get("used_pct"), fh_b.get("resets_at_epoch")
+W5 = 5 * 3600.0
+GRACE5_S = float(os.environ["GRACE_HOURS_5H"]) * 3600.0
+if (fh_used is not None and fh_resets and fh_resets > now
+        and (now - fetched) <= STALE_S):
+    el5 = max(0.0, min(W5, W5 - (fh_resets - now)))
+    el5_pct = el5 / W5 * 100.0
+    if el5 >= GRACE5_S and el5_pct > 0.1:
+        proj5 = float(fh_used) / el5_pct * 100.0
+
 cache["pace"] = {
     "computed_at_epoch": now,
     "elapsed_pct": round(elapsed_pct, 1) if elapsed_pct is not None else None,
     "projection_pct": round(proj, 1) if proj is not None else None,
+    "projection_pct_5h": round(proj5, 1) if proj5 is not None else None,
     "hours_to_reset": round(hours_to_reset, 1) if hours_to_reset is not None else None,
     "status": status,
     "reason": reason,

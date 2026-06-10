@@ -208,7 +208,9 @@ try {
       else if (st === 'OK' && proj != null) projStr = `${c_green}→${Math.round(proj)}%${reset}`;
       else if (st === 'GRACE') projStr = `${c_dim}→·${reset}`;
       else if (st === 'STALE' || fromCache) projStr = `${c_dim}→?${reset}`;
-      const fhStr = (fh != null) ? `${c_dim}5h:${reset}${Math.round(fh)}% ` : '';
+      const proj5 = pace.projection_pct_5h;
+      const proj5Str = (proj5 != null) ? `${c_dim}→${Math.min(999, Math.round(proj5))}%${reset}` : '';
+      const fhStr = (fh != null) ? `${c_dim}5h:${reset}${Math.round(fh)}%${proj5Str} ` : '';
       usageSegment = `${fhStr}${c_dim}7d:${reset}${Math.round(sd)}%${projStr}`;
     }
   } catch {}

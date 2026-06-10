@@ -85,6 +85,33 @@ PATH="$T/bin:$PATH" CLAUDE_USAGE_CACHE_FILE="$PC" CLAUDE_USAGE_HISTORY_FILE="$T/
 if [ "$(grep -c STUB-NOTIF "$STUB_LOG")" = "0" ]; then echo "PASS proot-bez-powiadomien"; PASS=$((PASS+1));
 else echo "FAIL proot wyslal powiadomienie!"; FAIL=$((FAIL+1)); fi
 
+# --- projekcja 5h: liczona (elapsed 4h z 5h, used 11 -> 13.8), bez alarmow ---
+P5="$T/c-proj5.json"; mkcache "$P5" 45 100 10   # five_hour: used 11, reset za 1h
+CLAUDE_USAGE_CACHE_FILE="$P5" CLAUDE_USAGE_HISTORY_FILE="$T/h-proj5.csv" bash "$PACE" --compute-only
+if python3 -c "
+import json,sys
+p=(json.load(open('$P5')).get('pace') or {})
+sys.exit(0 if abs((p.get('projection_pct_5h') or 0) - 13.8) < 0.3 else 1)
+"; then echo "PASS proj5h-liczona (13.8)"; PASS=$((PASS+1));
+else echo "FAIL proj5h ($(python3 -c "import json;print((json.load(open('$P5')).get('pace') or {}).get('projection_pct_5h'))"))"; FAIL=$((FAIL+1)); fi
+
+# --- projekcja 5h: grace na starcie okna (reset za 4.9h => elapsed 6 min) ---
+G5="$T/c-grace5.json"
+python3 - "$G5" <<'PY'
+import json, sys, time
+now = time.time()
+json.dump({"fetched_at_epoch": now-10, "source": "test", "cc_version": "2.1.170",
+  "five_hour": {"used_pct": 2.0, "resets_at_epoch": now + 4.9*3600},
+  "seven_day": {"used_pct": 45.0, "resets_at_epoch": now + 100*3600}}, open(sys.argv[1],"w"))
+PY
+CLAUDE_USAGE_CACHE_FILE="$G5" CLAUDE_USAGE_HISTORY_FILE="$T/h-grace5.csv" bash "$PACE" --compute-only
+if python3 -c "
+import json,sys
+p=(json.load(open('$G5')).get('pace') or {})
+sys.exit(0 if p.get('projection_pct_5h') is None else 1)
+"; then echo "PASS proj5h-grace (brak strzalki na starcie okna)"; PASS=$((PASS+1));
+else echo "FAIL proj5h-grace"; FAIL=$((FAIL+1)); fi
+
 # --- historia: 1 wiersz na ten sam odczyt (dedup po fetched_at) ---
 HC="$T/c-hist.json"; mkcache "$HC" 45 100 10
 CLAUDE_USAGE_CACHE_FILE="$HC" CLAUDE_USAGE_HISTORY_FILE="$T/h-hist.csv" bash "$PACE" --compute-only

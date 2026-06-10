@@ -11,10 +11,14 @@ ręcznego odpalenia sesji autonomicznej (np. `petla-noc`).
 Segment dopisany na końcu pierwszej linii istniejącego paska statusu:
 
 ```
-37% │ C5/1M │ MAX │ KFG-Addons │ 5h:17% 7d:25%→30%⚠
+37% │ C5/1M │ MAX │ KFG-Addons
+5h:17%→55% 7d:25%→30%⚠
 ```
 
-- `5h:17%` — zużycie okna 5-godzinnego
+(osobna linijka pod główną — wąski ekran telefonu)
+
+- `5h:17%→55%` — zużycie okna 5-godzinnego + projekcja informacyjna
+  (przyciemniona, bez alarmów; znika w pierwszych 30 min okna)
 - `7d:25%` — zużycie okna tygodniowego
 - `→30%` — projekcja: ile % limitu tygodniowego wykorzystam przy obecnym tempie
   - zielona = OK, **czerwona z ⚠ = za wolno (LOW)**
@@ -71,6 +75,7 @@ Wszystkie w **jednym bloku konfiguracji na górze `pace.sh`** (komentarze po pol
 | `NOTIFY_COOLDOWN_H` | 6 | min. odstęp między powiadomieniami |
 | `CACHE_TTL_S` | 300 | świeżość cache (s) — poniżej zero fetchy |
 | `STALE_HOURS` | 2 | po tylu h dane = przeterminowane (`→?`) |
+| `GRACE_HOURS_5H` | 0.5 | start okna 5h bez projekcji (zbyt rozchwiana) |
 
 Po zmianie progów nic nie trzeba restartować — następny przebieg czyta nowe wartości.
 Pamiętaj zsynchronizować zmianę do repo (`addons/usage-pace/files/usage/pace.sh`).
