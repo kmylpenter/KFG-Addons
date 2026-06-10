@@ -71,7 +71,11 @@
       "Bash(cp ~/.claude/commands/czytaj.md /data/data/com.termux/files/home/projekty/KFG-Addons/addons/czytaj/files/commands/czytaj.md)",
       "Read(//data/data/com.termux/files/home/.claude/**)",
       "Bash(mkdir -p ~/.claude/lib/browser-smoke/adapters)",
-      "Read(//data/data/com.termux/files/home/.claude/lib/**)"
+      "Read(//data/data/com.termux/files/home/.claude/lib/**)",
+      "Read(//root/.claude/skills/ssot-dry-audit/scripts/**)",
+      "Bash(mkdir -p /root/tmp)",
+      "Bash(mv /petla-solve-backup-2026-06-09 /root/tmp/)",
+      "Bash(rm -rf /ssot-fixture)"
     ]
   }
 }
