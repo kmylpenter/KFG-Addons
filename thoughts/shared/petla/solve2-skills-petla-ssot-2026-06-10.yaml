@@ -1,0 +1,43 @@
+meta:
+  mode: solve
+  target: "skills-petla-ssot"
+  audit_file: "thoughts/shared/petla/audit-skills-petla-ssot-2026-06-09.yaml"
+  scope: "transza 2: WSZYSTKIE pozostale majory (45 z YAML + 7 riderow) + P1 (profile/severity-floor/agregacja minorow) + P2 (konwergencja po C/M) + P3 (wontfix ledger)"
+  started: "2026-06-10"
+  completed: "2026-06-10"
+  status: completed
+  rollback_backup: "/root/tmp/petla-solve2-backup-2026-06-10/"
+  result_versions: { petla: "v3.4 (2718 L)", ssot: "SKILL 470 L", helper: "2.2.0" }
+riders_to_verify: [M5, M15, M19, M33, M42, M74, M75]   # zweryfikowane i oznaczone fixed (task 13)
+clusters:
+  - {id: G, theme: "ekonomika audytu", issues: [P1, P2, P3, M61, M22, M16res], status: done}
+  - {id: H, theme: "solve-mode", issues: [M4, M10, M21, M23, M29, M76, M77, M79], status: done}
+  - {id: I, theme: "wiring/docs petla", issues: [M3, M17, M18, M35, M37, M38, M43, M45, M62, M66], status: done}
+  - {id: J, theme: "smoke/workflow", issues: [M6, M7, M24, M31, M32, M36, M39, M40, M44, M56, M63, M65], status: done}
+  - {id: K, theme: "ssot doc", issues: [M47, M49, M67, M17ssot], status: done}
+  - {id: L, theme: "helper code + testy", issues: [M12, M13, M25, M26, M41, M50, M78], status: done, note: "etykieta 'M60' klastra = walk_info/symlinki; YAML-owy M60 zrobiony osobno post-sweep"}
+  - {id: late, theme: "majory pominiete przy planowaniu klastrow", issues: [M34, M60], status: done, note: "M60 = defekty self-checku MUSZA do ITEMS (notes tylko assumptions/negative); M34 = worktree solve EXPERIMENTAL + integracja z protokolem + carve-out TREE GUARD (legalna mutacja ORKIESTRATORA, refine po verify-fail, re-verify passed)"}
+verification:
+  verify_r1: "5 lensow spawned; 3 verdicty wrocily (correctness/regression/contract), 2 padly na API (consistency, completeness) -> ~24 refine'y zaaplikowane"
+  final_sweep_r1: "3 fresh agenty (consistency+refines 24/24 MET, completeness 47/48, regression CLEAN) -> 5 ech (E1-E5) + enum wontfix"
+  fixes_r1: "12 edits (Final Verification przez build_validator_prompt, flow diagram, decision tree YES flag-warunkowy, enum+progress wontfix, pointery KOLIZJE w 4 initach, ssot locations_total x4, literowka)"
+  final_sweep_r2: "3 fresh agenty -> 2 majory (mode-literal 'solve-final-sweep' poza registry; lista terminalna kroku 7 bez wontfix) + 7 minorow -> 13 edits"
+  final_sweep_r3: "3 fresh agenty (correctness+regression, completeness echo-hunt, fresh-eyes integralnosc) = 3/3 no_remaining_issues (floor=major); fresh-eyes przeszedl protokol wykonawczo + empiryczny run helpera"
+  m34_m60: "combined verify agent: M60 passed, M34 failed (konflikt z kanonem TREE GUARD baseline-RAZ-na-run) -> refine wg recepty (carve-out kanonu pkt 1 + odwolanie) -> re-verify passed"
+progress: {total_issues: 57, applied: 57, verified: 57, blocked: 0, needs_human_review: 0, skipped_low_confidence: 0, wontfix: 0}
+deferred_minors_from_sweeps:   # zostaja open; kandydaci do przyszlej transzy minorow (floor transzy = major)
+  - "petla: KROK 4 skrot 'max_iter' vs etykieta 'max_iter_reached' (214)"
+  - "petla: Extended Flow dwa kroki 'f.' (numeracja, ~2029/2075)"
+  - "petla: trzy gramatyki wywolania solve (pozycyjny/--issues/options.issues) bez jednej kanonicznej"
+  - "petla: evaluate_stop_conditions sprawdza cap PRZED konwergencja (run konwergujacy dokladnie na max_iter dostaje max_iter_reached LOW — fail-safe, nie bug)"
+  - "petla: {compressed_existing_summary} w templacie vs FULL-by-default kontrakt (1055)"
+  - "petla: KROK 0 pkt 4 bez bulletu verify; podwojny hop referencji LOW/ledger"
+  - "petla: drobny dryf slownika w diagramach (no new issues/no_new_issues/completed vs no_issues)"
+  - "petla: PROGRESS REPORTING FORMAT przyklad bez licznikow Wontfix/Rejected"
+  - "petla: L1307 case 1 'extended prompt' bez powtorzenia FULL-original; L1288 re-iteracja bez frazy 'pelnym templatem' (pokryte kanonem)"
+  - "petla: elipsy build_validator_prompt(\"regression\", ...) w Final Verification (wzorzec z correctness)"
+  - "petla: wiersz L272 'QA = smoke phase. Brak user-in-the-loop' bez warunku flagi (ekwiwalencja, nie imperatyw)"
+  - "petla: L423 przypis tylko 1 z 2 wyjatkow TaskCreate"
+  - "ssot: Faza 1 krok 1 uzywa project.types z helpera ktory startuje w Fazie 2 (chicken-and-egg, rozwiazywalne wczesnym runem)"
+  - "ssot: .ssot-scan.json gitignorowany dopiero w Fazie 4b (zyje chwile nie-ignorowany)"
+ledger_after: { fixed: 85, open: 94, open_majors: 0, open_minors: 94 }

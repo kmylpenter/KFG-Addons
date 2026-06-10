@@ -1,0 +1,30 @@
+meta:
+  mode: solve
+  target: "skills-petla-ssot"
+  audit_file: "thoughts/shared/petla/audit-skills-petla-ssot-2026-06-09.yaml"
+  scope: "najtrudniejsze: C1-C5 + 28 strukturalnych majorow (33 issues, 6 fix-clusters)"
+  started: "2026-06-09"
+  updated: "2026-06-10"
+  status: completed
+  rollback_backup: "/root/tmp/petla-solve-backup-2026-06-09/ (targety poza gitem; KEEP do czasu commitu mirrorow)"
+clusters:
+  - {id: A, issues: [C1, M1, M2, M27, M28, M51, M52, M53, M54, M59, M71, M80], status: verified}
+  - {id: B, issues: [C5, M8, M9, M11, M14, M30], status: verified}
+  - {id: C, issues: [M20, M55, M64, M68, M72, M73], status: verified}
+  - {id: D, issues: [C2, M46, M48, M69, M70], status: verified}
+  - {id: E, issues: [C4], status: verified}
+  - {id: F, issues: [C3, M57, M58], status: verified, empirical_test: "fixture /root/tmp/ssot-fixture — ALL ASSERTIONS PASS (2 runy)"}
+verification:
+  verify_fanout_r1: "5 lensow (correctness/regression/consistency/completeness/contract) → FAILED z 28 lukami propagacji (echa regul)"
+  refine_r1: "28/28 poprawek + helper retest PASS"
+  final_sweep_r1: "3 agenty → 3x ECONNRESET (infrastruktura) → re-spawn per error-handling"
+  final_sweep_r1_retry: "3/3 verdicty: correctness 2 echa, regression 6 minorow, completeness 31/33→po refine 33/33-2 echa"
+  echo_fixes: "6 (S1-S6) + 2 z re-sweep (tabela AUTONOMY :223/:390) + 3 wiersze rodziny 'napraw wszystkie'"
+  final_resweep_r2: "correctness=CLEAN, completeness=CLEAN (ALL 33 complete, 9 spot-checked), regression=2 pre-existing echa → naprawione + family-closure grep 0 hits"
+  tree_guard: "PASS caly run — smoke-launcher.js md5 niezmieniony (d2dc0dc...); walidatory nie mutowaly drzewa"
+mirrors:
+  petla_SKILL: "SYNC (2341 linii, v3.3)"
+  ssot_SKILL: "SYNC (432 linie)"
+  detect_duplicates: "SYNC (591 linii, v2.1.0)"
+progress: {total_issues: 33, applied: 33, verified: 33, blocked: 0, needs_human_review: 0, skipped_low_confidence: 0}
+deferred: "146 pozycji z audytu (głównie minor + 22 majory spoza transzy) — status open w audit YAML"

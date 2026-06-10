@@ -6,12 +6,20 @@ adds semantic interpretation (Phase 3). Helper is a fast pre-filter, not
 a judge.
 
 Usage:
-    python3 detect_duplicates.py [PATH] [--max-file-size BYTES]
+    python3 detect_duplicates.py [PATH] [--max-file-size BYTES] [--output FILE]
+                                 [--compact] [--allow-outside-cwd]
 
-Output: JSON on stdout. Errors go to stderr; exit codes:
+Output: JSON on stdout, or to --output FILE (stdout then carries a 1-line summary —
+recommended: full JSON overflows tool-output limits on medium repos).
+Errors = JSON with an "error" field on STDOUT; warnings go to stderr. Exit codes:
     0 = ok
-    1 = invalid args / not a directory
-    2 = path traversal attempt
+    1 = invalid args / not a directory / empty scan
+    2 = path traversal attempt (argparse errors also exit 2, usage on stderr)
+    130 = interrupted (partial)
+
+SSOT: the installed copy (~/.claude/skills/ssot-dry-audit/scripts/) is the source
+of truth; the distribution mirror lives in <repo KFG-Addons>/addons/ssot-dry-audit/
+files/.claude/skills/ssot-dry-audit/scripts/ — after ANY edit: cp installed→mirror + diff -q.
 """
 from __future__ import annotations
 
@@ -26,7 +34,7 @@ from collections import defaultdict
 from pathlib import Path
 
 SCHEMA_VERSION = "2.0"
-HELPER_VERSION = "2.0.0"
+HELPER_VERSION = "2.2.0"  # 2.2.0: M12 keyword blocklist, M13 PESEL/NIP checksums + raw-line PII scan, M25 truncation{} + locations_total, M26 shell extensions, M41 empty-scan guard, M50 --output/--compact, M60/M78 walk_info (symlinks + unreadable dirs). 2.1.0: C3 in-place HTML masking, M57, M58.
 
 CODE_EXTENSIONS = {
     ".js", ".jsx", ".mjs", ".cjs",
@@ -36,6 +44,7 @@ CODE_EXTENSIONS = {
     ".go", ".rs", ".java", ".kt",
     ".rb", ".php",
     ".html", ".htm", ".css", ".scss",
+    ".sh", ".bash", ".zsh",
 }
 
 SKIP_DIR_NAMES = {
@@ -56,11 +65,16 @@ SKIP_FILE_PATTERNS = [
     re.compile(r"\.map$"),
 ]
 
-TEST_PATH_HINTS = re.compile(
-    r"(^|/)(__tests__|__mocks__|tests?|spec|fixtures?|cypress|playwright|"
-    r"e2e|integration|i18n|locales|translations)(/|$)",
+# Unambiguous test-dir segments — matched against the path RELATIVE TO SCAN ROOT
+# (an ancestor dir named tests/ ABOVE the scope must not classify the whole scope).
+TEST_DIR_HINTS = re.compile(
+    r"(^|/)(__tests__|__mocks__|tests?|fixtures?|cypress|playwright|"
+    r"i18n|locales|translations)(/|$)",
     re.IGNORECASE,
 )
+# NOTE (M57): integration/e2e/spec are deliberately NOT dir-matched — they are common
+# PRODUCTION dir names (src/integration/ = e.g. Zoho CRM code). Real tests inside such
+# dirs are still caught by the test-shaped FILENAME rule in looks_like_test().
 
 # Escape-aware string literal regex covering ', ", ` — captures content (group 1, 2 or 3).
 STRING_LITERAL_RE = re.compile(
@@ -109,6 +123,15 @@ COMMON_STRINGS = {
     "doGet", "doPost", "onOpen", "onEdit", "onFormSubmit",
 }
 
+# Control-flow keywords that FUNCTION_DEF_RE's method-like branch (top-level GAS)
+# false-positively matches as "definitions": `for (...) {`, `while (...) {` etc. —
+# in JS/GAS these open nearly every file and EVICT real findings via the [:30] cap (M12).
+CONTROL_KEYWORDS = {
+    "for", "while", "switch", "catch", "if", "else", "do", "return",
+    "function", "async", "await", "typeof", "new", "delete", "void",
+    "in", "of", "with", "try", "yield",
+}
+
 COMMON_FUNCTION_NAMES = {
     # Generic entry points
     "main", "init", "render", "handler", "default", "setup",
@@ -120,24 +143,44 @@ COMMON_FUNCTION_NAMES = {
     "doGet", "doPost", "onOpen", "onEdit", "onFormSubmit", "onChange",
 }
 
-# Secret/PII patterns — values matching these are REDACTED in occurrences.
+# Secret/PII patterns — values CONTAINING these are REDACTED in occurrences.
+# NOT ^$-anchored (except base64-blob): real leaks are EMBEDDED in longer literals
+# ("Authorization: Bearer eyJ...", "key=sk_live_...", "url?token=ghp_...") — anchored
+# patterns missed them entirely (M58). The WHOLE literal value gets redacted.
 SECRET_PATTERNS = [
-    (re.compile(r"^sk_(live|test)_[A-Za-z0-9]{16,}$"), "stripe-key"),
-    (re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$"), "aws-key"),
-    (re.compile(r"^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"), "jwt"),
-    (re.compile(r"^(ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}$"), "github-token"),
+    (re.compile(r"\bsk_(live|test)_[A-Za-z0-9]{16,}"), "stripe-key"),
+    (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b"), "aws-key"),
+    (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), "jwt"),
+    (re.compile(r"\b(ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{20,}"), "github-token"),
     (re.compile(r"://[^/\s]+:[^@\s]+@"), "url-with-credentials"),
-    (re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"), "base64-blob"),
-    (re.compile(r"^xox[baprs]-[A-Za-z0-9-]{10,}$"), "slack-token"),
+    (re.compile(r"^[A-Za-z0-9+/]{40,}={0,2}$"), "base64-blob"),  # anchored ON PURPOSE (FP guard: hashes/shas in code)
+    (re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"), "slack-token"),
 ]
 
 # Polish business identifiers — flagged as their own category.
 POLISH_PATTERNS = [
     (re.compile(r"\bPL\d{26}\b"), "iban-pl"),
-    (re.compile(r"(?<!\d)\d{11}(?!\d)"), "pesel-or-regon11"),  # PESEL 11 / REGON 11 (14-digit REGON not matched — rare, intentionally out of scope)
-    (re.compile(r"(?<!\d)\d{10}(?!\d)"), "nip-or-regon"),       # NIP 10 / REGON 9 ambiguous
+    (re.compile(r"(?<!\d)\d{11}(?!\d)"), "pesel-or-regon11"),  # 11 digits = PESEL (checksum-validated below)
+    (re.compile(r"(?<!\d)\d{10}(?!\d)"), "nip-or-regon"),       # 10 digits = NIP (checksum-validated below)
     (re.compile(r"\b\d{3}-\d{3}-\d{2}-\d{2}\b"), "nip-formatted"),
 ]
+
+
+def _pesel_valid(s: str) -> bool:
+    """PESEL checksum — bare 11-digit runs are usually timestamps/db-ids, not PII (M13)."""
+    if len(s) != 11 or not s.isdigit():
+        return False
+    weights = (1, 3, 7, 9, 1, 3, 7, 9, 1, 3)
+    return (10 - sum(int(a) * w for a, w in zip(s[:10], weights)) % 10) % 10 == int(s[10])
+
+
+def _nip_valid(s: str) -> bool:
+    """NIP checksum (mod-11; control digit may not be 10)."""
+    if len(s) != 10 or not s.isdigit():
+        return False
+    weights = (6, 5, 7, 2, 3, 4, 5, 6, 7)
+    c = sum(int(a) * w for a, w in zip(s[:9], weights)) % 11
+    return c != 10 and c == int(s[9])
 
 
 def is_skipped_dir(name: str) -> bool:
@@ -148,15 +191,26 @@ def is_skipped_file(path: Path) -> bool:
     return any(p.search(path.name) for p in SKIP_FILE_PATTERNS)
 
 
-def looks_like_test(path: Path) -> bool:
-    s = str(path).replace("\\", "/")
-    if TEST_PATH_HINTS.search(s):
-        return True
+def _testy_filename(path: Path) -> bool:
     stem = path.stem
     return (
         stem.endswith((".test", ".spec", "_test", "_spec"))
         or stem.startswith(("test_", "spec_"))
     )
+
+
+def looks_like_test(path: Path, root: Path) -> bool:
+    """M57: match against the path RELATIVE to the scan root — an ancestor dir
+    named tests/ ABOVE the scope must not classify the whole scope as tests.
+    Ambiguous segments (integration/e2e/spec) are intentionally not dir-matched
+    (production dir names); tests inside them match via the filename rule."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+    if TEST_DIR_HINTS.search(str(rel).replace("\\", "/")):
+        return True
+    return _testy_filename(path)
 
 
 def is_secret_shaped(value: str) -> str | None:
@@ -178,10 +232,26 @@ def normalize_unicode(text: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
-def walk_files(root: Path, max_size: int) -> list[Path]:
+def walk_files(root: Path, max_size: int) -> tuple[list[Path], dict]:
+    """M60/M78: unreadable directories and skipped symlinked dirs are COUNTED and
+    reported (walk_info) — a permission-blocked subtree used to vanish silently,
+    presenting a partial scan as complete."""
     out: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: None):
-        dirnames[:] = [d for d in dirnames if not is_skipped_dir(d)]
+    walk_errors: list[str] = []
+    sym_dirs = 0
+    size_skipped = 0
+    for dirpath, dirnames, filenames in os.walk(
+        root, onerror=lambda e: walk_errors.append(str(getattr(e, "filename", e)))
+    ):
+        kept = []
+        for d in dirnames:
+            if is_skipped_dir(d):
+                continue
+            if (Path(dirpath) / d).is_symlink():
+                sym_dirs += 1   # not traversed (followlinks=False — cycle safety); report it
+                continue
+            kept.append(d)
+        dirnames[:] = kept
         for fn in filenames:
             p = Path(dirpath) / fn
             if p.suffix.lower() not in CODE_EXTENSIONS:
@@ -190,6 +260,7 @@ def walk_files(root: Path, max_size: int) -> list[Path]:
                 continue
             try:
                 if p.stat().st_size > max_size:
+                    size_skipped += 1
                     print(
                         f"warn: skipping {p.relative_to(root)} (size > {max_size})",
                         file=sys.stderr,
@@ -198,7 +269,13 @@ def walk_files(root: Path, max_size: int) -> list[Path]:
             except OSError:
                 continue
             out.append(p)
-    return out
+    walk_info = {
+        "dirs_unreadable": len(walk_errors),
+        "dirs_unreadable_sample": walk_errors[:10],
+        "dirs_symlinked_skipped": sym_dirs,
+        "files_size_skipped": size_skipped,
+    }
+    return out, walk_info
 
 
 def read_text(p: Path, root: Path) -> str | None:
@@ -217,27 +294,32 @@ def read_text(p: Path, root: Path) -> str | None:
     return normalize_unicode(text)
 
 
-def extract_html_scripts(text: str) -> str:
-    """Concatenate <script> bodies so duplicate JS in HTML pages is detectable."""
-    matches = re.findall(
-        r"<script\b[^>]*>(.*?)</script>", text, re.DOTALL | re.IGNORECASE
-    )
-    return "\n".join(matches)
-
-
-def extract_html_styles(text: str) -> str:
-    matches = re.findall(
-        r"<style\b[^>]*>(.*?)</style>", text, re.DOTALL | re.IGNORECASE
-    )
-    return "\n".join(matches)
+HTML_CODE_BODY_RE = re.compile(
+    r"<(script|style)\b[^>]*>(.*?)</\1\s*>", re.DOTALL | re.IGNORECASE
+)
 
 
 def get_scan_text(p: Path, raw: str) -> str:
-    """For .html/.htm, strip markup and keep only embedded JS/CSS so duplicate
-    detection runs on the actual code, not the page chrome."""
-    if p.suffix.lower() in {".html", ".htm"}:
-        return extract_html_scripts(raw) + "\n" + extract_html_styles(raw)
-    return raw
+    """For .html/.htm keep ONLY <script>/<style> bodies IN PLACE: markup is blanked
+    with spaces, newlines preserved — so every reported lineno points at the REAL
+    line of the original file. (C3 fix: the old concatenated-extract approach made
+    .html line numbers index the extract, off by the tag offset — for the user's
+    5000-line GAS HTML files that meant locations off by thousands of lines.)"""
+    if p.suffix.lower() not in {".html", ".htm"}:
+        return raw
+    keep = bytearray(len(raw))
+    for m in HTML_CODE_BODY_RE.finditer(raw):
+        for i in range(m.start(2), m.end(2)):
+            keep[i] = 1
+    out = []
+    for i, ch in enumerate(raw):
+        if ch == "\n":
+            out.append("\n")          # line structure preserved 1:1
+        elif keep[i]:
+            out.append(ch)
+        else:
+            out.append(" ")           # markup masked out — never reaches the scan
+    return "".join(out)
 
 
 def strip_line_comments(line: str, lang: str) -> str:
@@ -267,14 +349,13 @@ def strip_line_comments(line: str, lang: str) -> str:
 
 
 def lang_of(p: Path) -> str:
-    return "py" if p.suffix == ".py" else "c"
+    """Comment-marker grammar: 'py' = '#'-style (Python, shell), 'c' = '//'-style."""
+    return "py" if p.suffix.lower() in {".py", ".sh", ".bash", ".zsh"} else "c"
 
 
-def find_string_literals(files_with_text: list[tuple[Path, str]]) -> list[dict]:
+def find_string_literals(files_with_text: list[tuple[Path, str]]) -> tuple[list[dict], int]:
     occurrences: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
         lang = lang_of(p)
         for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.lstrip()
@@ -297,17 +378,16 @@ def find_string_literals(files_with_text: list[tuple[Path, str]]) -> list[dict]:
                 "secret_kind": label,
                 "occurrences": len(locs),
                 "files": len(files_seen),
+                "locations_total": len(locs),
                 "locations": locs[:10],
             })
     findings.sort(key=lambda x: (-x["occurrences"], x["value"]))
-    return findings[:50]
+    return findings[:50], len(findings)
 
 
-def find_number_literals(files_with_text: list[tuple[Path, str]]) -> list[dict]:
+def find_number_literals(files_with_text: list[tuple[Path, str]]) -> tuple[list[dict], int]:
     occurrences: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
         lang = lang_of(p)
         for lineno, line in enumerate(text.splitlines(), 1):
             stripped = line.lstrip()
@@ -332,23 +412,22 @@ def find_number_literals(files_with_text: list[tuple[Path, str]]) -> list[dict]:
                 "is_float": is_float,
                 "occurrences": len(locs),
                 "files": len(files_seen),
+                "locations_total": len(locs),
                 "locations": locs[:10],
             })
     findings.sort(key=lambda x: (-x["occurrences"], x["value"]))
-    return findings[:30]
+    return findings[:30], len(findings)
 
 
-def find_duplicate_function_names(files_with_text: list[tuple[Path, str]]) -> list[dict]:
+def find_duplicate_function_names(files_with_text: list[tuple[Path, str]]) -> tuple[list[dict], int]:
     names: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
         for lineno, line in enumerate(text.splitlines(), 1):
             for m in FUNCTION_DEF_RE.finditer(line):
                 name = next((g for g in m.groups() if g), None)
                 if not name or len(name) < 3:
                     continue
-                if name in COMMON_FUNCTION_NAMES:
+                if name in COMMON_FUNCTION_NAMES or name.lower() in CONTROL_KEYWORDS:
                     continue
                 names[name].append((str(p), lineno))
 
@@ -360,17 +439,16 @@ def find_duplicate_function_names(files_with_text: list[tuple[Path, str]]) -> li
                 "name": name,
                 "occurrences": len(locs),
                 "files": len(files_seen),
+                "locations_total": len(locs),
                 "locations": locs[:10],
             })
     findings.sort(key=lambda x: (-x["files"], x["name"]))
-    return findings[:30]
+    return findings[:30], len(findings)
 
 
-def find_duplicate_types(files_with_text: list[tuple[Path, str]]) -> list[dict]:
+def find_duplicate_types(files_with_text: list[tuple[Path, str]]) -> tuple[list[dict], int]:
     names: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
         for lineno, line in enumerate(text.splitlines(), 1):
             for m in TYPE_DEF_RE.finditer(line):
                 name = m.group(1)
@@ -386,19 +464,18 @@ def find_duplicate_types(files_with_text: list[tuple[Path, str]]) -> list[dict]:
                 "name": name,
                 "occurrences": len(locs),
                 "files": len(files_seen),
+                "locations_total": len(locs),
                 "locations": locs[:10],
             })
     findings.sort(key=lambda x: (-x["files"], x["name"]))
-    return findings[:30]
+    return findings[:30], len(findings)
 
 
-def find_duplicate_blocks(files_with_text: list[tuple[Path, str]], window: int = 5) -> list[dict]:
+def find_duplicate_blocks(files_with_text: list[tuple[Path, str]], window: int = 5) -> tuple[list[dict], int]:
     """Hash sliding windows of `window` non-empty normalized lines per file.
     Reports hashes that appear in 2+ different files."""
     hashes: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
         lang = lang_of(p)
         lines: list[str] = []
         line_numbers: list[int] = []
@@ -430,30 +507,35 @@ def find_duplicate_blocks(files_with_text: list[tuple[Path, str]], window: int =
                 "window_lines": window,
                 "occurrences": len(locs),
                 "files": len(files_seen),
+                "locations_total": len(locs),
                 "locations": locs[:10],
             })
     findings.sort(key=lambda x: (-x["occurrences"], x["hash"]))
-    return findings[:20]
+    return findings[:20], len(findings)
 
 
-def find_polish_business_ids(files_with_text: list[tuple[Path, str]]) -> list[dict]:
-    """Polish business identifiers (PESEL/NIP/REGON/IBAN) — flagged ALWAYS as critical
-    because hardcoded ids are GDPR/RODO violation regardless of duplication."""
+def find_polish_business_ids(files_with_text: list[tuple[Path, str]]) -> tuple[list[dict], int]:
+    """Polish business identifiers (PESEL/NIP/IBAN) — flagged as critical because a
+    hardcoded id is a GDPR/RODO violation regardless of duplication. M13 hardening:
+    (a) scan the RAW line — a PESEL inside a comment is still a violation, so the
+    comment stripper must not hide it; (b) digit-run kinds require a VALID checksum
+    (bare 10/11-digit runs are usually timestamps/phones/db-ids, not PII)."""
     findings: list[dict] = []
     for p, text in files_with_text:
-        if looks_like_test(p):
-            continue
-        lang = lang_of(p)
         for lineno, raw in enumerate(text.splitlines(), 1):
-            line = strip_line_comments(raw, lang)
             for pat, kind in POLISH_PATTERNS:
-                for m in pat.finditer(line):
+                for m in pat.finditer(raw):
+                    digits = re.sub(r"\D", "", m.group(0))
+                    if kind == "pesel-or-regon11" and not _pesel_valid(digits):
+                        continue
+                    if kind in ("nip-or-regon", "nip-formatted") and not _nip_valid(digits):
+                        continue
                     findings.append({
                         "kind": kind,
                         "value_redacted": "[REDACTED:" + kind + "]",
                         "location": [str(p), lineno],
                     })
-    return findings[:50]
+    return findings[:50], len(findings)
 
 
 def detect_project_type(root: Path) -> dict:
@@ -499,6 +581,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--allow-outside-cwd", action="store_true",
         help="Allow scanning outside current working directory (off by default).",
     )
+    p.add_argument(
+        "--output", metavar="FILE", default=None,
+        help="Write JSON to FILE (atomic tmp+rename); stdout gets a 1-line summary. "
+             "Recommended — full JSON overflows tool-output limits on medium repos (M50).",
+    )
+    p.add_argument(
+        "--compact", action="store_true",
+        help="Compact JSON (no indent, tight separators) — ~40%% smaller.",
+    )
     return p.parse_args(argv)
 
 
@@ -522,7 +613,14 @@ def main(argv: list[str]) -> int:
             }))
             return 2
 
-    files = walk_files(root, args.max_file_size)
+    if args.max_file_size < 1024:
+        print(json.dumps({
+            "schema_version": SCHEMA_VERSION,
+            "error": f"--max-file-size {args.max_file_size} < 1024 would skip every file (M41)",
+        }))
+        return 1
+
+    files, walk_info = walk_files(root, args.max_file_size)
     files_with_text: list[tuple[Path, str]] = []
     for p in files:
         raw = read_text(p, root)
@@ -530,7 +628,28 @@ def main(argv: list[str]) -> int:
             continue
         files_with_text.append((p, get_scan_text(p, raw)))
 
+    if not files_with_text:
+        print(json.dumps({
+            "schema_version": SCHEMA_VERSION,
+            "error": "no files scanned (wrong scope? extensions? size limit?) — a 'clean' report here would be FALSE (M41)",
+            "walk_info": walk_info,
+        }))
+        return 1
+
+    # Test filtering happens ONCE here (not in every finder) — exclusions are
+    # reported so Phase 3 can see what the helper did NOT scan (M57).
+    code_files = [(p, t) for (p, t) in files_with_text
+                  if not looks_like_test(p, root)]
+    files_excluded_as_test = len(files_with_text) - len(code_files)
+
     project = detect_project_type(root)
+
+    ds, ds_total = find_string_literals(code_files)
+    dn, dn_total = find_number_literals(code_files)
+    df, df_total = find_duplicate_function_names(code_files)
+    dt, dt_total = find_duplicate_types(code_files)
+    db, db_total = find_duplicate_blocks(code_files)
+    pii, pii_total = find_polish_business_ids(code_files)
 
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -538,27 +657,60 @@ def main(argv: list[str]) -> int:
         "scope": str(root),
         "files_scanned": len(files_with_text),
         "files_skipped": len(files) - len(files_with_text),
+        "files_excluded_as_test": files_excluded_as_test,
+        "walk_info": walk_info,
         "project": project,
         "findings": {
-            "duplicate_strings": find_string_literals(files_with_text),
-            "duplicate_numbers": find_number_literals(files_with_text),
-            "duplicate_function_names": find_duplicate_function_names(files_with_text),
-            "duplicate_type_names": find_duplicate_types(files_with_text),
-            "duplicate_code_blocks": find_duplicate_blocks(files_with_text),
-            "polish_business_ids": find_polish_business_ids(files_with_text),
+            "duplicate_strings": ds,
+            "duplicate_numbers": dn,
+            "duplicate_function_names": df,
+            "duplicate_type_names": dt,
+            "duplicate_code_blocks": db,
+            "polish_business_ids": pii,
+        },
+        # M25: caps are no longer silent — Phase 3 must re-grep truncated categories
+        # (and per-finding locations where locations_total > 10) before refactor proposals.
+        "truncation": {
+            "duplicate_strings": {"returned": len(ds), "total_found": ds_total},
+            "duplicate_numbers": {"returned": len(dn), "total_found": dn_total},
+            "duplicate_function_names": {"returned": len(df), "total_found": df_total},
+            "duplicate_type_names": {"returned": len(dt), "total_found": dt_total},
+            "duplicate_code_blocks": {"returned": len(db), "total_found": db_total},
+            "polish_business_ids": {"returned": len(pii), "total_found": pii_total},
+            "note": "locations per finding capped at 10 — see locations_total; re-grep to expand",
         },
         "notes": [
             "Helper output is RAW. Skill (Phase 3) must filter false positives semantically.",
-            "Test files / mocks / i18n / fixtures excluded automatically.",
-            "Secret-shaped strings redacted before output.",
-            "Polish PII/business IDs flagged unconditionally (RODO).",
-            "HTML files: only <script> and <style> bodies are scanned.",
+            "Test files / mocks / i18n / fixtures excluded automatically (count: files_excluded_as_test; matched vs SCAN ROOT, ambiguous dirs need test-shaped filename).",
+            "Secret-shaped strings redacted before output (patterns match EMBEDDED secrets too).",
+            "Polish PII digit-kinds are CHECKSUM-validated (PESEL/NIP) and scanned on RAW lines incl. comments.",
+            "HTML files: <script>/<style> bodies scanned IN PLACE — line numbers match the original file.",
+            "Unreadable/symlinked dirs are counted in walk_info — a partial walk is disclosed, not hidden.",
         ],
     }
-    try:
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-    except UnicodeEncodeError:
-        print(json.dumps(report, indent=2, ensure_ascii=True))
+
+    def render(ascii_fallback: bool = False) -> str:
+        return json.dumps(
+            report,
+            indent=None if args.compact else 2,
+            ensure_ascii=ascii_fallback,
+            separators=(",", ":") if args.compact else None,
+        )
+
+    if args.output:
+        tmp_path = args.output + ".tmp"
+        Path(tmp_path).write_text(render(), encoding="utf-8")
+        os.replace(tmp_path, args.output)   # atomic: tmp + rename (M50)
+        print(json.dumps({
+            "written": args.output,
+            "schema_version": SCHEMA_VERSION,
+            "files_scanned": report["files_scanned"],
+        }))
+    else:
+        try:
+            print(render())
+        except UnicodeEncodeError:
+            print(render(ascii_fallback=True))
     return 0
 
 

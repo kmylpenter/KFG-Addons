@@ -6,6 +6,10 @@ allowed-tools: [Bash, Read, Write, Grep, Glob]
 
 # SSOT/DRY Audit (pure audit)
 
+> **SSOT:** kopia INSTALOWANA (`~/.claude/skills/ssot-dry-audit/`) = zrodlo prawdy.
+> Mirror dystrybucyjny: `<repo KFG-Addons>/addons/ssot-dry-audit/files/.claude/skills/ssot-dry-audit/`
+> — po KAZDEJ edycji SKILL.md/helpera `cp` installed→mirror + `diff -q`.
+
 Skill audytujacy projekt pod katem SSOT/DRY. Generuje **dwa pliki**:
 1. `SSOT_DRY_AUDIT_REPORT.md` — czytelny raport dla czlowieka
 2. `.ssot-findings.yaml` — maszynowy handoff dla `/petla solve`
@@ -37,7 +41,11 @@ Wykryj typ projektu i zakres skanu.
 ### Faza 2: Skan mechaniczny
 
 ```bash
-python3 ~/.claude/skills/ssot-dry-audit/scripts/detect_duplicates.py <ZAKRES>
+python3 ~/.claude/skills/ssot-dry-audit/scripts/detect_duplicates.py <ZAKRES> --output .ssot-scan.json
+# --output OBOWIAZKOWO: pelny JSON na stdout przekracza limit outputu narzedzia
+# (~30k znakow) na srednich repo -> obcieta polowa dokumentu = falszywy ABORT.
+# Stdout = 1-liniowe podsumowanie; pelny wynik czytaj z .ssot-scan.json (gitignored).
+# Skanowane rozszerzenia: patrz CODE_EXTENSIONS w helperze (m.in. js/ts/py/gs/html/css/sh).
 ```
 
 Helper produkuje JSON ze `schema_version: "2.0"`. Zwaliduj kontrakt:
@@ -49,14 +57,17 @@ Helper produkuje JSON ze `schema_version: "2.0"`. Zwaliduj kontrakt:
   "scope": "...",
   "files_scanned": N,
   "files_skipped": N,
+  "files_excluded_as_test": N,
+  "walk_info": {"dirs_unreadable": N, "dirs_unreadable_sample": [...], "dirs_symlinked_skipped": N, "files_size_skipped": N},
+  "truncation": {"<kategoria>": {"returned": N, "total_found": N}, "note": "..."},   # caps 50/30/30/30/20/50 + locations[:10] (locations_total per finding)
   "project": {"types": [...], "project_root": "..."},
   "notes": [...],   # informacyjne stringi (RAW-output disclaimer) — skill ich nie konsumuje
   "findings": {
-    "duplicate_strings": [{"value", "secret_kind", "occurrences", "files", "locations"}],
-    "duplicate_numbers": [{"value", "is_float", "occurrences", "files", "locations"}],
-    "duplicate_function_names": [{"name", "occurrences", "files", "locations"}],
-    "duplicate_type_names": [{"name", "occurrences", "files", "locations"}],
-    "duplicate_code_blocks": [{"hash", "window_lines", "occurrences", "files", "locations"}],
+    "duplicate_strings": [{"value", "secret_kind", "occurrences", "files", "locations_total", "locations"}],
+    "duplicate_numbers": [{"value", "is_float", "occurrences", "files", "locations_total", "locations"}],
+    "duplicate_function_names": [{"name", "occurrences", "files", "locations_total", "locations"}],
+    "duplicate_type_names": [{"name", "occurrences", "files", "locations_total", "locations"}],
+    "duplicate_code_blocks": [{"hash", "window_lines", "occurrences", "files", "locations_total", "locations"}],
     "polish_business_ids": [{"kind", "value_redacted", "location"}]
   }
 }
@@ -64,7 +75,17 @@ Helper produkuje JSON ze `schema_version: "2.0"`. Zwaliduj kontrakt:
 
 Jezeli `schema_version` != `"2.0"` lub `findings` brakuje → ABORT z bledem ("helper outdated lub niewiadomy schemat").
 
-Jezeli helper zwroci `error` field → ABORT i pokaz blad userowi (np. path traversal).
+Jezeli helper zwroci `error` field → ABORT i pokaz blad userowi (np. path traversal,
+pusty skan: `files_scanned == 0` to error helpera, NIE czysty wynik). Sprawdz tez
+`walk_info.dirs_unreadable` — niezerowe = skan CZESCIOWY, ujawnij to w raporcie.
+Kategorie z `truncation.total_found > returned` → przed propozycja refaktoru RE-GREPNIJ
+(helper pokazuje top-N, nie wszystko).
+
+**Persystencja (odpornosc na kompakcje/przerwanie — bez tego przerwana Faza 3 = caly audyt od zera):**
+1. Helper z `--output .ssot-scan.json` zapisuje skan BEZPOSREDNIO (atomic tmp+rename) — to JEST artefakt persystencji Fazy 2 (gitignored, patrz 4b); zwaliduj schemat czytajac plik.
+2. W Fazie 3 po sklasyfikowaniu kazdej paczki ~10 findingow DOPISZ wynik do `.ssot-findings.partial.yaml` (atomic: tmp + mv).
+3. RESUME: `.ssot-findings.partial.yaml` istnieje na starcie → wczytaj, pomin juz sklasyfikowane findingi, kontynuuj od nastepnego; istnieje tylko `.ssot-scan.json` → pomin Faze 2 (skan juz jest) — ALE jezeli plik jest podejrzanie stary albo kod zmienial sie od skanu (git status/mtime), przeskanuj ponownie zamiast resume (stary skan = stare numery linii).
+4. Faza 4 po udanym finalnym zapisie raportow USUWA `.ssot-scan.json` i `.partial` (sprzatanie po sukcesie).
 
 **6 kategorii surowych znalezisk:**
 
@@ -73,7 +94,7 @@ Jezeli helper zwroci `error` field → ABORT i pokaz blad userowi (np. path trav
 3. `duplicate_function_names` — funkcje (cross-language: Python/JS arrow/Go/Kotlin/Rust)
 4. `duplicate_type_names` — interface/type/class/struct/enum
 5. `duplicate_code_blocks` — sliding window 5-linii, sha256[:32]
-6. `polish_business_ids` — PESEL/NIP/REGON/IBAN znalezione **niezaleznie od duplikacji** (sam fakt hardcoded'u to RODO violation)
+6. `polish_business_ids` — PESEL/NIP/IBAN znalezione **niezaleznie od duplikacji** (sam fakt hardcoded'u to RODO violation). Od v2.2.0 digit-kinds sa CHECKSUM-walidowane (gole 10/11-cyfrowki bez poprawnej sumy = odrzucone); REGON poza zakresem (inne checksumy); nazwy kindow historyczne (pesel-or-regon11/nip-or-regon)
 
 ### Faza 3: Analiza semantyczna
 
@@ -85,6 +106,7 @@ Dla kazdego helper-finding:
 1. Czy lokalizacje sa w kontekscie biznesowym, czy boilerplate? (helper juz wyfiltrowal GAS API namespaces, ale moze cos zostalo)
 2. Czy fragmenty maja te sama semantyke domenowa? (np. dwa `'admin'` — jeden CSS class, drugi role check → DROP)
 3. Czytaj 2-3 najbardziej podejrzane sites ZANIM wpiszesz finding do raportu.
+4. Sprawdz `files_excluded_as_test` w JSON helpera — co wykluczono jako testy i czy slusznie (produkcyjne e2e/integration NIE sa wykluczane bez testowej nazwy pliku).
 
 **Heurystyka rankingowa** (czego czytac najpierw):
 - `files` desc (duplikat w 5 plikach > 2 plikach)
@@ -113,11 +135,19 @@ Specyficzne ryzyka dla user's stack (Zoho/GAS/Polish business):
 
 #### 3d. Polish business IDs (z helper'a)
 
-Jezeli helper zwrocil `polish_business_ids` (PESEL/NIP/REGON/IBAN) — wszystkie maja status CRITICAL niezaleznie od liczby wystapien. Nawet **jedna** instancja hardcoded'u to:
+Jezeli helper zwrocil `polish_business_ids` (PESEL/NIP/IBAN — checksum-walidowane od v2.2.0) — wszystkie maja status CRITICAL niezaleznie od liczby wystapien. Nawet **jedna** instancja hardcoded'u to:
 - RODO Art. 32 violation (PESEL/IP w kodzie)
 - Bezpieczenstwo bankowe (IBAN — ryzyko zmiany konta na fakturze)
 
 **WAZNE:** wartosci sa zredagowane (`[REDACTED:pesel]`) w helper output i RAPORTACH. Nigdy nie pisz raw PESEL/NIP/IBAN do raportu.
+
+#### 3e. Pokrycie analizy semantycznej (OBOWIAZKOWE — dowod, ze Faza 3 sie odbyla)
+
+Per kategoria 3b (6 sztuk) + per pozycja 3c (Polish pack, jesli stack pasuje):
+zapisz CHECKED+0 / CHECKED+N / UNABLE (z powodem) + liczbe przeczytanych plikow.
+Wynik trafia do raportu (sekcja "Pokrycie analizy semantycznej"). Bez tego raport
+z samym wynikiem helpera jest NIEODROZNIALNY od raportu po pelnej analizie —
+zasada "NIE generuj raportu bez Fazy 3" musi byc weryfikowalna mechanicznie.
 
 ### Faza 3.5: Confidence rating
 
@@ -125,8 +155,8 @@ Kazde finding dostaje **HIGH / MEDIUM / LOW**:
 
 | Pewnosc | Kryteria | Co robi /petla solve |
 |---------|----------|----------------------|
-| HIGH | Identyczna stala primitywna (string/number) >=3x w identycznym kontekscie biznesowym; identyczna definicja typu z identycznymi polami | auto-fix dozwolony |
-| MEDIUM | Funkcje o tej samej nazwie ale roznych sygnaturach; bloki kodu na roznych zmiennych; type/interface o tej samej nazwie z roznymi polami | wymaga per-finding user confirmation (NIE batch [REVIEW]) |
+| HIGH | Identyczna stala primitywna (string/number) >=3x w identycznym kontekscie biznesowym; identyczna definicja typu z identycznymi polami; KAZDA lokacja przeczytana i ma `evidence` (cytat linii) w YAML | auto-fix dozwolony (petla DEGRADUJE HIGH bez evidence do MEDIUM) |
+| MEDIUM | Funkcje o tej samej nazwie ale roznych sygnaturach; bloki kodu na roznych zmiennych; type/interface o tej samej nazwie z roznymi polami | non-destructive: AUTO-FIX z commit-tagiem [REVIEW] (przeglad po fakcie); destructive: AskUserQuestion raz |
 | LOW | Stringi pozornie identyczne ale w roznych warstwach; liczby przypadkowo te same; bloki w roznych warstwach architektury | POMIN, zostaw pytanie do usera |
 
 **Trzy pytania kontrolne** przy watpliwosci (jezeli nie umiesz odpowiedziec "tak" → downgrade do LOW):
@@ -135,7 +165,7 @@ Kazde finding dostaje **HIGH / MEDIUM / LOW**:
 2. **Propagacja zmian:** czy zmiana w jednym miejscu ZAWSZE powinna wplynac na drugie?
 3. **Walidacja/edge cases:** czy oba fragmenty maja identyczne reguly walidacji i obslugi bledow?
 
-**Krytyczne:** Dla `duplicate_function_names` MUSISZ przeczytac OBA cialA funkcji przed klasyfikacja. Jezeli ciala roznia sie istotnie → force LOW (to nie SSOT, to przypadek nazewnictwa). Helper sprawdza tylko nazwy, nie ciala.
+**Krytyczne:** Dla `duplicate_function_names` MUSISZ przeczytac OBA ciala funkcji przed klasyfikacja i zapisac `bodies_compared: true` w YAML (bez tego pola petla degraduje finding do MEDIUM — deklaracja bez sladu nie jest dowodem). Jezeli ciala roznia sie istotnie → force LOW (to nie SSOT, to przypadek nazewnictwa). Helper sprawdza tylko nazwy, nie ciala.
 
 ### Faza 4: Raporty
 
@@ -153,8 +183,14 @@ Zanim cokolwiek zapiszesz na dysk:
 
 Przed zapisem raportu:
 ```bash
-grep -qF 'SSOT_DRY_AUDIT_REPORT.md' .gitignore 2>/dev/null || echo 'SSOT_DRY_AUDIT_REPORT.md' >> .gitignore
-grep -qF '.ssot-findings.yaml' .gitignore 2>/dev/null || echo '.ssot-findings.yaml' >> .gitignore
+# guard: .gitignore bez koncowego newline skleilby nasz wpis z ostatnia regula usera
+# (np. '.env' -> '.envSSOT_DRY_AUDIT_REPORT.md' — zepsuta JEGO regula i NASZ wpis)
+[ -s .gitignore ] && [ -n "$(tail -c1 .gitignore)" ] && echo >> .gitignore
+for f in 'SSOT_DRY_AUDIT_REPORT.md' 'SSOT_DRY_AUDIT_REPORT.md.tmp' \
+         '.ssot-findings.yaml' '.ssot-findings.yaml.tmp' \
+         '.ssot-findings.partial.yaml' '.ssot-scan.json' '.ssot-scan.json.tmp'; do
+  grep -qxF "$f" .gitignore 2>/dev/null || echo "$f" >> .gitignore
+done
 ```
 
 User'owi powiedz: "Raporty dodane do .gitignore — nie zostana zaccommitowane."
@@ -239,6 +275,14 @@ Stack: <project.types>
 - Brak `src/constants/` — kazdy modul ma wlasne stale
 - Brak centralnego store
 - Brak typed config
+
+## Pokrycie analizy semantycznej (Faza 3e)
+
+| Kategoria | Wynik | Plikow przeczytanych |
+|---|---|---|
+| 3b.1 Duplicate state | CHECKED+1 | 4 |
+| 3b.2 Derived state stored | CHECKED+0 | 4 |
+| ... (wszystkie 3b.1-6 + 3c jesli stack pasuje) | | |
 ```
 
 **Sortowanie:**
@@ -248,7 +292,7 @@ Stack: <project.types>
 - Niskie = kosmetyka
 
 **Filtruj false positives** (kanoniczna lista — nie powtarzaj nigdzie indziej):
-- Testy/mocki/fixtures/cypress/playwright/e2e/integration/__mocks__
+- Testy/mocki/fixtures/cypress/playwright/__mocks__ (UWAGA: e2e/integration/spec licza sie jako testy TYLKO razem z testowa nazwa pliku — lustro helpera; src/integration/ to zwykle kod produkcyjny, np. integracje Zoho)
 - i18n/locales/translations
 - Migracje bazy
 - Boilerplate frameworka (helper juz filtruje GAS API namespaces)
@@ -258,6 +302,10 @@ Stack: <project.types>
 #### 4d. Machine-readable handoff (`.ssot-findings.yaml`)
 
 # <<< SZABLON — wszystkie id/wartosci ponizej to PRZYKLAD struktury; wypelnij realnymi findingami ze skanu >>>
+# REGULA LOCATIONS: locations[] MUSI wyliczac WSZYSTKIE wystapienia wartosci — helper
+# przycina (locations[:10], kategorie [:50]/[:30]/[:20]; patrz pole truncation w JSON),
+# wiec przed zapisem RE-GREPNIJ wartosc po calym scope i UZUPELNIJ liste. Inaczej
+# petla solve naprawi podzbior lokacji i oglosi sukces przy wciaz zdublowanej reszcie.
 ```yaml
 schema_version: "1.0"
 audit_date: "YYYY-MM-DD"
@@ -274,14 +322,18 @@ findings:
     severity: critical
     confidence: HIGH    # auto-fix dozwolony przez petla solve
     type: hardcoded_value
-    locations:
+    locations:          # WSZYSTKIE wystapienia (re-grep wartosci POZA capem helpera!) + evidence per lokacja
       - file: "src/pricing.ts"
         line: 12
+        evidence: "const TAX_RATE = 0.23;"      # cytat linii = dowod przeczytania (HIGH bez evidence -> MEDIUM)
       - file: "src/invoice.ts"
         line: 88
-    description: "Stawka VAT 0.23 zahardkodowana w 5 miejscach"
+        evidence: "const tax = price * 0.23;"
+    description: "Stawka VAT 0.23 zahardkodowana w 2 miejscach"
+    bodies_compared: null   # WYMAGANE true dla duplicate_function_names (dowod "czytaj OBA ciala")
     refactor:
       action: extract_constant
+      destructive: false    # klasyfikacja dla gate'u petli; fallback gdy brak: action==delete
       target_file: "src/constants/tax.ts"
       target_name: "TAX_RATE"
       old_value: "0.23"
@@ -313,13 +365,19 @@ findings:
       action: remove_hardcoded_pii
       replacement: "process.env.TEST_PESEL or pytest fixture"
 
-# petla solve READS: preflight.require_clean_tree + branch (i confidence per-finding powyzej).
+# petla solve READS: preflight.require_clean_tree + branch; per-finding: confidence,
+# evidence (HIGH bez evidence -> degradacja do MEDIUM), bodies_compared (j.w. dla
+# duplicate_function_names), severity (kolejnosc), refactor{} (seed propozycji + destructive gate).
 # Pozostale klucze sa ADVISORY/dokumentacyjne — petla ma wlasna logike verify/rollback (per-fix
 # subagent verdicts), nie czyta on_test_or_build_failure/max_consecutive_blocked/require_passing_*.
+# LOAD-BEARING: top-level klucze `findings` + `petla_solve_rules` to DYSKRYMINATOR formatu
+# w petla solve — NIGDY nie zmieniaj ich nazw (zmiana = cichy downgrade do trybu generic,
+# w ktorym LOW przestaje byc pomijane). Mapowanie HIGH/MEDIUM/LOW ponizej to advisory echo
+# kanonu z petla SKILL.md (Solve Workflow 5a) — przy rozbieznosci wygrywa petla.
 petla_solve_rules:
   HIGH: auto_fix
-  MEDIUM: per_finding_confirmation
-  LOW: skip
+  MEDIUM: auto_fix_with_review_tag   # destructive → AskUserQuestion raz (kanon: petla 5a)
+  LOW: skip                          # petla: status skipped_low_confidence (terminal)
   on_test_or_build_failure: rollback_and_block   # advisory (petla rollback jest verdict-driven)
   max_consecutive_blocked: 3                      # advisory
   branch: "refactor/ssot-fix-<YYYY-MM-DD>"        # READ by petla
@@ -350,7 +408,7 @@ Naprawa: /petla solve .ssot-findings.yaml
 
 1. Sortuj po ryzyku biznesowym, nie liczbie wystapien
 2. Filtruj false positives (kanoniczna lista w Fazie 4)
-3. `confidence` jest POLEM NOSNYM: petla solve gatuje po jego WARTOSCI (HIGH→auto-fix, MEDIUM→confirm, LOW→skip). HIGH/MEDIUM majy refactor field, LOW ma tylko user_question (nigdy code block — defense-in-depth, nie mechanizm skip)
+3. `confidence` jest POLEM NOSNYM: petla solve gatuje po jego WARTOSCI — KANON mieszka w petla SKILL.md (Solve Workflow 5a): HIGH→auto-fix (wymaga evidence per lokacja, inaczej degradacja do MEDIUM); MEDIUM non-destructive→auto-fix z tagiem [REVIEW], MEDIUM destructive→confirm raz; LOW→skip (terminal skipped_low_confidence). Ta tabela i Faza 3.5 sa LUSTREM petli — przy rozbieznosci wygrywa petla. HIGH/MEDIUM maja refactor field (petla MUSI startowac proposal od refactor), LOW ma tylko user_question (nigdy code block — defense-in-depth, nie mechanizm skip)
 4. Polish PII zawsze critical, wartosci zredagowane przed zapisem
 5. Confidence obowiazkowy; przy watpliwosci → downgrade do LOW
 6. `duplicate_function_names`: czytaj OBA ciala przed klasyfikacja
@@ -376,14 +434,16 @@ Plik: `~/.claude/skills/ssot-dry-audit/scripts/detect_duplicates.py` v2.0+
 
 Argumenty:
 - `path` (default `.`)
-- `--max-file-size BYTES` (default 1MB)
+- `--max-file-size BYTES` (default 1MB; <1024 odrzucane)
 - `--allow-outside-cwd` (off by default; helper odrzuca path traversal poza cwd)
+- `--output FILE` (OBOWIAZKOWE w Fazie 2 — atomic tmp+rename; stdout = 1-liniowe podsumowanie)
+- `--compact` (JSON bez indentu, ~40% mniejszy)
 
 Helper:
 - Walks up project tree dla detekcji typu projektu
 - Pre-redaktuje secret-shaped wartosci
 - Wykrywa Polish PII jako separate category (RODO)
-- Skanuje HTML poprzez ekstrakcje `<script>`/`<style>` content
+- Skanuje HTML maskujac markup IN-PLACE (tylko ciala `<script>`/`<style>`; numery linii = oryginalny plik)
 - Szanuje `--max-file-size` (nie OOM na minified files)
 - Schema versioned (skill zwaliduje przed konsumpcja)
 
@@ -403,6 +463,8 @@ User: "audytssot src/components"
 → Skip pytanie o zakres (arg juz podany)
 
 User: "po audycie napraw co sie da"
-→ Wykonaj audit, pokaz "Naprawa: /petla solve .ssot-findings.yaml"
-→ Skill konczy sie tu, nie wchodzi w naprawe (single responsibility)
+→ Wykonaj audit (single responsibility: SKILL konczy sie na raporcie)
+→ ale USER JUZ POPROSIL o naprawe — ORCHESTRATOR (sesja) bez pytania kontynuuje:
+  wywoluje /petla solve .ssot-findings.yaml zaraz po audycie.
+  "Skill sie konczy" ≠ "konwersacja sie konczy" — nie porzucaj jawnej prosby usera.
 ```
