@@ -1,8 +1,8 @@
 {
   "name": "autoinit-skills",
   "displayName": "AutoInit Skills",
-  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla",
-  "version": "2.0.0",
+  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla, /petla-noc",
+  "version": "2.1.0",
   "author": "KFG",
   "dependencies": {},
   "targets": {
@@ -10,7 +10,8 @@
     "files/.claude/skills/implement_plan/": "~/.claude/skills/implement_plan/",
     "files/.claude/skills/petla/": "~/.claude/skills/petla/",
     "files/.claude/lib/browser-smoke/": "~/.claude/lib/browser-smoke/",
-    "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/"
+    "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/",
+    "files/.claude/skills/petla-noc/": "~/.claude/skills/petla-noc/"
   },
   "postInstall": {
     "description": "Register skills in skill-rules.json for auto-discovery",
@@ -22,14 +23,29 @@
         "description": "Iterative consensus workflow - audit, verify, solve, create with parallel validators",
         "promptTriggers": {
           "keywords": [
-            "petla audit", "petla verify", "petla solve", "petla create",
-            "audit code", "audit codebase", "verify implementation",
-            "verify against plan", "solve issues", "fix audit issues",
-            "iterative verification", "consensus verification",
-            "find all bugs", "find all issues", "audit security",
-            "zaudytuj", "zaudytuj kod", "zweryfikuj implementacje",
-            "napraw problemy z audytu", "audyt kodu", "audyt bezpieczenstwa",
-            "znajdz wszystkie bledy", "znajdz wszystkie problemy"
+            "petla audit",
+            "petla verify",
+            "petla solve",
+            "petla create",
+            "audit code",
+            "audit codebase",
+            "verify implementation",
+            "verify against plan",
+            "solve issues",
+            "fix audit issues",
+            "iterative verification",
+            "consensus verification",
+            "find all bugs",
+            "find all issues",
+            "audit security",
+            "zaudytuj",
+            "zaudytuj kod",
+            "zweryfikuj implementacje",
+            "napraw problemy z audytu",
+            "audyt kodu",
+            "audyt bezpieczenstwa",
+            "znajdz wszystkie bledy",
+            "znajdz wszystkie problemy"
           ],
           "intentPatterns": [
             "(petla|iterative).*?(audit|verify|solve|create)",
@@ -47,17 +63,54 @@
         "description": "Session Architect - prepare autonomous multi-hour sessions with task orchestration",
         "promptTriggers": {
           "keywords": [
-            "session init", "session-init", "init session",
-            "plan session", "prepare session", "start session",
-            "new session", "session architect", "autonomous session",
-            "zaplanuj sesje", "przygotuj sesje", "nowa sesja",
-            "rozpocznij sesje", "sesja autonomiczna", "wielogodzinna sesja"
+            "session init",
+            "session-init",
+            "init session",
+            "plan session",
+            "prepare session",
+            "start session",
+            "new session",
+            "session architect",
+            "autonomous session",
+            "zaplanuj sesje",
+            "przygotuj sesje",
+            "nowa sesja",
+            "rozpocznij sesje",
+            "sesja autonomiczna",
+            "wielogodzinna sesja"
           ],
           "intentPatterns": [
             "(init|start|begin|prepare|plan).*?session",
             "session.*?(init|setup|architect|prepare)",
             "(autonomous|long|multi.hour).*?session",
             "(zaplanuj|przygotuj|rozpocznij).*?sesj"
+          ]
+        }
+      },
+      "petla-noc": {
+        "type": "domain",
+        "enforcement": "suggest",
+        "priority": "high",
+        "description": "Nightly unattended Google Apps Script cleanup orchestrator: canary tests, dependency map, characterization tests, audit via petla, dead-code quarantine behind test gate, morning report",
+        "promptTriggers": {
+          "keywords": [
+            "petla noc",
+            "petla-noc",
+            "tryb nocny",
+            "nocna sesja",
+            "nocne sprzatanie",
+            "night cleanup",
+            "night mode",
+            "sprzataj apps script",
+            "kwarantanna martwego kodu",
+            "martwy kod apps script",
+            "testy charakteryzujace",
+            "characterization tests gas"
+          ],
+          "intentPatterns": [
+            "(petla[- ]?noc|night).*?(session|cleanup|mode|sesja)",
+            "(noc|night).*?(apps ?script|gas|projekt)",
+            "(kwarantann|quarantine).*?(martw|dead).*?(kod|code)"
           ]
         }
       }

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "petla-noc progress.json (per projekt; per plik per modul)",
+  "type": "object",
+  "required": ["schema", "project"],
+  "properties": {
+    "schema": { "const": "noc-progress-1" },
+    "project": { "type": "string", "description": "nazwa katalogu projektu" },
+    "library": { "type": "boolean", "default": false, "description": "user-set: projekt jest biblioteka -> kwarantanna OFF (gas-rules 6)" },
+    "session_branch": { "type": "string", "description": "cleanup/<data> biezacej/ostatniej sesji" },
+    "session_start_commit": { "type": "string" },
+    "base_branch": { "type": "string", "description": "branch, od ktorego noc odchodzi i na ktory wraca na koncu (KROK 0)" },
+    "session_base_head": { "type": "string", "description": "HEAD base_branch na starcie nocy (KROK 0); zrodlo last_session_commit po F2" },
+    "last_session_commit": { "type": "string", "description": "session_base_head POPRZEDNIEJ nocy — zakres F2 = last_session_commit..session_base_head" },
+    "last_green_commit": { "type": "string", "description": "ostatni commit z zielonym pelnym harness (baza bisect F1)" },
+    "last_green_date": { "type": "string", "format": "date" },
+    "red": { "type": "boolean", "default": false, "description": "RED MODE projektu po F1" },
+    "degraded": { "type": "string", "enum": ["", "no-git", "dirty-tree"], "default": "" },
+    "instrument_commit_date": { "type": "string", "format": "date", "description": "data commita modulu P (dojrzewanie kryterium 30 dni)" },
+    "night_deployment_id": { "type": "string", "description": "dedykowany deployment NOCNY (clasp deploy -i <to>); utworzony przez skill 1. noca (D1); NIGDY nie tworzyc nowego" },
+    "night_deployment_url": { "type": "string", "description": "staly URL linku nocnego (sekcja PORANEK raportu)" },
+    "night_deployment_last3": { "type": "string", "description": "ostatnie 3 znaki deployment ID — user tak identyfikuje linki ('deploy na DMW')" },
+    "last_night_version": { "type": "integer", "description": "wersja GAS wystawiona na link nocny (rollback: clasp deploy -i -V poprzednia)" },
+    "head_restored": { "type": "boolean", "default": true, "description": "false = D4 padl, HEAD chmury zostal na kodzie nocnym — D2 nastepnej nocy wykonuje zalegle przywrocenie; alarm na szczycie PORANKA" },
+    "priority_queue": {
+      "type": "array",
+      "description": "issue-id z fresh_debt/criticali — moduł E bierze NAJPIERW (severity->kolejnosc)",
+      "items": { "type": "string" }
+    },
+    "quarantine_approved": {
+      "type": "array",
+      "description": "nazwy funkcji DOUBT zaakceptowane recznie przez usera w raporcie",
+      "items": { "type": "string" }
+    },
+    "files": {
+      "type": "object",
+      "description": "per plik zrodlowy",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "tests": { "type": "string", "enum": ["none", "partial", "green", "red"], "default": "none" },
+          "jsdoc": { "type": "string", "enum": ["none", "partial", "done"], "default": "none" },
+          "syntax_modern": { "type": "string", "enum": ["none", "done", "stubborn"], "default": "none" },
+          "error_wrapper": { "type": "string", "enum": ["none", "done", "report-only"], "default": "none" },
+          "last_visited": { "type": "string", "format": "date" }
+        }
+      }
+    },
+    "modules": {
+      "type": "object",
+      "description": "stan modulow tej/ostatniej nocy: done | partial(+note) | skipped(+powod)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "state": { "type": "string", "enum": ["pending", "partial", "done", "skipped"] },
+          "note": { "type": "string" },
+          "date": { "type": "string", "format": "date" }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "description": "jedna pozycja per noc (append)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "date": { "type": "string" },
+          "branch": { "type": "string" },
+          "modules_done": { "type": "array", "items": { "type": "string" } },
+          "commits": { "type": "integer" },
+          "red": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}
