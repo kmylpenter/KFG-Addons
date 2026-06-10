@@ -1,0 +1,20 @@
+{
+  "name": "usage-pace",
+  "displayName": "Usage Pace Monitor (limity Max 20x)",
+  "version": "1.0.0",
+  "description": "Pilnuje tempa zuzycia limitu tygodniowego subskrypcji Claude Max: segment w pasku statusu + powiadomienie Termux, gdy projekcja za niska. TYLKO informuje, nigdy sam nie odpala sesji.",
+  "author": "KFG",
+  "platform": "termux+proot",
+  "dependencies": {
+    "system": ["termux-api", "python3", "bash"],
+    "android-apk": ["Termux:API (F-Droid)"]
+  },
+  "targets": {
+    "files/usage/": "~/.claude/usage/",
+    "files/statusline-wrapper.usage-pace.mjs": "~/.claude/usage/"
+  },
+  "scripts": {
+    "postinstall": "bash $ADDON_DIR/install.sh"
+  },
+  "notes": "Dwa swiaty: pasek statusu + pace.sh licza w proot; harmonogram i powiadomienia chodza natywnie w Termuksie (termux-job-scheduler co 6 h). Jeden wspolny cache ~/.claude/usage-cache.json (zapis atomowy). Po instalacji w proot wymagana JEDNA komenda w Termuksie: bash ~/.claude/usage/install-termux.sh. Odinstalowanie: bash ~/.claude/usage/rollback.sh."
+}
