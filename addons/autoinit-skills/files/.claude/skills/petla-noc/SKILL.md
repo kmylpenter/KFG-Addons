@@ -1,7 +1,7 @@
 ---
 name: petla-noc
 description: "Nocny, w pełni autonomiczny orchestrator sprzątania projektów Google Apps Script: canary testów, mapa zależności (wywołania dynamiczne ze stringów), testy charakteryzujące (Node + mocki), audyt przez /petla audit z lensami GAS, solve + kwarantanna martwego kodu WYŁĄCZNIE za bramką testową, raport poranny z instrukcją revertu. Moduły F→A→B→C→I→G→D→E→(P)→H→J→K. Zero pytań do usera, zero kasowania, zero push do main; deploy WYŁĄCZNIE na dedykowany link NOCNY (auto-tworzony 1. nocy, stały URL — patrz DEPLOY NOCNY)."
-version: "1.1"
+version: "1.2"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, TaskGet, ToolSearch
 ---
 
@@ -96,9 +96,17 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
    schematów → `ToolSearch("select:TaskCreate,TaskUpdate,TaskList,TaskGet")`.
 2. **Walidacja ścieżki** (jak petla KROK 0): REJECT segment `..` przed normalizacją;
    realpath w dozwolonych korzeniach; projects-root zostaje PEŁNĄ ścieżką.
-3. **LOCK:** `~/.claude/petla-noc.lock` z PID (format jak petla KOLIZJE I LOCK —
-   żywy PID → ABORT "inna noc trwa"; martwy → przejmij). Zdejmij na końcu (też po błędzie).
-4. **Discovery projektów** + na KAŻDY projekt: wczytaj/utwórz
+3. **LOCK per projekt** (wykonywany w pkt 4, dla każdego wykrytego projektu):
+   `<projekt>/.petla-noc/lock` z PID (format wpisu jak petla KOLIZJE I LOCK).
+   Cudzy ŻYWY PID → projekt POMIŃ tej nocy + wpis do sekcji DECYZJE raportu
+   ("zajęty przez inną noc, PID <n>"); martwy → przejmij. Zdejmij WSZYSTKIE
+   przejęte locki na końcu (też po błędzie). Lock w katalogu projektu = dwie
+   noce mogą biec RÓWNOLEGLE na rozłącznych zbiorach projektów; kolizja jest
+   per projekt, nie per telefon — nawet przy nakładających się rootach druga
+   noc po prostu pomija zajęte. (Zastępuje dawny globalny ~/.claude/petla-noc.lock;
+   limity subskrypcji są wspólne dla równoległych nocy — patrz pasek usage-pace.)
+4. **Discovery projektów** + na KAŻDY projekt: NAJPIERW przejmij lock (pkt 3;
+   pominięte projekty wypadają z tej nocy), potem wczytaj/utwórz
    `<projekt>/.petla-noc/progress.json` (schema: `templates/progress.schema.json`).
    Walidacja `--skip`: jeśli lista zawiera F — usuń F z listy + wpis do raportu
    (canary jest nieskipowalny). Projekt z `.git`: IDEMPOTENTNIE (grep przed
@@ -116,8 +124,9 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 6. **TaskCreate:** po jednym tasku per (moduł × noc) — `TaskCreate(subject="noc F:
    canary+diff")`, `noc A: mapa`, ... LAZILY w kolejności wykonywania (jak petla
    audit: nie twórz z góry tasków, których time-box może nie dopuścić).
-7. **GATE CHECK:** lock istnieje z naszym PID + ≥1 projekt wykryty + task F istnieje
-   → start. Inaczej STOP z raportem.
+7. **GATE CHECK:** ≥1 projekt PRZEJĘTY (jego `.petla-noc/lock` z naszym PID) + task F
+   istnieje → start. Zero przejętych (wszystko zajęte przez inne noce / brak
+   projektów) → STOP z raportem.
 
 ---
 
@@ -392,5 +401,5 @@ auto-continue, TaskList przed summary). Dodatkowo nocne:
   commity zrobione + DEPLOY NOCNY wykonany lub pominięty-z-powodem-w-raporcie
   (kroki D2-D4 obejmują powrót na base_branch i przywrócenie HEAD chmury) +
   per projekt `git checkout <base_branch>` (idempotentne po D4; cleanup/<data>
-  zostaje do porannego review/merge) + lock zdjęty. ŻADEN inny warunek nie
-  kończy sesji (poza Ctrl+C).
+  zostaje do porannego review/merge) + locki przejętych projektów zdjęte
+  (`<projekt>/.petla-noc/lock`). ŻADEN inny warunek nie kończy sesji (poza Ctrl+C).
