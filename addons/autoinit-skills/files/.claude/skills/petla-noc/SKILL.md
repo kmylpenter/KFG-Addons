@@ -1,8 +1,8 @@
 ---
 name: petla-noc
 description: "Nocny, w pełni autonomiczny orchestrator sprzątania projektów Google Apps Script: canary testów, mapa zależności (wywołania dynamiczne ze stringów), testy charakteryzujące (Node + mocki), audyt przez /petla audit z lensami GAS, solve + kwarantanna martwego kodu WYŁĄCZNIE za bramką testową, raport poranny z instrukcją revertu. Moduły F→A→B→C→I→G→D→E→(P)→H→J→K. Zero pytań do usera, zero kasowania, zero push do main; deploy WYŁĄCZNIE na dedykowany link NOCNY (auto-tworzony 1. nocy, stały URL — patrz DEPLOY NOCNY)."
-version: "1.2"
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, TaskGet, ToolSearch
+version: "1.3"
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, TaskGet, ToolSearch, AskUserQuestion
 ---
 
 # /petla-noc v1.0 — Nocne sprzątanie projektów Google Apps Script
@@ -23,6 +23,9 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdat
    (Termux: teammates mrożą tmux — patrz petla SKILL.md "SUBAGENTS ONLY").
 2. **UNATTENDED — zero pytań.** ŻADNEGO `AskUserQuestion`, żadnego "czy kontynuować".
    KAŻDA wątpliwość = pomiń + wpis do raportu (sekcja "Pominięte"). NIGDY nie zgaduj.
+   JEDYNY WYJĄTEK: MERGE-GATE w KROKU 0 pkt 5 — pytanie pada PRZY STARCIE nocy,
+   gdy user (który właśnie ją odpalił) jest jeszcze obecny; po przejściu KROKU 0
+   pytania są bezwzględnie zakazane jak dotychczas.
 3. **NIC nie jest usuwane.** Martwy kod → kwarantanna: plik `_deprecated.gs` +
    prefiks `DEPRECATED_` w nazwie. Dynamiczne wywołanie starej nazwy ma dać jawny
    błąd "function not found", nie cichą regresję.
@@ -77,6 +80,9 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 --skip J,K           pomiń moduły. F NIE podlega skip (canary obowiązkowy
                      każdej nocy) — KROK 0 odrzuca F z listy + wpis do raportu
 --timebox-mult N     mnożnik time-boxów (default 1)
+--no-merge-gate      pomiń MERGE-GATE (KROK 0 pkt 5) — do startów przez automat,
+                     gdzie nikt nie odpowie na pytanie; działa jak wybór
+                     "startuj bez mergowania"
 ```
 
 - Konfiguracja opcjonalna: `~/.claude/petla-noc.config.yaml`
@@ -113,7 +119,25 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
    dopisaniem) dopisz `.petla-noc/` do `.git/info/exclude` — LOKALNY exclude,
    nie .gitignore, zero zmian tracked; ZAWSZE, niezależnie od czystości drzewa
    (stan nocy musi przeżyć checkout na base i decyzję "nie merguję").
-5. **Git per projekt** (jeśli repo, CZYSTE — tzn. bez zmian TRACKED:
+5. **MERGE-GATE (jedyne dozwolone pytanie do usera — przy starcie, zanim noc
+   stanie się bezobsługowa):** per projekt-repo wykryj niezmergowane branche
+   poprzednich nocy: `git branch --list 'cleanup/*' --no-merged <base_branch>`.
+   Istnieją jakiekolwiek → JEDNO zbiorcze `AskUserQuestion` (lista projekt →
+   branche + data) z opcjami:
+   a) **Zmerguj teraz** — per projekt, chronologicznie (najstarszy najpierw):
+      `git merge --no-ff <branch>` do base_branch LOKALNIE (zero push, jak
+      wszystko w nocy); konflikt → `git merge --abort`, zostań przy stanie
+      zmergowanym dotychczas, pozostałe branche nieruszone + wpis do raportu
+      ("konflikt: <branch> — scal ręcznie rano");
+   b) **Startuj bez mergowania** — noc jak dotychczas (świadoma zgoda: audyt
+      na base znajdzie częściowo te same problemy co poprzednia noc);
+   c) **Przerwij noc** — STOP bez żadnych zmian (user merguje ręcznie).
+   Zmergowane/konfliktowe branche → sekcja PORANEK raportu. Brak niezmergowanych
+   branchy → ZERO pytania (typowa noc po porannym review). Przy `--dry-run` lub
+   `--no-merge-gate`: bez pytania, tylko wykrycie + wpis do raportu (zachowanie
+   jak opcja b). Merge wykonaj PRZED pkt 6, żeby `session_base_head` był już
+   po scaleniu.
+6. **Git per projekt** (jeśli repo, CZYSTE — tzn. bez zmian TRACKED:
    `git status --porcelain -uno` puste; untracked nie blokuje): zapisz do
    progress `base_branch` (bieżący branch) i `session_base_head` (jego HEAD),
    po czym `git checkout -b cleanup/<YYYY-MM-DD>` OD base_branch (istnieje →
@@ -121,10 +145,10 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
    Noce NIE stackują się: każda odchodzi od base_branch; branche poprzednich
    nocy zostają nietknięte do review. (Exclude `.petla-noc/` już dopisany
    w pkt 4 — dla każdego projektu z `.git`, też brudnego/degraded.)
-6. **TaskCreate:** po jednym tasku per (moduł × noc) — `TaskCreate(subject="noc F:
+7. **TaskCreate:** po jednym tasku per (moduł × noc) — `TaskCreate(subject="noc F:
    canary+diff")`, `noc A: mapa`, ... LAZILY w kolejności wykonywania (jak petla
    audit: nie twórz z góry tasków, których time-box może nie dopuścić).
-7. **GATE CHECK:** ≥1 projekt PRZEJĘTY (jego `.petla-noc/lock` z naszym PID) + task F
+8. **GATE CHECK:** ≥1 projekt PRZEJĘTY (jego `.petla-noc/lock` z naszym PID) + task F
    istnieje → start. Zero przejętych (wszystko zajęte przez inne noce / brak
    projektów) → STOP z raportem.
 
@@ -222,7 +246,7 @@ NIGHT_REPORT_<data>.md # w projects-root (zbiorczy dla wszystkich projektów)
 ```
 
 - `.petla-noc/` jest LOKALNE, POZA gitem (wpis w `.git/info/exclude` — KROK 0
-  pkt 5). Dzięki temu progress/map/testy/raporty przeżywają checkout na base
+  pkt 4). Dzięki temu progress/map/testy/raporty przeżywają checkout na base
   oraz "nie merguję" — wymaganie twarde 4 nie zależy od porannej decyzji usera.
   Review robisz z dysku (.petla-noc/reports/) + zbiorczy NIGHT_REPORT w projects-root.
 - Schema progress: `templates/progress.schema.json`. Przy niezgodności/uszkodzeniu:
