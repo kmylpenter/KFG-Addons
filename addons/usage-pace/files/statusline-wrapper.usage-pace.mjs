@@ -203,15 +203,17 @@ try {
       const proj = pace.projection_pct;
       const st = pace.status;
       const c_green = `${ESC}[38;5;46m`;
+      const c_cyanBri = `${ESC}[38;5;51m`;
+      const bold = `${ESC}[1m`;
       let projStr = '';
-      if (st === 'LOW' && proj != null) projStr = `${c_red}→${Math.round(proj)}%⚠${reset}`;
-      else if (st === 'OK' && proj != null) projStr = `${c_green}→${Math.round(proj)}%${reset}`;
+      if (st === 'LOW' && proj != null) projStr = `${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
+      else if (st === 'OK' && proj != null) projStr = `${bold}${c_green}→${Math.round(proj)}%${reset}`;
       else if (st === 'GRACE') projStr = `${c_dim}→·${reset}`;
       else if (st === 'STALE' || fromCache) projStr = `${c_dim}→?${reset}`;
       const proj5 = pace.projection_pct_5h;
-      const proj5Str = (proj5 != null) ? `${c_dim}→${Math.min(999, Math.round(proj5))}%${reset}` : '';
-      const fhStr = (fh != null) ? `${c_dim}5h:${reset}${Math.round(fh)}%${proj5Str} ` : '';
-      usageSegment = `${fhStr}${c_dim}7d:${reset}${Math.round(sd)}%${projStr}`;
+      const proj5Str = (proj5 != null) ? `${c_cyan}→${Math.min(999, Math.round(proj5))}%${reset}` : '';
+      const fhStr = (fh != null) ? `${c_dim}5h:${c_cyanBri}${Math.round(fh)}%${reset}${proj5Str} ` : '';
+      usageSegment = `${fhStr}${c_dim}7d:${c_yellow}${Math.round(sd)}%${reset}${projStr}`;
     }
   } catch {}
   // ===== koniec usage-pace =====
