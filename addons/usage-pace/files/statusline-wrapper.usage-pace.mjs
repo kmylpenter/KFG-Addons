@@ -256,9 +256,10 @@ try {
     `${effortColor}${effortIcon}${reset}`,
     `${c_red}${projectName}${reset}`,
   ];
-  if (usageSegment) parts.push(usageSegment);
-
   let output = parts.join(SEP);
+
+  // usage-pace: osobna linijka (pod glowna, nad lista plikow) — waski ekran
+  if (usageSegment) output += `\n${usageSegment}`;
 
   // Lines 2+: changed files (cyan names, dim dot separators)
   if (fileNames.length > 0) {
