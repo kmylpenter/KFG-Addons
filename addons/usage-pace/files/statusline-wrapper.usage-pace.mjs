@@ -201,19 +201,48 @@ try {
     if (sd != null) {
       const pace = (cache && cache.pace) || {};
       const proj = pace.projection_pct;
+      const proj5 = pace.projection_pct_5h;
       const st = pace.status;
       const c_green = `${ESC}[38;5;46m`;
       const c_cyanBri = `${ESC}[38;5;51m`;
       const bold = `${ESC}[1m`;
-      let projStr = '';
-      if (st === 'LOW' && proj != null) projStr = `${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
-      else if (st === 'OK' && proj != null) projStr = `${bold}${c_green}→${Math.round(proj)}%${reset}`;
-      else if (st === 'GRACE') projStr = `${c_dim}→·${reset}`;
-      else if (st === 'STALE' || fromCache) projStr = `${c_dim}→?${reset}`;
-      const proj5 = pace.projection_pct_5h;
-      const proj5Str = (proj5 != null) ? `${c_cyan}→${Math.min(999, Math.round(proj5))}%${reset}` : '';
-      const fhStr = (fh != null) ? `${c_dim}5h:${c_cyanBri}${Math.round(fh)}%${reset}${proj5Str} ` : '';
-      usageSegment = `${fhStr}${c_dim}7d:${c_yellow}${Math.round(sd)}%${reset}${projStr}`;
+
+      // czas do resetu okna -> zwięźle: "45m" / "2h10m" / "1d4h"
+      const fmtDur = (epoch) => {
+        if (epoch == null) return null;
+        const s = Math.max(0, epoch - nowS);
+        const d = Math.floor(s / 86400);
+        const h = Math.floor((s % 86400) / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        if (d >= 1) return `${d}d${h}h`;
+        if (h >= 1) return `${h}h${m}m`;
+        return `${m}m`;
+      };
+
+      // 5h: wartość jasny-cyjan, projekcja cyjan (informacyjna, bez alarmu)
+      let s5 = '';
+      if (fh != null) {
+        const v = Math.round(fh);
+        s5 = (proj5 != null)
+          ? `${c_dim}5h ${c_cyanBri}${v}${c_cyan}→${Math.min(999, Math.round(proj5))}%${reset}`
+          : `${c_dim}5h ${c_cyanBri}${v}%${reset}`;
+      }
+
+      // 7d: wartość żółta, projekcja pogrubiona w kolorze statusu (+⚠ przy LOW)
+      const v7 = Math.round(sd);
+      let s7;
+      if (st === 'LOW' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
+      else if (st === 'OK' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_green}→${Math.round(proj)}%${reset}`;
+      else if (proj != null && (st === 'STALE' || fromCache)) s7 = `${c_dim}7d ${c_yellow}${v7}${c_dim}→?%${reset}`;
+      else s7 = `${c_dim}7d ${c_yellow}${v7}%${reset}`;
+
+      // resety zgrupowane na końcu: "↺ 2h10m / 1d4h"
+      const r5 = (rl && rl.five_hour && rl.five_hour.resets_at) || (cache && cache.five_hour && cache.five_hour.resets_at_epoch);
+      const r7 = (rl && rl.seven_day && rl.seven_day.resets_at) || (cache && cache.seven_day && cache.seven_day.resets_at_epoch);
+      const d5 = fmtDur(r5), d7 = fmtDur(r7);
+      const resetStr = (d5 || d7) ? `   ${c_dim}↺ ${d5 || '?'} / ${d7 || '?'}${reset}` : '';
+
+      usageSegment = `${[s5, s7].filter(Boolean).join('   ')}${resetStr}`;
     }
   } catch {}
   // ===== koniec usage-pace =====

@@ -12,18 +12,18 @@ Segment dopisany na końcu pierwszej linii istniejącego paska statusu:
 
 ```
 37% │ C5/1M │ MAX │ KFG-Addons
-5h:17%→55% 7d:25%→30%⚠
+5h 17→55%   7d 25→30%⚠   ↺ 1h59m / 16h59m
 ```
 
 (osobna linijka pod główną — wąski ekran telefonu)
 
-- `5h:17%→55%` — zużycie okna 5-godzinnego + projekcja informacyjna
-  (przyciemniona, bez alarmów; znika w pierwszych 30 min okna)
-- `7d:25%` — zużycie okna tygodniowego
-- `→30%` — projekcja: ile % limitu tygodniowego wykorzystam przy obecnym tempie
+- `5h 17→55%` — zużycie okna 5-godzinnego (jasny cyjan) → projekcja informacyjna
+  (cyjan, bez alarmów; znika w pierwszych 30 min okna)
+- `7d 25→30%` — zużycie okna tygodniowego (żółte) → projekcja (pogrubiona)
   - zielona = OK, **czerwona z ⚠ = za wolno (LOW)**
-  - `→·` = świeże okno (mniej niż 12 h po resecie, za mało danych)
-  - `→?` = dane przeterminowane (np. brak internetu) — zero alarmów
+  - `→?%` = dane przeterminowane (np. brak internetu) — zero alarmów
+  - brak strzałki = świeże okno (mniej niż 12 h po resecie, za mało danych)
+- `↺ 1h59m / 16h59m` — czas do resetu: okno 5h / okno 7d
 - brak segmentu = brak danych (zachowanie jak przed instalacją)
 
 Powiadomienie (Termux, max 1 na 6 h):
