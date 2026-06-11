@@ -1,7 +1,7 @@
 ---
 name: ssot-dry-audit
 description: Audyt kodu pod katem Single Source of Truth (SSOT) i Don't Repeat Yourself (DRY). PURE AUDIT — generuje raport (markdown + machine-readable YAML) i konczy. Sam NIE naprawia kodu — naprawe deleguje do /petla solve. Wywoluj gdy user prosi o "audyt SSOT", "audyt DRY", "znajdz duplikaty w kodzie", "shotgun surgery", "magic numbers", "redundancja w kodzie", "kod sie powtarza", "duplikacja", "zlamanie DRY", "sprawdz spojnosc kodu".
-allowed-tools: [Bash, Read, Write, Grep, Glob]
+allowed-tools: [Bash, Read, Write, Grep, Glob, AskUserQuestion]
 ---
 
 # SSOT/DRY Audit (pure audit)
@@ -23,7 +23,7 @@ Skill NIE naprawia kodu. Naprawa = osobny krok przez `/petla solve .ssot-finding
 | `SSOT_DRY_AUDIT_REPORT.md` | Czytelny raport dla usera | root projektu (auto-gitignored) |
 | `.ssot-findings.yaml` | Strukturalny handoff dla petla solve | root projektu (auto-gitignored) |
 
-## Workflow — 4 fazy
+## Workflow — 5 faz (inwentaryzacja → skan → analiza → raporty → wywiad decyzyjny)
 
 ### Faza 1: Inwentaryzacja
 
@@ -389,19 +389,48 @@ petla_solve_rules:
 
 Atomic write: tmp + mv.
 
+### Faza 5: Wywiad decyzyjny (AskUserQuestion — user-mandated 2026-06-11)
+
+Po zapisaniu raportow zbierasz decyzje usera, ktore czynia handoff wykonywalnym
+bez powrotow (lekcja sesji cache 2026-06-10: pytania LOW i tak wracaly recznie):
+
+1. **Zrodla pytan** (w tej kolejnosci): kazdy finding LOW (jego `user_question` —
+   opcje: warianty naprawy / wontfix / pozniej); kazdy MEDIUM z `destructive: true`
+   (pre-akceptacja kierunku — wlasciwy gate i tak strzeli w solve); niejasnosci
+   Fazy 3 rozstrzygalne jednym zdaniem usera. **Zero pozycji → pomin Faze 5**
+   (nie wymyslaj pytan na sile).
+2. **Forma**: AskUserQuestion, max 4 pytania/runde (wiecej → kolejne rundy);
+   2-4 konkretne opcje + automatyczne "Other"; rekomendowana opcja PIERWSZA
+   z dopiskiem "(Recommended)"; przy kazdym pytaniu file:line + 1 zdanie kontekstu.
+   UWAGA na bledne premise: jesli odpowiedz usera podwaza finding — ZWERYFIKUJ
+   w kodzie zanim zapiszesz decyzje (przypadek theme_<w>: "brak writera" okazal sie
+   blindspotem skanera na klucze dynamiczne).
+3. **Update artefaktow PO wywiadzie** (atomic tmp+mv, YAML + 1-liniowe dopiski
+   "ROZSTRZYGNIETE:" w MD):
+   - "zrob X" → `user_decision` + data, `confidence: HIGH` (decyzja usera = najwyzsza
+     pewnosc), `refactor{}` wypelnione wybranym wariantem → solve auto-fixuje;
+   - "wontfix" → `status: wontfix` ORAZ wpis do `thoughts/shared/petla/wontfix-ledger.yaml`
+     (kanon petli: wpisy ledgera dodaje WYLACZNIE decyzja usera — to jest ten moment);
+   - "pozniej" → zostaje LOW + `user_decision: defer` (solve dalej pomija).
+4. Wywiad NIE zmienia natury skilla: nadal PURE AUDIT — zero naprawiania kodu.
+
 ## Po audycie
 
-Pokaz userowi wynik **bez pytania o nastepne kroki** (skill jest pure-audit, decyzja o naprawie nalezy do usera/petla):
+Po Fazie 5 pokaz wynik **bez pytania o nastepne kroki** (decyzje juz zebrane;
+przypomnienie ponizej to informacja, nie pytanie):
 
 ```
 Audyt zakonczony. Pliki:
   SSOT_DRY_AUDIT_REPORT.md (X znalezisk: A krytycznych / B srednich / C niskich)
-  .ssot-findings.yaml (handoff dla petla solve)
+  .ssot-findings.yaml (handoff dla petla solve; decyzje usera z wywiadu WPISANE)
 
 Polish PII: <N> hardcoded id (zawsze critical, wartosci zredagowane)
 Quick wins (<10 min): [...]
 
 Naprawa: /petla solve .ssot-findings.yaml
+⚠ Najlepiej w NOWYM oknie konwersacji — handoff niesie komplet (lokacje+evidence+
+confidence+decyzje), a solve w tym samym oknie placi za caly transkrypt audytu
+przy kazdej turze dajac ten sam rezultat. Przypomnienie, nie blokada.
 ```
 
 ## Zasady

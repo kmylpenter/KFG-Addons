@@ -8,6 +8,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdat
 
 # /petla v3.4 - Iteracja z Konsensusem (Subagents Only - Termux Safe)
 
+> **v3.4.1** (2026-06-11, user-mandated): tryb audit kończy się WYWIADEM DECYZYJNYM (AskUserQuestion o needs_human_review/wontfix-kandydatów/niejednoznaczne propozycje → update audit YAML + wontfix-ledger) i przypomnieniem „solve najlepiej w NOWYM oknie konwersacji" (state file niesie komplet — patrz „Zamknięcie audytu" w TRYB: audit). Lustrzana Faza 5 w ssot-dry-audit.
 > **v3.4** (2026-06-10, solve transzy 2: 52 majory + ekonomika) = PROFILE AUDYTU (quick/standard/exhaustive; minory AGREGOWANE w MINOR_FAMILIES; konwergencja po C/M = converged_cm; trwały wontfix-ledger) + solve wydzielony z pętli konsensusu (DISPATCH GUARD 2, budżet ∝ liczbie issues, retry per issue_id, tryb non-git, lock state-file) + pełny wiring create/verify (--source/--against gates, registry 20 par lens×tryb, zakończenie verify) + smoke lifecycle (config wiring, readiness-poll, reap gas-servera, exit-code arms, listenery przed goto) + workflow failure-semantics + helper 2.2.0 (checksumy PESEL/NIP, keyword-blocklist, truncation{}, --output, shell, walk_info).
 > **v3.3** (2026-06-09, solve z audytu 179 findingów) = silnik konsensusu utwardzony (proof TREŚCI nie liczników, per-lens identity, inconclusive poza oknem konwergencji, dead-lens exit, statusy terminalne, partition mode dla dużych scope'ów) + TREE GUARD v2 (baseline runu, retry też pod guardem, powierzchnie poza repo, reguła nieatrybuowalności) + kanoniczny kontrakt ssot (MEDIUM=auto+[REVIEW], evidence per lokacja, refactor{} konsumowany).
 > **v3.2** (2026-06-09) = v3.1 + MODEL-AGNOSTIC (Fable 5 / Opus 4.8 / następne — zero zmian przy premierze modelu) + deferred-tools gate + Workflow delta (meta/resume/no-Date) + TREE GUARD w audit/verify.
@@ -1847,6 +1848,27 @@ def coverage_complete(state):
 
 Final report MUST display the confidence level prominently. Do NOT collapse
 these into "audit complete" — users need to know how much to trust it.
+
+### Zamknięcie audytu: wywiad decyzyjny + wskazanie solve (user-mandated 2026-06-11)
+
+Po osiągniętym stop-condition exit (i NIGDY wcześniej — AUTONOMY RULES obowiązują
+do końca pętli; ten krok to sankcjonowany element protokołu jak SECURITY GATES,
+PIERWSZEŃSTWO pkt 1, a nie „pytanie czy kontynuować"):
+
+1. **Wywiad AskUserQuestion** o pozycje wymagające decyzji usera: needs_human_review,
+   kandydaci na wontfix, itemy z ≥2 sensownymi kierunkami naprawy, destructive-kandydaci
+   (pre-akceptacja kierunku; właściwy destructive-gate i tak strzeli w solve).
+   Max 4 pytania/rundę (więcej → kolejne rundy), 2-4 opcje + kontekst file:line,
+   rekomendowana opcja pierwsza z „(Recommended)". Brak takich pozycji → POMIŃ wywiad
+   (nie wymyślaj pytań na siłę). Odpowiedź usera podważa finding → ZWERYFIKUJ w kodzie
+   przed zapisem decyzji (błędne premise zdarzają się — np. blindspot skanera).
+2. **Update audit YAML po wywiadzie** (tmp+mv): „wontfix" → status wontfix ORAZ wpis do
+   `wontfix-ledger.yaml` (jedyny legalny producent wpisów = decyzja usera — to ten moment);
+   „zrób tak" → suggestion zastąp wybranym kierunkiem + nota `user_decision` z datą;
+   „później" → zostaje open.
+3. **Komunikat końcowy** zawiera linię: „Naprawa: /petla solve <audit-yaml> — najlepiej
+   w NOWYM oknie konwersacji (state file niesie komplet; solve w tym samym oknie płaci
+   za cały transkrypt audytu przy każdej turze). Przypomnienie, nie blokada."
 
 ### Lenses dla audit (default)
 
