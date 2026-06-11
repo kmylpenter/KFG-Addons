@@ -632,6 +632,12 @@ function Install-Addon {
         # szlo do iex jako pusta zmienna PS -> "bash /install.sh".
         $env:CLAUDE_TARGET_BASE = (Join-Path $TargetBase ".claude")   # M24: wspolny korzen dla postinstalli
         $postinstallCmd = $Addon.Scripts.postinstall.Replace("%ADDON_DIR%", $Addon.Path).Replace('$ADDON_DIR', $Addon.Path)
+        # przenosnosc: 'python3' -> 'python'/'py' gdy python3 niedostepny (typowe na Windows)
+        if ($postinstallCmd -match '^python3 ' -and -not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+            $altPy = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' }
+                     elseif (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { $null }
+            if ($altPy) { $postinstallCmd = $altPy + $postinstallCmd.Substring(7) }
+        }
         try {
             $global:LASTEXITCODE = 0
             Invoke-Expression $postinstallCmd

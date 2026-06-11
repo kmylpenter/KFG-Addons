@@ -263,6 +263,12 @@ except Exception: pass' 2>/dev/null)"
       # M2: podstaw OBA tokeny + eksportuj srodowisko (M24: wspolny korzen)
       local cmd="${postinstall//%ADDON_DIR%/$dir}"
       cmd="${cmd//\$ADDON_DIR/$dir}"
+      # przenosnosc: jesli postinstall wola 'python3', a jest tylko 'python'/'py' — podmien
+      case "$cmd" in
+        python3\ *) command -v python3 >/dev/null 2>&1 || {
+            for alt in python py; do command -v "$alt" >/dev/null 2>&1 && { cmd="$alt ${cmd#python3 }"; break; }; done
+          } ;;
+      esac
       ADDON_DIR="$dir" CLAUDE_TARGET_BASE="$CLAUDE_DIR" bash -c "$cmd"
       if [ $? -eq 0 ]; then ok "Postinstall wykonany"; else err "Postinstall ZWROCIL BLAD (addon moze nie dzialac)"; failed=1; fi
     fi
