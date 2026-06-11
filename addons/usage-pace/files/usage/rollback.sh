@@ -17,24 +17,30 @@ CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 [ -d "$CLAUDE_DIR" ] || CLAUDE_DIR=/data/data/com.termux/files/home/.claude
 [ -d "$CLAUDE_DIR" ] || CLAUDE_DIR=/root/.claude
 WRAPPER="$CLAUDE_DIR/statusline-wrapper.mjs"
-BAK="$CLAUDE_DIR/statusline-wrapper.mjs.bak-2026-06-10"
-BAK2="$CLAUDE_DIR/usage/backup-2026-06-10/statusline-wrapper.mjs.orig"
 JOB_ID=7301
 
 echo "== usage-pace: rollback =="
 
-# -- 1. pasek statusu --
-if [ ! -f "$BAK" ] && [ -f "$BAK2" ]; then BAK="$BAK2"; fi
-if [ -f "$BAK" ]; then
-  if [ -f "$BAK2" ] && ! cmp -s "$BAK" "$BAK2"; then
-    echo "UWAGA: dwa backupy roznia sie — uzywam $BAK"
-  fi
-  cp "$WRAPPER" "$WRAPPER.przed-rollbackiem.$(date +%s)" 2>/dev/null
+# -- 1. pasek statusu: znajdz backup BEZ sztywnej daty --
+# Priorytet: pristine .orig (zapisany raz) -> najnowszy bak-* -> legacy backup-*/orig
+BAK=""
+if [ -f "$CLAUDE_DIR/usage/backup/statusline-wrapper.mjs.orig" ]; then
+  BAK="$CLAUDE_DIR/usage/backup/statusline-wrapper.mjs.orig"
+else
+  # najnowszy plik bak-* (sortowanie po nazwie = po czasie, bo stempel ISO/sekundowy)
+  newest="$(ls -1t "$CLAUDE_DIR"/statusline-wrapper.mjs.bak-* 2>/dev/null | head -1)"
+  [ -n "$newest" ] && BAK="$newest"
+  # legacy: dawne backup-DATA/orig
+  [ -z "$BAK" ] && BAK="$(ls -1t "$CLAUDE_DIR"/usage/backup-*/statusline-wrapper.mjs.orig 2>/dev/null | head -1)"
+fi
+
+if [ -n "$BAK" ] && [ -f "$BAK" ]; then
+  cp "$WRAPPER" "$WRAPPER.przed-rollbackiem.$(date +%s)" 2>/dev/null || true
   cp "$BAK" "$WRAPPER" && echo "OK: pasek statusu przywrocony z $BAK"
   cmp -s "$WRAPPER" "$BAK" && echo "OK: weryfikacja — plik identyczny z backupem" \
     || { echo "BLAD: weryfikacja nie przeszla!"; exit 1; }
 else
-  echo "BLAD: brak backupu ($BAK)"; exit 1
+  echo "BLAD: brak jakiegokolwiek backupu paska w $CLAUDE_DIR (.orig / bak-*)"; exit 1
 fi
 
 # -- 2. harmonogram --

@@ -2,8 +2,9 @@
 # Testy syntetyczne pace.sh — dziala na podstawionych plikach cache/history,
 # NIE dotyka prawdziwego ~/.claude/usage-cache.json.
 set -u
-PACE=/root/.claude/usage/pace.sh
-T=/root/.claude/usage/test/tmp
+# PACE = siostrzany pace.sh (ten sam katalog co ten harness), z fallbackiem na zainstalowany.
+PACE="$(cd "$(dirname "$0")" && pwd)/pace.sh"; [ -f "$PACE" ] || PACE=/root/.claude/usage/pace.sh
+T="${TMPDIR:-/tmp}/kfg-pace-test-tmp"
 rm -rf "$T"; mkdir -p "$T/bin"
 PASS=0; FAIL=0
 
@@ -65,23 +66,52 @@ c=json.load(open('$T/c-nodata.json'))
 sys.exit(0 if (c.get('pace') or {}).get('status')=='NO_DATA' else 1)
 "; then echo "PASS nodata -> NO_DATA"; PASS=$((PASS+1)); else echo "FAIL nodata"; FAIL=$((FAIL+1)); fi
 
-# --- powiadomienie + cooldown (atrapa, HOME podstawiony) ---
+# --- powiadomienie raz + cooldown (atrapa OK, --scheduled, HOME=Termux) ---
 export STUB_LOG="$T/stub.log"; : > "$STUB_LOG"
-NC="$T/c-notif.json"; mkcache "$NC" 24 28 10
+NC="$T/c-notif.json"; mkcache "$NC" 24 28 10   # fetched 10s temu (< TTL) -> --scheduled nie fetchuje
 HOME=/data/data/com.termux/files/home PATH="$T/bin:$PATH" \
-  CLAUDE_USAGE_CACHE_FILE="$NC" CLAUDE_USAGE_HISTORY_FILE="$T/h-notif.csv" bash "$PACE" --compute-only
+  CLAUDE_USAGE_CACHE_FILE="$NC" CLAUDE_USAGE_HISTORY_FILE="$T/h-notif.csv" bash "$PACE" --scheduled
 N1=$(grep -c STUB-NOTIF "$STUB_LOG")
 HOME=/data/data/com.termux/files/home PATH="$T/bin:$PATH" \
-  CLAUDE_USAGE_CACHE_FILE="$NC" CLAUDE_USAGE_HISTORY_FILE="$T/h-notif.csv" bash "$PACE" --compute-only
+  CLAUDE_USAGE_CACHE_FILE="$NC" CLAUDE_USAGE_HISTORY_FILE="$T/h-notif.csv" bash "$PACE" --scheduled
 N2=$(grep -c STUB-NOTIF "$STUB_LOG")
 if [ "$N1" = "1" ] && [ "$N2" = "1" ]; then echo "PASS notyfikacja-raz+cooldown"; PASS=$((PASS+1));
 else echo "FAIL notyfikacja (po1=$N1 po2=$N2, oczekiwano 1 i 1)"; FAIL=$((FAIL+1)); fi
-grep STUB-NOTIF "$STUB_LOG" | head -1
+
+# --- M50: --compute-only (sciezka PASKA) NIE powiadamia, nawet przy LOW+CAN_NOTIFY ---
+M50C="$T/c-m50.json"; mkcache "$M50C" 24 28 10; : > "$STUB_LOG"
+HOME=/data/data/com.termux/files/home PATH="$T/bin:$PATH" \
+  CLAUDE_USAGE_CACHE_FILE="$M50C" CLAUDE_USAGE_HISTORY_FILE="$T/h-m50.csv" bash "$PACE" --compute-only
+if [ "$(grep -c STUB-NOTIF "$STUB_LOG")" = "0" ]; then echo "PASS M50 compute-only-nie-powiadamia"; PASS=$((PASS+1));
+else echo "FAIL M50: --compute-only wyslal powiadomienie!"; FAIL=$((FAIL+1)); fi
+
+# --- M49: nieudany send NIE zapisuje cooldownu (retry mozliwy) ---
+cat > "$T/bin/termux-notification" <<'EOF'
+#!/usr/bin/env bash
+echo "STUB-FAIL $*" >> "$STUB_LOG"; exit 1
+EOF
+chmod +x "$T/bin/termux-notification"
+M49C="$T/c-m49.json"; mkcache "$M49C" 24 28 10; : > "$STUB_LOG"
+HOME=/data/data/com.termux/files/home PATH="$T/bin:$PATH" \
+  CLAUDE_USAGE_CACHE_FILE="$M49C" CLAUDE_USAGE_HISTORY_FILE="$T/h-m49.csv" bash "$PACE" --scheduled
+# po nieudanym send: last_notification_epoch ma NIE byc ustawiony
+if python3 -c "
+import json,sys
+c=json.load(open('$M49C'))
+sys.exit(0 if not c.get('last_notification_epoch') else 1)
+"; then echo "PASS M49 fail-send-bez-cooldownu"; PASS=$((PASS+1));
+else echo "FAIL M49: cooldown zapisany mimo nieudanego send"; FAIL=$((FAIL+1)); fi
+# przywroc atrape sukcesu
+cat > "$T/bin/termux-notification" <<'EOF'
+#!/usr/bin/env bash
+echo "STUB-NOTIF $*" >> "$STUB_LOG"; exit 0
+EOF
+chmod +x "$T/bin/termux-notification"
 
 # --- w proot (HOME=/root) NIE wolno wysylac ---
 PC="$T/c-proot.json"; mkcache "$PC" 24 28 10
 : > "$STUB_LOG"
-PATH="$T/bin:$PATH" CLAUDE_USAGE_CACHE_FILE="$PC" CLAUDE_USAGE_HISTORY_FILE="$T/h-proot.csv" bash "$PACE" --compute-only
+PATH="$T/bin:$PATH" CLAUDE_USAGE_CACHE_FILE="$PC" CLAUDE_USAGE_HISTORY_FILE="$T/h-proot.csv" bash "$PACE" --scheduled
 if [ "$(grep -c STUB-NOTIF "$STUB_LOG")" = "0" ]; then echo "PASS proot-bez-powiadomien"; PASS=$((PASS+1));
 else echo "FAIL proot wyslal powiadomienie!"; FAIL=$((FAIL+1)); fi
 

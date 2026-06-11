@@ -314,13 +314,17 @@ except Exception:
 
 # ---------- DECYZJA O POWIADOMIENIU ----------
 last_notif = float(cache.get("last_notification_epoch") or 0)
-if status == "LOW" and CAN_NOTIFY and (now - last_notif) >= COOLDOWN_S:
+# M50: powiadamia WYLACZNIE harmonogram (--scheduled). Pasek odpala pace.sh
+# --compute-only przy kazdym odswiezeniu — bez tego warunku moglby emitowac
+# duplikaty i wypalac slot cooldownu na stronie Termuksa.
+# M49: cooldownu NIE zapisujemy tutaj — robi to bash DOPIERO po udanej wysylce,
+# inaczej nieudany send i tak stlumilby kolejna probe na 6h.
+if status == "LOW" and CAN_NOTIFY and MODE == "--scheduled" and (now - last_notif) >= COOLDOWN_S:
     title = "Claude: niskie tempo zuzycia"
     body = "Projekcja: %s%% limitu 7d, reset za %.0f h (zostalo %.0f%%). Odpal sesje autonomiczna (np. petla-noc)." % (
         ("%.0f" % proj) if proj is not None else "?",
         hours_to_reset or 0, 100.0 - float(used or 0))
     print("NOTIFY\t%s\t%s" % (title, body))
-    cache["last_notification_epoch"] = now
 
 try:
     atomic_write_json(CACHE_FILE, cache)
@@ -350,8 +354,19 @@ if [ -n "$NOTIFY_LINE" ]; then
   BODY="$(printf '%s' "$NOTIFY_LINE" | cut -f3)"
   if send_notification "$TITLE" "$BODY"; then
     log "NOTIFIED: $BODY"
+    # M49: cooldown zapisujemy DOPIERO teraz (po sukcesie), atomowo
+    python3 - "$CACHE_FILE" <<'PYUP' 2>/dev/null || true
+import json, os, sys, tempfile, time
+p = sys.argv[1]
+try: c = json.load(open(p))
+except Exception: sys.exit(0)
+c["last_notification_epoch"] = time.time()
+fd, t = tempfile.mkstemp(dir=os.path.dirname(p) or ".")
+with os.fdopen(fd, "w") as f: json.dump(c, f, indent=1)
+os.replace(t, p)
+PYUP
   else
-    log "NOTIFY-FAILED (termux-notification blad)"
+    log "NOTIFY-FAILED (termux-notification blad) — cooldown NIE zapisany, retry przy nast. przebiegu"
   fi
 fi
 
