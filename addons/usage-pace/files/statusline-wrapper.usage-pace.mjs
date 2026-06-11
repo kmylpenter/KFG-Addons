@@ -233,6 +233,7 @@ try {
       let s7;
       if (st === 'LOW' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
       else if (st === 'OK' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_green}→${Math.round(proj)}%${reset}`;
+      else if (st === 'GRACE') s7 = `${c_dim}7d ${c_yellow}${v7}${ESC}[38;5;250m→…${reset}`;  // swieze okno: projekcja niemiarodajna (liczy sie); jasny szary 250, bo dim 240 ginie na czarnym tle
       else if (proj != null && (st === 'STALE' || fromCache)) s7 = `${c_dim}7d ${c_yellow}${v7}${c_dim}→?%${reset}`;
       else s7 = `${c_dim}7d ${c_yellow}${v7}%${reset}`;
 
