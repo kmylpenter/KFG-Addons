@@ -1,0 +1,76 @@
+meta:
+  mode: solve
+  target: "/root/projekty/KFG-Addons (instalator)"
+  audit_file: "thoughts/shared/petla/audit-instalator-KFG-Addons-2026-06-10.yaml"
+  branch: "fix/installer-cross-platform-2026-06-11"
+  started: "2026-06-11T00:10:00+02:00"
+  status: in_progress
+  user_decisions:
+    scope: "wszystko, PowerShell tez (best-effort; user przetestuje na Windows)"
+    c2_architecture: "pelny install-addons.sh (bash twin)"
+  testability: "bash/Termux = testowane na urzadzeniu (proot); PowerShell = NIE uruchamialne tu -> static + weryfikacja subagentem zamiast egzekucji"
+  total_issues: 59  # 4 critical + 55 major
+
+# Grupy robocze (severity-first, po przyczynie zrodlowej). Kazda = osobny commit.
+groups:
+  - id: G1
+    title: "C2 + bashowa strona path/platform/postinstall — pelny install-addons.sh"
+    covers: [C2, M2, M3, M7, M20, M24, M37, M43, M46-part, M22]
+    status: verified
+    test: "on-device proot: file/dir targets bez podwojen, platform-skip PS-only, traversal blocked, postinstall $ADDON_DIR + exit-code, idempotent. README przebudowany (tabela z addon.json + sciezka Termux)."
+    commit: pending
+  - id: G2
+    title: "C1 + path-handling .ps1 — single-file target placement, detekcja=zapis, traversal, intra-dup"
+    covers: [C1, M20-ps, M52, M47, M24-ps, M37-ps, M43-ps]
+    status: pending
+    note: "PowerShell — static + subagent review (nieuruchamialne tu)"
+  - id: G3
+    title: "C3 + czytaj manifest — whitelist precache.py/volume_watcher.py + guard + double-manifest"
+    covers: [C3, M46]
+    status: pending
+    test: "bash — testowalne"
+  - id: G4
+    title: "C4 — usage-pace bind-mount detection + docs"
+    covers: [C4]
+    status: pending
+    test: "bash — testowalne"
+  - id: G5
+    title: "usage-pace .sh reliability — rollback/golden/notify"
+    covers: [M15, M34, M48, M49, M50]
+    status: pending
+    test: "bash — testowalne"
+  - id: G6
+    title: "ssot/czytaj bash — platform any-vs-Windows, rish verify, apostrof w HOME"
+    covers: [M41, M51]
+    status: pending
+    test: "bash — testowalne"
+  - id: G7
+    title: "settings.json safe-patch consolidation (PS) — gubienie patchy, BOM, brak append, brak backupu"
+    covers: [M8, M9, M11, M21, M28, M30, M31, M42]
+    status: pending
+    note: "najwiekszy PS refactor; static + subagent"
+  - id: G8
+    title: "install-addons.ps1 robustness (PS) — exit codes, izolacja, casty, Find-Project, Remove-Item, -LiteralPath"
+    covers: [M1, M16, M17, M27, M28, M29, M32, M33, M36, M38]
+    status: pending
+    note: "PS — static + subagent"
+  - id: G9
+    title: "cross-addon conflicts — wrapper fork, skill-rules.json"
+    covers: [M44, M45, M53]
+    status: pending
+  - id: G10
+    title: "terminal-theme/clipboard/win-console (PS) — regex JSON, JSONC, samosprzeczne warunki, ANSI, node-probe"
+    covers: [M10, M12, M13, M14, M35, M39, M40, M55]
+    status: pending
+    note: "PS — static + subagent"
+  - id: G11
+    title: "kontrakt addon.json + docs — postInstall, platform, dependencies schema, safe-permissions postinstall, ADDON-DEVELOPMENT.md"
+    covers: [M4, M6, M7, M26, M54]
+    status: pending
+
+fixes: []  # szczegolowe statusy per-issue w sekcji 'covers' grup; commits sekwencyjne
+progress:
+  total_issues: 59
+  groups_total: 11
+  groups_verified: 0
+  groups_pending: 11
