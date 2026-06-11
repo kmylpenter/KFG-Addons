@@ -1,0 +1,685 @@
+meta:
+  mode: audit
+  target: "/root/projekty/KFG-Addons (instalator: install-addons.ps1 + addons/*/install*)"
+  user_requirement: "Instalator MUSI dzialac na Termux (Android, proot) ORAZ na komputerze (desktop Windows/Linux)"
+  started: "2026-06-10T20:46:00+02:00"
+  updated: "2026-06-10T21:55:00+02:00"
+  status: completed
+  iterations: 3
+  status_note: "completed — judgment stop po iter 3: krytyczne ZBIEZNE (0 nowych w iter3, zestaw 4 stabilny = HIGH), majory wyhamowuja (28->23->9 nowych, rate 0.39) ale ogon nie wyczerpany (MEDIUM), lens style DEDUPED_ALL"
+  lenses: [bugs, security, duplicates, portability, style]
+  profile: standard
+  severity_floor: major
+  target_files:
+    - "/root/projekty/KFG-Addons/install-addons.ps1"
+    - "/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1"
+    - "/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1"
+    - "/root/projekty/KFG-Addons/addons/czytaj/install.sh"
+    - "/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1"
+    - "/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh"
+    - "/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1"
+    - "/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1"
+    - "/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1"
+    - "/root/projekty/KFG-Addons/addons/usage-pace/install.sh"
+    - "/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1"
+    - "/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md"
+    - "/root/projekty/KFG-Addons/README.md"
+  scope_notes: "archive/ POZA zakresem. addon.json per addon = kontekst (agenci czytali wszystkie 18)."
+  tree_guard_baseline: "thoughts/shared/petla/.tree-guard-baseline-instalator-2026-06-10.txt"
+lens_inconclusive_streak: {bugs: 0, security: 0, duplicates: 0, portability: 0, style: 0}
+governance_violations: []
+
+issues:
+  - id: "C1"
+    severity: critical
+    lens: bugs
+    item: "v2.6 single-file copy klade plik KATALOG ZA WYSOKO na swiezej maszynie (Split-Path -Parent na targetach plik->katalog/: statusline-wrapper.mjs laduje w %USERPROFILE%\\ zamiast .claude\\; track-changed-files.mjs w hooks\\ zamiast hooks\\dist\\); klucz detekcji duplikatu (relativePath Z nazwa pliku) != sciezka zapisu -> kazdy re-run znow 'Nowy', nigdy nie konwerguje; rejestracje hookow/statusline wskazuja nieistniejace pliki. Dziala tylko gdy targety juz istnieja (maszyna dev)."
+    location: "install-addons.ps1:484-487"
+    evidence: "if ($isSourceFile) { $targetPath = Split-Path $targetPath -Parent } — vs ADDON-DEVELOPMENT.md:147 'Kopiuje plik do katalogu, wynik: ~/.claude/statusline-wrapper.ps1'"
+    suggestion: "Split-Path -Parent tylko gdy targetValue konczy sie nazwa pliku zrodlowego; dla targetow katalogowych (trailing /) uzyc rozwinietego katalogu wprost; wyprowadzac targetPath z tego samego relativePath co detekcja."
+    found_in_iteration: 1
+    status: open
+  - id: "C2"
+    severity: critical
+    lens: portability+bugs
+    item: "Brak JAKIEJKOLWIEK sciezki instalacji na Termux/proot — twarde wymaganie usera zlamane: glowny instalator wymaga Windows ($env:USERPROFILE null na Linux -> Join-Path rzuca pod EAP=Stop i run umiera w polowie; backslashe w sciezkach; winget do auto-instalacji zaleznosci); pwsh BRAK w proot (zweryfikowane empirycznie); nie istnieje install-addons.sh; 15 z 18 addonow nie ma zadnego install.sh -> na Termux nieinstalowalne inaczej niz recznym kopiowaniem bez dokumentacji."
+    location: "install-addons.ps1:48 (+110,133,379,482-483)"
+    evidence: "[string]$TargetBase = $env:USERPROFILE ; winget install Python.Python.3.12 ; probe: pwsh NOT on PATH (proot), NO root-level .sh installer"
+    suggestion: "Bash-owy odpowiednik install-addons.sh (python3/jq parsuje addon.json, honoruje platform, ~ przez $HOME, copy + scripts.postinstall) LUB install.sh per addon istotny dla Termux + dokumentacja. Fail-fast gdy USERPROFILE pusty."
+    found_in_iteration: 1
+    status: open
+  - id: "M1"
+    severity: major
+    lens: bugs
+    item: "Porazki postinstall niewidzialne i nie propagowane: Invoke-Expression nie rzuca przy exit!=0 (catch martwy), '[OK] Postinstall wykonany' przy exit 1; wynik $true/$false Install-Addon odrzucany na 4 call-site'ach; tryb single-addon bezwarunkowo 'exit 0' — automatyzacja nie wykryje porazki."
+    location: "install-addons.ps1:549-556,603-604"
+    evidence: "try { Invoke-Expression $postinstallCmd; Write-OK \"Postinstall wykonany\" } catch { Write-Warn } ... exit 0"
+    suggestion: "Po iex sprawdzac $LASTEXITCODE; propagowac wynik Install-Addon do kodu wyjscia procesu."
+    found_in_iteration: 1
+    status: open
+  - id: "M2"
+    severity: major
+    lens: bugs+portability+style
+    item: "Trzy skladnie placeholdera w scripts.postinstall (%ADDON_DIR% / $ADDON_DIR / $env:USERPROFILE); installer podstawia TYLKO %ADDON_DIR% -> 'bash $ADDON_DIR/install.sh' (czytaj, ssot-dry-audit, usage-pace) pod iex staje sie 'bash /install.sh' (exit 127, maskowany przez M1). ssot-dry-audit (platform: any) nigdy nie dostaje swojego postinstalla na Windows."
+    location: "install-addons.ps1:548 + addons/{czytaj,ssot-dry-audit,usage-pace,safe-permissions}/addon.json"
+    evidence: "$postinstallCmd = $Addon.Scripts.postinstall -replace \"%ADDON_DIR%\", $Addon.Path — vs \"postinstall\": \"bash $ADDON_DIR/install.sh\""
+    suggestion: "Dodatkowo -replace '\\$ADDON_DIR'; ujednolicic na %ADDON_DIR% w addon.json + udokumentowac jeden kanon."
+    found_in_iteration: 1
+    status: open
+  - id: "M3"
+    severity: major
+    lens: bugs+portability
+    item: "Pole platform z addon.json NIGDZIE nie czytane (Get-Addons go nie ekstrahuje, Install-Addon nie sprawdza): -All na Windows slepo instaluje addony termux-only (czytaj, usage-pace) — kopiuje pliki i probuje bashowych postinstalli; zero detekcji hosta i odmowy z komunikatem."
+    location: "install-addons.ps1:280-291"
+    evidence: "$addons += @{ Name=...; ensureEnv=...; Notes=... } — grep 'platform' w install-addons.ps1: 0 trafien"
+    suggestion: "Czytac $json.platform; wykrywac host ($IsWindows / Test-Path /data/data/com.termux) i pomijac niepasujace z komunikatem [~]."
+    found_in_iteration: 1
+    status: open
+  - id: "M4"
+    severity: major
+    lens: bugs+duplicates+portability+style
+    item: "Kontrakt postinstall zdefiniowany dwukrotnie i rozjechany: ADDON-DEVELOPMENT.md uczy top-level 'postInstall' (MARTWE — installer czyta wylacznie scripts.postinstall); ofiara w repo: autoinit-skills z top-level postInstall (rejestracja skillRules) nigdy nie wykonanym — skille kopiowane, nierejestrowane; 4 addony cargo-cult 'postInstall: null'; dzialajace scripts.postinstall, ensureEnv (v2.5) i platform NIEUDOKUMENTOWANE."
+    location: "ADDON-DEVELOPMENT.md:53,74 + install-addons.ps1:544 + addons/autoinit-skills/addon.json"
+    evidence: "doc: '\"postInstall\": \"echo Gotowe!\"' vs installer: if ($Addon.Scripts -and $Addon.Scripts.postinstall)"
+    suggestion: "Doc = kod: udokumentowac scripts.postinstall + ensureEnv + platform; zmigrowc autoinit-skills (payload -> scripts.postinstall albo zaimplementowac skillRules merge); usunac martwe pola."
+    found_in_iteration: 1
+    status: open
+  - id: "M5"
+    severity: major
+    lens: bugs
+    item: "Instalacja ccv3-structure-check = funkcjonalny no-op: addon.json deklaruje top-level 'hooks' (SessionStart/UserPromptSubmit) ktorych NIC nie czyta/rejestruje w settings.json, zero targets -> nic nie kopiowane; install.ps1 tylko kompiluje TS w checkoutach repo. Hooki zbudowane, nigdy nie podpiete — sukces raportowany."
+    location: "addons/ccv3-structure-check/install.ps1:1-19 + addon.json"
+    evidence: "addon.json: \"hooks\": { \"SessionStart\": [...] } — brak konsumenta pola 'hooks' w install-addons.ps1"
+    suggestion: "Krok rejestracji hookow (patch settings.json jak inne addony) z ekspansja $ADDON_DIR do sciezki absolutnej; albo usunac addon/pole."
+    found_in_iteration: 1
+    status: open
+  - id: "M6"
+    severity: major
+    lens: style
+    item: "Zlamane pola wymagane kontraktu addon.json: 'targets' (WYMAGANE wg ADDON-DEVELOPMENT.md) brak w windows-console-fix (tez brak files/ — WYMAGANE) i ccv3-structure-check; w zamian martwe pola bez konsumenta: 'files: []' (windows-console-fix), 'hooks: {}' (ccv3)."
+    location: "addons/windows-console-fix/addon.json + addons/ccv3-structure-check/addon.json vs ADDON-DEVELOPMENT.md:60-66"
+    evidence: "doc: '| targets | object | ... |' pod 'Pola wymagane'; windows-console-fix/addon.json konczy sie '\"files\": []' bez klucza targets"
+    suggestion: "Albo targets opcjonalne w docu (addony script-only), albo dodac puste targets:{}; skasowac/udokumentowac martwe pola."
+    found_in_iteration: 1
+    status: open
+  - id: "M7"
+    severity: major
+    lens: style
+    item: "Dwa konkurencyjne schematy 'dependencies': dokumentowany obiektowy ({python:{required,minVersion,packages}} — Test-Dependency czyta .required) vs nieudokumentowany tablicowy (system/android-apk/npm) w 4 addonach — checker po cichu pomija formy tablicowe."
+    location: "addons/{czytaj,ssot-dry-audit,usage-pace,safe-permissions}/addon.json vs install-addons.ps1:364"
+    evidence: "czytaj: '\"dependencies\": { \"system\": [\"termux-api\",\"python3\"] }' vs installer: if ($depConfig.required)"
+    suggestion: "Jeden schemat: rozszerzyc obiektowy o typy system/npm (+ nauczyc Test-Dependency) lub przekonwertowac 4 addony; zaktualizowac doc."
+    found_in_iteration: 1
+    status: open
+  - id: "M8"
+    severity: major
+    lens: bugs
+    item: "patch-statusline.ps1 cicho gubi patche na settings.json BEZ kluczy statusLine/hooks (dot-assignment na nieistniejacej property PSCustomObject rzuca; brak EAP=Stop -> statement pominiety, $changed=true i plik PRZEPISANY bez patchy + '[OK]'); na malformed settings $settings=$null -> zapisuje literal 'null' nadpisujac settings.json BEZ backupu."
+    location: "addons/statusline-advanced/patch-statusline.ps1:17-18,27-28,100-103"
+    evidence: "$settings.statusLine = @{...} — assignment na brakujaca NoteProperty rzuca; zero try/catch/EAP w pliku"
+    suggestion: "$ErrorActionPreference='Stop' + try/catch exit 1; Add-Member -Force (jak linia 49); walidacja $settings -ne $null; backup przed WriteAllText."
+    found_in_iteration: 1
+    status: open
+  - id: "M9"
+    severity: major
+    lens: bugs
+    item: "sound-notification NIGDY nie instaluje hooka gdy istnieje JAKIKOLWIEK hook Stop/Notification (ContainsKey -> skip calosci zamiast APPEND wpisu do listy zgodnie ze schema hookow CC); kazdy user z istniejacym Stop hookiem cicho nie dostaje dzwieku, plik i tak przepisany + 'aktywny!'."
+    location: "addons/sound-notification/patch-settings.ps1:45-61,64-80"
+    evidence: "if (-not $settings[\"hooks\"].ContainsKey(\"Stop\")) { ... } else { Write-Warn \"Hook Stop juz istnieje - pomijam\" }"
+    suggestion: "Przy istniejacym kluczu APPEND nowego wpisu {matcher,hooks[]} po sprawdzeniu czy komenda play-sound juz nie figuruje (wzor: czytaj add_hook)."
+    found_in_iteration: 1
+    status: open
+  - id: "M10"
+    severity: major
+    lens: bugs
+    item: "clipboard-workflow-helper: gdy cleanup starego folderu padnie (VS Code/AV lock — przewidziane w kodzie), Copy-Item kopiuje zrodlo JAKO ZAGNIEZDZONY podfolder do wciaz istniejacego targetu (rozbita extension) a -ErrorAction Continue + bezwarunkowy Write-OK klamie 'skopiowana'; do tego extensions.json: pojedynczy wynik Where-Object serializowany jako OBIEKT zamiast tablicy (PS unroll) — zepsuty ksztalt pliku."
+    location: "addons/clipboard-workflow-helper/install-extension.ps1:98,51-57"
+    evidence: "Copy-Item -Path $extensionSourceDir -Destination $targetDir -Recurse -Force ... -ErrorAction Continue / Write-OK \"Extension skopiowana\""
+    suggestion: "Abort gdy $targetDir wciaz istnieje po cleanup (lub kopiowac '$src\\*'); sprawdzac $? przed sukcesem; @(...) przy serializacji extensions.json."
+    found_in_iteration: 1
+    status: open
+  - id: "M11"
+    severity: major
+    lens: bugs+duplicates
+    item: "Ensure-SettingsEnv pisze ~/.claude/settings.json przez 'Set-Content -Encoding UTF8' = BOM na PS5.x (README wymaga PS 5.0+), a wlasny komentarz repo (patch-statusline.ps1:102) dokumentuje ze BOM lamie JSON.parse w Node; zero backupu przed RMW. Lekcja naprawiona w jednym klonie, niespropagowana (to samo na extensions.json w clipboard). Dzis uspione (zaden addon nie deklaruje ensureEnv), sciezka zywa dla kazdego nowego."
+    location: "install-addons.ps1:259 (+ clipboard-workflow-helper/install-extension.ps1:57)"
+    evidence: "$settings | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding UTF8 — vs komentarz: 'PS5 Set-Content -Encoding UTF8 adds BOM which breaks JSON.parse in Node'"
+    suggestion: "Wspolna funkcja Save-JsonNoBom ([IO.File]::WriteAllText + UTF8Encoding($false)) we wszystkich writerach + backup settings.json."
+    found_in_iteration: 1
+    status: open
+  - id: "M12"
+    severity: major
+    lens: bugs
+    item: "terminal-theme: regex na 'defaults' zatrzymuje sie na PIERWSZYM '}' — przy zagniezdzonym obiekcie (np. \"font\": {...}) colorScheme wstawiany DO SRODKA font{} (JSON parsowalny, theme cicho nieaplikowany); re-run wychodzi na wczesnym break ('name KMYLPENTER istnieje') PRZED krokiem set-default -> pol-aplikacji nie da sie dokonczyc; chirurgia regexem na WT settings.json bez backupu."
+    location: "addons/terminal-theme/install-theme.ps1:103-105,69-73"
+    evidence: "} elseif ($content -match '(\"defaults\"\\s*:\\s*\\{[^}]+)(\\})') { $content = $content -replace ..."
+    suggestion: "ConvertFrom-Json zamiast regexa (lub brace-balanced match); krok set-default PRZED early-break; backup przed zapisem."
+    found_in_iteration: 1
+    status: open
+  - id: "M13"
+    severity: major
+    lens: bugs
+    item: "terminal-theme sekcja VS Code: settings.json VS Code to JSONC — na PS7 komentarze parsuja sie i sa CICHO GUBIONE przy przepisie (trwala utrata, bez backupu); na PS5.1 parse rzuca a catch mylnie raportuje 'VS Code nie znaleziony' — feature nie instaluje sie nikomu z komentarzami."
+    location: "addons/terminal-theme/install-theme.ps1:167-168,191-192"
+    evidence: "$settings = $content | ConvertFrom-Json ... ConvertTo-Json -Depth 10 / WriteAllText"
+    suggestion: "Backup przed zapisem; targeted text edit lub JSONC-aware merge; minimum: jawne ostrzezenie o utracie komentarzy."
+    found_in_iteration: 1
+    status: open
+  - id: "M14"
+    severity: major
+    lens: bugs
+    item: "windows-console-fix nie umie DOKONCZYC czesciowo spatchowanego pliku — warunki samosprzeczne: bramka wpuszcza pliki z windowsHideCount<spawnCount, ale kazda aplikacja patternu wymaga '-not Contains(windowsHide)' (falsz dla tych plikow) -> wieczny silent skip + '[OK] All hooks already patched'. Patterny z literalnym `n na potencjalnie-CRLF plikach = rodzina cichych SKIPow."
+    location: "addons/windows-console-fix/patch-all.ps1:104,132"
+    evidence: "if ($content.Contains($p.old) -and -not $content.Contains(\"windowsHide\")) — sprzeczne z linia 104"
+    suggestion: "Usunac klauzule '-not Contains(windowsHide)' (idempotencje daje juz wzorzec) albo zawezic do konkretnego bloku spawn-options."
+    found_in_iteration: 1
+    status: open
+  - id: "M15"
+    severity: major
+    lens: bugs
+    item: "usage-pace install.sh: rollback przy regresji moze czytac NIEISTNIEJACY backup (bak-$STAMP dzienny powstaje tylko gdy wrapper ROZNY od addonowego; re-run zgodny tego samego dnia -> brak pliku -> cp pada pod set -eu w srodku 'przywracam backup!'); drugi ROZNY install tego samego dnia nadpisuje bak-$STAMP i .orig nie-oryginalem."
+    location: "addons/usage-pace/install.sh:24-29,51-53"
+    evidence: "echo \"BLAD REGRESJI — przywracam backup!\" / cp \"$CLAUDE_DIR/statusline-wrapper.mjs.bak-$STAMP\" \"$WRAPPER\""
+    suggestion: "Stempel sekundowy; nigdy nie nadpisywac istniejacego .orig; restore z guardem [ -f ] i fallbackiem na najnowszy bak-*."
+    found_in_iteration: 1
+    status: open
+  - id: "M16"
+    severity: major
+    lens: bugs
+    item: "Interaktywne menu wywala caly run na lekko zlym wejsciu: '[int]$_.Trim() - 1' pod EAP=Stop rzuca terminating error na pustym tokenie/nie-cyfrze (np. '1,' albo '1;2') — surowy wyjatek zamiast komunikatu."
+    location: "install-addons.ps1:645"
+    evidence: "$indices = $choice -split \",\" | ForEach-Object { [int]$_.Trim() - 1 }"
+    suggestion: "Filtr '-match \"^\\d+$\"' przed castem; warn o zignorowanych tokenach."
+    found_in_iteration: 1
+    status: open
+  - id: "M17"
+    severity: major
+    lens: bugs
+    item: "$existing nieinicjalizowane per iteracja petli targets (ustawiane tylko w galezi isClaudeTarget, konsumowane PO galezi przez backup v2.3 i cleanup v2.6): non-claude single-file target po claude-targecie -> backup ZLEGO pliku (a nadpisywany bez backupu); jako pierwszy -> $existing null, '.Found = $false' rzuca pod EAP=Stop i zabija run w srodku instalacji. Latentne (zaden shipped addon nie ma takiego targetu), kontrakt go dopuszcza."
+    location: "install-addons.ps1:448,508,518"
+    evidence: "if ($existing.Found -and $isSourceFile ...) — $existing ustawiane tylko w linii 448 wewnatrz galezi isClaudeTarget"
+    suggestion: "Inicjalizowac $existing = @{Found=$false; Path=$null} na poczatku kazdej iteracji foreach."
+    found_in_iteration: 1
+    status: open
+  - id: "M18"
+    severity: major
+    lens: bugs
+    item: "Brak normalizacji trailing-slash dla zrodel-katalogow: 'files/skills/todo' (bez /) -> pierwszy install OK, ale przy UPDATE (istniejacy znaleziony) glob '$sourcePath*' lapie SAM KATALOG i kopiuje go DO targetu -> zagniezdzone ~/.claude/skills/todo/todo/, skill realnie nigdy nie aktualizowany; installer nie waliduje konwencji trailing-slash wymaganej przez doc."
+    location: "install-addons.ps1:528 + addons/todo/addon.json"
+    evidence: "Copy-Item -Path \"$sourcePath*\" -Destination $targetPath -Recurse -Force — z 'files/skills/todo' glob trafia katalog"
+    suggestion: "Gdy zrodlo jest katalogiem: zawsze kopiowac \"$sourcePath\\*\" (jawny separator), niezaleznie od trailing slash w addon.json."
+    found_in_iteration: 1
+    status: open
+  - id: "M19"
+    severity: major
+    lens: security
+    item: "Manifest-driven arbitrary code execution BEZ bramki: scripts.postinstall idzie verbatim w Invoke-Expression bez review/potwierdzenia (-All odpala wszystkie po cichu); niespojnie — auto-instalacja zaleznosci MA prompt Read-Host; ten sam manifest steruje tez pip install i npm install. Przy udokumentowanym flow clone+PR addon.json bywa cudzy -> wtedy critical; w prywatnym repo major."
+    location: "install-addons.ps1:548-550 (+396-400; ccv3/install.ps1:9)"
+    evidence: "Invoke-Expression $postinstallCmd"
+    suggestion: "Zamiast iex: resolve do znanej sciezki skryptu + call operator (& $path args) lub whitelist interpretera; jawne potwierdzenie per-addon z echem dokladnej komendy."
+    found_in_iteration: 1
+    status: open
+  - id: "M20"
+    severity: major
+    lens: security
+    item: "Path traversal z addon.json targets: destynacja = string-replace prefiksu ~/ na $TargetBase + konkatenacja, ZERO kanonikalizacji i kontroli korzenia — target '~/.claude/../../' lub '~/../../Windows/System32/' zachowuje ../ i wychodzi poza zamierzony root; ta sama luka w Get-TargetRelativePath/Find-ExistingTarget."
+    location: "install-addons.ps1:482-483 (+133)"
+    evidence: "$targetPath = $targetValue -replace \"~/\", \"$TargetBase\\\""
+    suggestion: "Po zbudowaniu $targetPath kanonikalizacja ([IO.Path]::GetFullPath) + wymog prefiksu dozwolonego korzenia; reject targetow z segmentem '..'."
+    found_in_iteration: 1
+    status: open
+  - id: "M21"
+    severity: major
+    lens: duplicates
+    item: "Logika patchowania zywego ~/.claude/settings.json zaimplementowana 4x czterema stackami JSON (python heredoc z atomic os.replace+backup / JavaScriptSerializer bez backupu nieatomowo / ConvertFrom-Json x2 bez backupu) z 3 ROZNYMI semantykami idempotencji — shotgun surgery: zmiana kontraktu rejestracji hookow = 4 niezalezne edycje, kazda kopia z innym poziomem bezpieczenstwa."
+    location: "addons/czytaj/install.sh:125-180 + addons/sound-notification/patch-settings.ps1:32-89 + addons/statusline-advanced/patch-statusline.ps1:10-104 + install-addons.ps1:212-265"
+    evidence: "4 codepaths, ten sam plik docelowy, 4 poziomy bezpieczenstwa (porownane w verdict duplicates)"
+    suggestion: "Jeden wspolny helper per swiat (dot-sourced .ps1 + pythonowy add_hook reuzywany przez bash): per-command idempotency, backup-before-write, tmp+atomic-replace, UTF-8 bez BOM."
+    found_in_iteration: 1
+    status: open
+  - id: "M22"
+    severity: major
+    lens: duplicates+style+portability
+    item: "README.md masowo rozjechane z rzeczywistoscia: tabela 'Dostepne Dodatki' = 9 pozycji, z czego 1 (claude-history-sync) istnieje TYLKO w archive/, a 10 shipping addonow (w tym wszystkie 3 termuxowe) BRAK; 'Wymagania: Windows 10/11 + PowerShell 5.0+' wbrew 3 addonom Termux/proot; ZERO udokumentowanej sciezki instalacji dla Termux — user Termuxa czytajacy entry-point doc nie ma jak zaczac."
+    location: "README.md:29-41,59-63"
+    evidence: "'| **claude-history-sync** | ... |' (brak w addons/, jest w archive/); '- Windows 10/11' vs czytaj/install.sh:17 'addon TYLKO dla Termux'"
+    suggestion: "Generowac tabele z addon.json (skrypt/pre-commit) albo wskazac 'install-addons.ps1 -List'; sekcja Termux/proot z 'bash addons/<n>/install.sh'; kolumna platform."
+    found_in_iteration: 1
+    status: open
+  - id: "M23"
+    severity: major
+    lens: duplicates
+    item: "Kontrakt outputu instalatorow ([OK]/[!]/[X]/[~]) zduplikowany w 7 plikach: trio Write-OK/Warn/Info skopiowane bajt w bajt w 4 .ps1 (z dryfujacymi extras: Err/Skip vs Header) + recznie echo-literaly w 3 .sh z wariantami ([~] vs [--], rozne wciecia) — 17 definicji; zmiana formatu = 7-plikowy shotgun."
+    location: "install-addons.ps1:70-74 + clipboard:6-9 + sound-notification:11-13 + terminal-theme:9-12 + czytaj:72 + ssot:45,50 + usage-pace:28"
+    evidence: "function Write-OK { ... '[OK] ...' Green } — bajt w bajt w 4 plikach"
+    suggestion: "Wspolna mini-lib (lib/output.ps1 dot-sourced + lib/output.sh); niski-major: koszt kosmetyczny, ale ADDON-DEVELOPMENT.md zacheca kazdy nowy addon do kolejnej kopii."
+    found_in_iteration: 1
+    status: open
+  - id: "M24"
+    severity: major
+    lens: duplicates
+    item: "Derywacja claude-root zduplikowana zamiast propagowana: main installer ma -TargetBase (honorowany dla targets i Ensure-SettingsEnv), ale KAZDY postinstall re-derive'uje root z USERPROFILE/HOME niezaleznie -> 'install-addons.ps1 -TargetBase X' daje split-brain (pliki+env do X\\.claude, rejestracje hookow do %USERPROFILE%\\.claude)."
+    location: "install-addons.ps1:48,224 + patch-statusline.ps1:4 + patch-all.ps1:71 + sound-notification:6"
+    evidence: "tylko $env:ADDON_DIR przekazywany dzieciom (:547); patch-statusline: \"$env:USERPROFILE\\.claude\\settings.json\" hardcoded"
+    suggestion: "Eksportowac $env:CLAUDE_TARGET_BASE obok ADDON_DIR; wszystkie skrypty deriwuja root z niego (bash juz to modeluje: CLAUDE_DIR=\"${CLAUDE_DIR:-$HOME/.claude}\")."
+    found_in_iteration: 1
+    status: open
+  - id: "M25"
+    severity: major
+    lens: portability
+    item: "Lancuch instalacji usage-pace (platform: termux+proot) NIESPELNIALNY na swiezym urzadzeniu: install.sh hard-exit bez ~/.claude/statusline-wrapper.mjs, a jedyny dostawca (statusline-advanced) NIE MA zadnej sciezki termux/proot (plik kopiuje Windows-only main installer, patch to powershell-only postinstall; brak install.sh, brak README) — kontrakt platformy zlamiany, dziala tylko po nieudokumentowanym recznym kopiowaniu."
+    location: "addons/usage-pace/install.sh:19 + addons/statusline-advanced/addon.json"
+    evidence: "[ -f \"$WRAPPER\" ] || { echo \"BLAD: brak $WRAPPER ...\"; exit 1; } — provider bez sciezki termux"
+    suggestion: "Bash install path dla statusline-advanced (kopia wrappera + python3 patch settings.json lustrzany do .ps1) ALBO bootstrap wrappera w usage-pace/install.sh z repo gdy brak."
+    found_in_iteration: 1
+    status: open
+  - id: "M26"
+    severity: major
+    lens: style
+    item: "Zoo nazw entry-pointow instalatorow bez konwencji: doc zna wylacznie 'install.ps1 # OPCJONALNE - custom instalator' i nie mowi JAK jest wolany; rzeczywistosc = 9 roznych nazw w 11 instalatorach (install.ps1, install-extension.ps1, patch-settings.ps1, patch-statusline.ps1, install-theme.ps1, set-windows-accent.ps1, patch-all.ps1, install.sh x3) wired ad-hoc przez nieudokumentowane scripts.postinstall; jedyny plik o dokumentowanej nazwie sam siebie opisuje jako 'Postinstall Script'."
+    location: "ADDON-DEVELOPMENT.md:11 vs addons/*/ (11 instalatorow)"
+    evidence: "doc: 'install.ps1 # OPCJONALNE - custom instalator'; ccv3/install.ps1:1: '# CCv3 Structure Check - Postinstall Script'"
+    suggestion: "Zdefiniowac konwencje w docu (install.{ps1,sh} = pelny instalator, postinstall.* = krok po kopii, set-*.ps1 = reczne opt-in) i przemianowac/udokumentowac zoo."
+    found_in_iteration: 1
+    status: open
+  - id: "C3"
+    severity: critical
+    lens: duplicates
+    item: "czytaj/install.sh whitelist kopiowania POMIJA precache.py i volume_watcher.py, ktore istnieja w files/hooks/czytaj/ i sa WYWOLYWANE przez instalowane hooki (toggle.sh:48 nohup volume_watcher.py; stop.py:31 precache.py) -> swiezy install na Termux (jedyna wspierana platforma) dostarcza kod wolajacy NIEISTNIEJACE pliki: martwe volume-keys i audio-cache bez bledu. Dwa manifesty kopiowania (addon.json targets caly katalog vs install.sh imienna lista) rozjechane."
+    location: "addons/czytaj/install.sh:84-86 (referencje: files/hooks/czytaj/toggle.sh:48, stop.py:31)"
+    evidence: "for f in _speak.py piper_server.py piper_stream.py ... — BRAK precache.py i volume_watcher.py; toggle.sh:48 'nohup python3 \"$HOME/.claude/hooks/czytaj/volume_watcher.py\"'"
+    suggestion: "Jeden SSOT manifestu: install.sh czyta liste z addon.json targets (lub kopiuje caly katalog z exclude __pycache__); minimum: dodac oba pliki + guard 'plik z listy nie istnieje -> warn'."
+    found_in_iteration: 2
+    status: open
+  - id: "C4"
+    severity: critical
+    lens: portability
+    item: "usage-pace: ukryty, nieudokumentowany i nieweryfikowany warunek wstepny — bind-mount ~/.claude miedzy Termuksem a prootem. Architektura wspolnego cache + jedyny reczny krok ('wklej W TERMUKSIE: bash ~/.claude/usage/install-termux.sh') dzialaja TYLKO gdy /root/.claude (proot) i /data/data/com.termux/files/home/.claude to ten sam katalog. Na stockowym proot-distro (bez custom bindu) krok 2 pada 'No such file or directory', cache rozjezdza sie na dwa pliki, powiadomienia (rdzen addonu) nieinstalowalne wg dokumentacji. install.sh niczego nie sprawdza, README milczy."
+    location: "addons/usage-pace/install.sh:62-63 (+files/usage/pace.sh:17-18, install-termux.sh:13, README.md:85-90)"
+    evidence: "pace.sh: 'uzywa $HOME/.claude, ktory po obu stronach wskazuje ten sam katalog (bind mount).'; install-termux.sh: 'H=/data/data/com.termux/files/home'"
+    suggestion: "install.sh weryfikuje wspoldzielenie (znacznik w $CLAUDE_DIR widoczny z /data/data/com.termux/files/home/.claude) i przy braku bindu wypisuje komende proot-distro --bind + fallback; udokumentowac prerequisite w README/addon.json.notes."
+    found_in_iteration: 2
+    status: open
+  - id: "M27"
+    severity: major
+    lens: bugs
+    item: "Test-Dependency falszywe 'brak zaleznosci': python branch rzutuje minVersion przez [version] w try{}; domyslne minVer '0' (linia 365 gdy addon pomija minVersion) i wartosci bezkropkowe rzucaja, catch{} polyka, return OK=$false -> zainstalowany python raportowany jako brakujacy + winget prompt. Ta sama klasa w node branch ([int]$MinVersion na '18.17')."
+    location: "install-addons.ps1:309,365,321"
+    evidence: "if ([version]$current -ge [version]$MinVersion) { ... } catch {} / $minVer = if ($depConfig.minVersion) {...} else { \"0\" }"
+    suggestion: "Normalizowac przed porownaniem ('0'->'0.0', '18'->'18.0') lub [version]::TryParse; nie wpuszczac wyjatku porownania do cichego catch."
+    found_in_iteration: 2
+    status: open
+  - id: "M28"
+    severity: major
+    lens: bugs
+    item: "-All bez izolacji bledow per-addon pod EAP=Stop: dowolny terminating error w Install-Addon (Copy-Item na zablokowanym pliku, New-Item kolidujacy z plikiem, Remove-Item ACL fail) przerywa CALY run w polowie petli — pozostale addony nigdy nie probowane, czesciowa instalacja bez raportu co pominieto."
+    location: "install-addons.ps1:610-612"
+    evidence: "foreach ($a in $addons) { Install-Addon -Addon $a }"
+    suggestion: "try/catch wokol kazdego Install-Addon, rejestr sukces/porazka per-addon, summary + niezerowy exit gdy cokolwiek padlo."
+    found_in_iteration: 2
+    status: open
+  - id: "M29"
+    severity: major
+    lens: bugs+security
+    item: "Install-PythonPackage raportuje bezwarunkowy sukces: pip to native command, exit!=0 nie rzuca, catch nieosiagalny, 'Zainstalowano' klamie (network down/perm/zly pakiet). Siostra M1 w innym miejscu."
+    location: "install-addons.ps1:341-344"
+    evidence: "pip install $Package 2>&1 | Out-Null ; Write-OK \"Zainstalowano: $Package\""
+    suggestion: "Sprawdzac $LASTEXITCODE po pip; Write-OK tylko przy exit 0; przechwycic output do komunikatu bledu."
+    found_in_iteration: 2
+    status: open
+  - id: "M30"
+    severity: major
+    lens: bugs
+    item: "terminal-theme VS Code: gdy 'workbench.colorCustomizations' nie istnieje, tworzony jako Hashtable @{}, potem 22 kolory przez Add-Member -NotePropertyName -> na Hashtable to property ETS, NIE wpisy slownika; ConvertTo-Json serializuje tylko wpisy IDictionary -> plik z PUSTYM colorCustomizations + '[OK] Zaktualizowano kolory'. Dziala tylko gdy klucz juz istnial."
+    location: "addons/terminal-theme/install-theme.ps1:171-184,191"
+    evidence: "$settings | Add-Member -NotePropertyName \"workbench.colorCustomizations\" -NotePropertyValue @{} -Force"
+    suggestion: "Tworzyc kontener jako [PSCustomObject]@{} lub przypisywac wpisy $colorCustom[$key]=... zamiast Add-Member."
+    found_in_iteration: 2
+    status: open
+  - id: "M31"
+    severity: major
+    lens: bugs
+    item: "terminal-theme: WT settings bez klucza 'schemes' (nowoczesny WT domyslnie go pomija) -> regex wstawiania schematu nie matchuje (brak else/fallback), a skrypt i tak pisze colorScheme:'KMYLPENTER' do profiles.defaults (wiszaca referencja do nieistniejacego schematu) i konczy sprzeczne 'Windows Terminal nie znaleziony lub blad' mimo ze plik ZMODYFIKOWANY."
+    location: "addons/terminal-theme/install-theme.ps1:75,95-121"
+    evidence: "if ($content -match '(\"schemes\"\\s*:\\s*\\[)(\\s*)') { ... } — brak else; potem colorScheme i tak ustawiany"
+    suggestion: "else tworzacy tablice 'schemes' (lub ConvertFrom-Json); colorScheme tylko gdy schemat realnie dodany; rozdzielic 'not found' od 'patch failed'."
+    found_in_iteration: 2
+    status: open
+  - id: "M32"
+    severity: major
+    lens: bugs+portability
+    item: "Doc-vs-kod: ADDON-DEVELOPMENT.md dokumentuje zaleznosc node 'packages' z auto-instalacja (winget+npm, przyklad puppeteer), ale installer implementuje instalacje pakietow TYLKO dla pythona (if $depName -eq 'python' -and packages) -> node packages deklarowane wg spec sa cicho ignorowane, addon zostaje zepsuty mimo 'OK install'."
+    location: "ADDON-DEVELOPMENT.md:84,103-110 vs install-addons.ps1:395-400"
+    evidence: "doc: '| node | node --version | winget + npm |' vs installer: if ($depName -eq \"python\" -and $depConfig.packages)"
+    suggestion: "Albo zaimplementowac npm install -g per pakiet (z $LASTEXITCODE), albo usunac obietnice node-packages z docu."
+    found_in_iteration: 2
+    status: open
+  - id: "M33"
+    severity: major
+    lens: bugs+security
+    item: "Find-ProjectClaudeDir wybiera NIEZAMIERZONY .claude: traktuje .claude w ROOCIE kontenera projektow (C:\\Projekty\\.claude, %USERPROFILE%\\Projects\\.claude) jako 'project .claude' i zwraca PRZED ancestor-walk od CWD; Find-ExistingTarget daje mu priorytet ('project' > global) -> instalacje (w tym HOOKI = kod auto-wykonywany przez CC) laduja w obcym kontekscie bez wiedzy usera, niezaleznie od projektu z ktorego user uruchamia."
+    location: "install-addons.ps1:88-116,136-147,469-471"
+    evidence: "foreach ($root in $projectRoots) { if (Test-Path $root) { $claudeDir = Join-Path $root \".claude\"; if (Test-Path $claudeDir) { return $claudeDir } } }"
+    suggestion: "Najpierw ancestor-walk od CWD; znane rooty tylko jako ostatecznosc i wymagac by .claude nalezal do realnego projektu; wypisac wykryta lokacje + potwierdzenie przed instalacja 'do projektu'."
+    found_in_iteration: 2
+    status: open
+  - id: "M34"
+    severity: major
+    lens: bugs+security+portability
+    item: "usage-pace bramka regresji golden: (a) golden pinowany z PIERWSZEGO uruchomienia na zawsze, NIE inwalidowany gdy cmp wykryje zmiane bazowego wrappera -> legalny update wrappera/niedeterministyczny segment => 'BLAD REGRESJI' -> rollback (ktory wg M15 sam moze paść) -> addon trwale nieinstalowalny; (b) oba node-runy maja '|| true' 2>&1, wiec gdy node nie umie uruchomic .mjs (stary node) golden=tekst bledu == wyjscie po -> cmp PASS 'bajt w bajt' i martwy pasek z komunikatem sukcesu."
+    location: "addons/usage-pace/install.sh:30-49"
+    evidence: "node \"$WRAPPER\" < \"$SAMPLE\" > \"$GOLD.now\" 2>&1 || true ; [ -f \"$GOLD\" ] || cp \"$GOLD.now\" \"$GOLD\""
+    suggestion: "Wymagac rc=0 node'a + sanity (niepusty, bez SyntaxError/ERR_) przed pinowaniem goldena; regenerowac golden gdy pre-patch wrapper sie zmienil (hash); gate node>=18 + node w dependencies.system."
+    found_in_iteration: 2
+    status: open
+  - id: "M35"
+    severity: major
+    lens: bugs
+    item: "clipboard extensions.json: gdy filtr Where-Object usuwa WSZYSTKIE wpisy (user z jedynym rozszerzeniem clipboard) -> AutomationNull -> ConvertTo-Json nic nie emituje -> Set-Content pisze 0-bajtowy plik = uszkodzony JSON dla VS Code. Inny tryb niz M10 (1-element unroll); ten = 0-element null-out."
+    location: "addons/clipboard-workflow-helper/install-extension.ps1:51-57"
+    evidence: "$extJson = $extJson | Where-Object {...} ; $extJson | ConvertTo-Json -Depth 10 | Set-Content"
+    suggestion: "$extJson = @($extJson | Where-Object ...); ConvertTo-Json -AsArray (PS7) lub fallback '[]' gdy count==0."
+    found_in_iteration: 2
+    status: open
+  - id: "M36"
+    severity: major
+    lens: security
+    item: "v2.6 'naprawa uszkodzonej sciezki' robi Remove-Item -Recurse -Force na heurystyce BEZ backupu — kazdy legalny katalog (lub symlink/junction; w WinPS5.1 -Recurse na junction kasuje ZAWARTOSC celu) pod oczekiwana sciezka pliku addonu zostaje skasowany; linia 508 celowo zeruje $existing.Found wiec backup z 518 NIGDY nie obejmie usuwanych danych."
+    location: "install-addons.ps1:501-509"
+    evidence: "if ((Test-Path $expectedFilePath) -and (Test-Path $expectedFilePath -PathType Container)) { Remove-Item -Recurse -Force ... $existing.Found = $false"
+    suggestion: "Rename-Item do *.corrupt-<ts> (kwarantanna); sprawdzac ReparsePoint i nie rekursowac w symlinki; ograniczyc do katalogow pustych/zawierajacych tylko kopie zrodla."
+    found_in_iteration: 2
+    status: open
+  - id: "M37"
+    severity: major
+    lens: security+portability
+    item: "Cale kopiowanie/probing uzywa -Path (interpretacja wildcardow) zamiast -LiteralPath: sciezka klonu/$TargetBase z [ ] (np. 'D:\\Projekty [2026]\\KFG-Addons') -> Test-Path false ('Brak zrodla' dla KAZDEGO targetu), Copy-Item nie trafia -> instalacja degraduje do no-op, a na koncu '[OK] zainstalowany!'."
+    location: "install-addons.ps1:410-416,454-455,503,513,518-526"
+    evidence: "if (-not (Test-Path $sourcePath)) { Write-Warn \"Brak zrodla: $sourcePath\"; continue } ... Copy-Item -Path $sourcePath ..."
+    suggestion: "-LiteralPath we wszystkich Test-Path/Copy-Item/Get-Item/Remove-Item na sciezkach zrodla/celu; wildcard tylko swiadomie w \"$sourcePath*\"."
+    found_in_iteration: 2
+    status: open
+  - id: "M38"
+    severity: major
+    lens: security
+    item: "Bariera przed AV-flagowanym ClipboardListener.exe nie dziala: w WinPS5.1 Copy-Item -Recurse z -Exclude na sciezce katalogowej NIE filtruje dzieci (udokumentowany gotcha) — w scenariuszu, ktory skrypt sam przewiduje (Bitdefender lock), exe trafia mimo wszystko do auto-ladowanego katalogu rozszerzen VS Code."
+    location: "addons/clipboard-workflow-helper/install-extension.ps1:98"
+    evidence: "Copy-Item -Path $extensionSourceDir -Destination $targetDir -Recurse -Force -Exclude \"ClipboardListener.exe\" -ErrorAction Continue"
+    suggestion: "Kopiowac '$extensionSourceDir\\*' (wtedy -Exclude dziala na top-level) lub Get-ChildItem -Recurse | Where Name -ne ... | Copy; po kopii Test-Path + Remove kontrolny."
+    found_in_iteration: 2
+    status: open
+  - id: "M39"
+    severity: major
+    lens: security
+    item: "ccv3 install.ps1 slepo ufa $env:ADDON_DIR bez fallbacku/walidacji (clipboardowy MA fallback na MyInvocation): samodzielnie pada na Join-Path null; przy obcej wartosci env robi Push-Location + npm install w niezamierzonym katalogu — npm install WYKONUJE lifecycle scripts z tamtejszego package.json (egzekucja kodu z lokalizacji ze zmiennej srodowiskowej)."
+    location: "addons/ccv3-structure-check/install.ps1:4-9"
+    evidence: "$hooksDir = Join-Path $env:ADDON_DIR \"hooks\" ... Push-Location $hooksDir ... npm install --silent"
+    suggestion: "Fallback Split-Path $MyInvocation; Test-Path package.json przed npm; rozwazyc --ignore-scripts."
+    found_in_iteration: 2
+    status: open
+  - id: "M40"
+    severity: major
+    lens: bugs+security+portability
+    item: "windows-console-fix patchuje IN-PLACE zrodla auto-wykonywanych hookow (~/.claude/hooks/src) i site-packages llm-tldr przez Get-Content/Set-Content BEZ -Encoding i BEZ backupu: WinPS5.1 (postinstall wola 'powershell' nie pwsh) domyslnie ANSI -> pliki UTF-8-bez-BOM z polskimi znakami/emoji przechodza stratny round-trip (mojibake), a npm run build zapieka uszkodzenie w dist/ wykonywanym przez CC."
+    location: "addons/windows-console-fix/patch-all.ps1:36,56,98,139"
+    evidence: "$content = Get-Content $startupFile -Raw ... Set-Content $startupFile -Value $content -NoNewline (brak -Encoding, brak .bak)"
+    suggestion: "[IO.File]::ReadAllText/WriteAllText z UTF8Encoding($false) (wzorzec z install-theme.ps1:89); backup *.bak-<ts> przed zapisem."
+    found_in_iteration: 2
+    status: open
+  - id: "M41"
+    severity: major
+    lens: portability
+    item: "ssot-dry-audit: platform 'any' obiecuje Windows, ale sciezka instalacyjna na Windows nie istnieje — postinstall wylacznie bashowy (brak .ps1), a pod Git Bash wymaga binarki 'python3' ktorej na Windows zwykle brak (jest python/py). Targets laduja przez main installer, ale gate 3.10+, smoke test helpera i czyszczenie legacy komend NIGDY sie nie wykonuja — instalacja 'na slowo honoru' wbrew 'any'."
+    location: "addons/ssot-dry-audit/install.sh:1-2,17-23 + addon.json"
+    evidence: "naglowek: '# ssot-dry-audit installer (Termux + generic Linux/macOS).' bez Windows; addon.json 'platform': 'any'"
+    suggestion: "Albo zawezic platform do termux+linux+macos, albo dodac install.ps1 (probe py/python/python3, smoke, cleanup) + postinstall per-platforma."
+    found_in_iteration: 2
+    status: open
+  - id: "M42"
+    severity: major
+    lens: portability
+    item: "Swiezy Windows (brak ~/.claude/settings.json): ZADEN PS-owy patcher go nie tworzy — sound-notification exit 1, patch-statusline ciche return, Ensure-SettingsEnv Write-Warn+return; bashowy czytaj ten edge rozwiazuje (echo '{}' > settings.json). Asymetria platform: na swiezym Windows '-All' konczy 'Wszystkie zainstalowane!' z ZEROMA hookami/statusline, bez sciezki naprawy."
+    location: "addons/sound-notification/patch-settings.ps1:16-19; addons/statusline-advanced/patch-statusline.ps1:5-8; install-addons.ps1:226-229 (kontrast czytaj/install.sh:119-123)"
+    evidence: "patch-settings: 'if (-not (Test-Path $SettingsPath)) { ... exit 1 }' vs czytaj: 'else echo '{}' > \"$SETTINGS\"'"
+    suggestion: "Ujednolicic do wzorca czytaj: gdy brak settings.json -> mkdir -p ~/.claude + '{}' i kontynuowac; usunac falszywa porade o auto-tworzeniu przez CC."
+    found_in_iteration: 2
+    status: open
+  - id: "M43"
+    severity: major
+    lens: portability
+    item: "Desktop Linux (twarde wymaganie usera) pod pwsh: przepisywanie targetow hardcoduje separator '\\' — '~/' -> '$TargetBase\\', wiec nawet z poprawnym -TargetBase Linux dostaje '/home/user\\.claude\\skills\\eos'; backslash to na Linuksie znak W NAZWIE pliku, New-Item tworzy smieci, Ensure-SettingsEnv szuka '.claude\\settings.json' ktorego nie znajdzie. Mechanizm INNY niz C2 (tam USERPROFILE null/brak pwsh w Termux) — tu pwsh jest, a layout i tak zly."
+    location: "install-addons.ps1:482-483,492-493,224"
+    evidence: "$targetPath = $targetValue -replace \"~/\", \"$TargetBase\\\\\" ; Join-Path $TargetBase \".claude\\settings.json\""
+    suggestion: "Sciezki wylacznie Join-Path/[IO.Path]::Combine (separator per-platforma), nie konkatenacja z '\\'."
+    found_in_iteration: 2
+    status: open
+  - id: "M44"
+    severity: major
+    lens: duplicates
+    item: "Konflikt celu miedzy addonami: ~/.claude/statusline-wrapper.mjs pisany przez DWA addony roznymi wersjami — statusline-advanced (target) instaluje bazowy wrapper, usage-pace (install.sh) podmienia na wariant z segmentem pace; reinstall/update statusline-advanced (nowszy mtime po git pull lub -Force) po cichu cofa usage-pace; kolejnosc w -All decyduje o wyniku."
+    location: "addons/statusline-advanced/addon.json + addons/usage-pace/install.sh:11,42"
+    evidence: "statusline-advanced: '\"files/.claude/statusline-wrapper.mjs\": \"~/.claude/\"' ; usage-pace: cp \"$NEW_WRAPPER\" \"$WRAPPER\""
+    suggestion: "Jeden wlasciciel pliku: usage-pace patchuje przez punkt rozszerzenia (wrapper czyta opcjonalny segment z ~/.claude/usage/) albo statusline-advanced wykrywa marker usage-pace i odmawia nadpisania bez -Force."
+    found_in_iteration: 2
+    status: open
+  - id: "M45"
+    severity: major
+    lens: duplicates
+    item: "Konflikt celu: ~/.claude/skills/skill-rules.json — ccv3-polish-translation nadpisuje HURTOWO statyczna kopia (70 skilli, ZERO petla/session-init/petla-noc), a autoinit-skills deklaruje rejestracje tych 3 skilli w tym samym pliku (postInstall.skillRules); -All instaluje autoinit przed ccv3-polish (alfabetycznie) -> definicje petla/* przegrywaja. Dwa konkurencyjne SSOT jednego pliku."
+    location: "addons/ccv3-polish-translation/addon.json + addons/autoinit-skills/addon.json"
+    evidence: "ccv3-polish: '\"files/skills/skill-rules.json\": \"~/.claude/skills/skill-rules.json\"' + notes 'Nadpisuje'; autoinit: postInstall.skillRules { petla, session-init, petla-noc }"
+    suggestion: "skill-rules.json jak settings.json: merge-patch zamiast wholesale; definicje petla/* w jednym miejscu; minimum: dodac wpisy do pliku ccv3-polish + ostrzezenie w notes."
+    found_in_iteration: 2
+    status: open
+  - id: "M46"
+    severity: major
+    lens: duplicates
+    item: "Strukturalny wzorzec podwojnego manifestu: 3 addony (czytaj, ssot-dry-audit, usage-pace) deklaruja kopiowanie w addon.json targets I powtarzaja te same kopie we wlasnym install.sh — dwie definicje 'co i dokad', juz rozbiezne w ssot (targets caly katalog vs install.sh 2 pliki) i czytaj (= C3)."
+    location: "addons/ssot-dry-audit/addon.json + install.sh:53-67; addons/usage-pace/addon.json + install.sh:39-42"
+    evidence: "ssot addon.json caly katalog skills/ vs install.sh atomic_install 3 imienne pliki"
+    suggestion: "Jeden wlasciciel kopiowania per addon (platform=termux -> install.sh, targets oproznic/oznaczyc) lub generowac install.sh z targets; minimum kontrakt-komentarz 'lista MUSI odpowiadac addon.json targets'."
+    found_in_iteration: 2
+    status: open
+  - id: "M47"
+    severity: major
+    lens: duplicates
+    item: "install-addons.ps1 wewnatrzplikowy near-dup: blok ekspansji tyldy + v2.6 parent-fix powtorzony identycznie w 2 galeziach Install-Addon (claude-target-nieistniejacy / nie-claude-target), para regexow tilde/claude-path zduplikowana miedzy Get-TargetRelativePath a detekcja isClaudeTarget — shotgun surgery (fix v2.6 = C1 wklejony 2x, wiec poprawka C1 tez musi byc 2x)."
+    location: "install-addons.ps1:482-487 + 492-496 (regex :203-204 + :421)"
+    evidence: "linie 482-487 == 492-496 (ten sam -replace ~/ + Split-Path -Parent)"
+    suggestion: "Helper Expand-TargetPath([TargetValue],[IsSourceFile]) w obu galeziach + wspoldzielony $ClaudeTildePattern."
+    found_in_iteration: 2
+    status: open
+  - id: "M48"
+    severity: major
+    lens: bugs
+    item: "usage-pace install.sh: AUTO-RESTORE przy regresji odwoluje sie do nieistniejacego backupu. Przy reinstalu cmp (linia 24) matchuje (wrapper juz == NEW), wiec bak-$STAMP na dzis NIE powstaje; gdy regresja potem fail, galaz '[BLAD REGRESJI — przywracam backup!]' robi 'cp ...bak-$STAMP $WRAPPER' (linia 52) na NIEISTNIEJACYM pliku -> pod set -eu skrypt pada w polowie recovery, wrapper zostaje zepsuty i NIEPRZYWROCONY. Siatka bezpieczenstwa zawodzi dokladnie gdy potrzebna. Inny defekt niz M15 (rollback.sh) i M34 (vacuous golden)."
+    location: "addons/usage-pace/install.sh:24,51-53"
+    evidence: "else echo \"BLAD REGRESJI — przywracam backup!\" ; cp \"$CLAUDE_DIR/statusline-wrapper.mjs.bak-$STAMP\" \"$WRAPPER\" ; exit 1"
+    suggestion: "Guard restore: cp tylko gdy bak istnieje, inaczej z $USAGE_DIR/backup-$STAMP/...orig lub $NEW_WRAPPER; albo backup bezwarunkowo przed swapem; dodac '|| { echo brak-backupu; exit 1; }'."
+    found_in_iteration: 3
+    status: open
+  - id: "M49"
+    severity: major
+    lens: bugs
+    item: "pace.sh: cooldown powiadomienia commitowany PRZED potwierdzeniem dostarczenia. Python pisze cache['last_notification_epoch']=now + atomic_write_json w momencie DRUKOWANIA 'NOTIFY', zanim bashowy send_notification faktycznie wysle. Gdy send padnie (log NOTIFY-FAILED), cooldown juz zapisany -> nastepny scheduled run w oknie NOTIFY_COOLDOWN_H (6h) STLUMI retry — user cicho traci alert o niskim tempie. Write-before-confirm."
+    location: "addons/usage-pace/files/usage/pace.sh (blok NOTIFY python ~360-368 + bash send ~405-412)"
+    evidence: "python: print('NOTIFY...'); cache['last_notification_epoch']=now ; atomic_write_json(...) — bash: if send_notification ...; else log 'NOTIFY-FAILED' (bez rollbacku cooldownu)"
+    suggestion: "Persistowac last_notification_epoch dopiero PO sukcesie bashowego send (bash zapisuje zwrotnie), albo przy NOTIFY-FAILED czyscic wlasnie zapisany timestamp."
+    found_in_iteration: 3
+    status: open
+  - id: "M50"
+    severity: major
+    lens: bugs
+    item: "pace.sh NOTIFY jest mode-agnostic (odpala przy LOW && CAN_NOTIFY && cooldown, TAKZE --compute-only), a pasek spawnuje 'pace.sh --compute-only' detached przy KAZDYM odswiezeniu (statusline-wrapper.usage-pace.mjs:186). Na pasku po stronie natywnego Termuxa (HOME pod /data/data/com.termux -> CAN_NOTIFY=1) pasek moze emitowac duplikat powiadomienia scigajacy scheduled job i wypalac jedyny slot cooldownu przez sciezke compute-only. Dzis maskowane bo pasek zwykle w proot (HOME=/root blokuje notify) — INFERRED."
+    location: "addons/usage-pace/files/usage/pace.sh (brama NOTIFY bez MODE check) + statusline-wrapper.usage-pace.mjs:186"
+    evidence: "wrapper: spawn('bash',[paceSh,'--compute-only'],{detached:true}).unref() ; pace.sh: if status=='LOW' and CAN_NOTIFY and cooldown (bez MODE=='--scheduled')"
+    suggestion: "Ograniczyc emisje NOTIFY do MODE=='--scheduled'; sciezka compute-only paska liczy+cache'uje tylko."
+    found_in_iteration: 3
+    status: open
+  - id: "M51"
+    severity: major
+    lens: security
+    item: "czytaj setup-shizuku.sh patchuje wyekstrahowany rish-wrapper przez Python string-replace (open(p,'w').write(s)) ale NIGDY nie weryfikuje ze .replace() trafil kotwice. Gdy Shizuku dostarczy inny tekst wrappera (version drift), kazdy replace to cichy no-op, write sie udaje, a NIESPATCHOWANY/czesciowo spatchowany wrapper i tak jest chmod 755 + symlinkowany w PATH jako 'rish' i ufany przez _speak.py do uruchamiania komend shell-uid (uid=2000). Brak bramki integralnosci na uprzywilejowanym relayu ktory wlasnie wyprodukowal."
+    location: "addons/czytaj/files/hooks/czytaj/setup-shizuku.sh:57-97"
+    evidence: "s = s.replace('''...exit 1...''', '''# PRoot fake-root fix...''') ; open(p,\"w\").write(s) ; ln -sf rish-wrapper.sh $RISH_BIN"
+    suggestion: "Po replace asercja obecnosci sentinela 'PRoot fake-root fix (czytaj)' przed write; brak -> abort 'rish wrapper layout zmieniony — odmawiam patcha/symlinku'."
+    found_in_iteration: 3
+    status: open
+  - id: "M52"
+    severity: major
+    lens: security
+    item: "Path traversal przez KLUCZ 'targets' w addon.json (strona zrodlowa/read) — kanal ODMIENNY od M20 (target VALUE/dest). $sourcePath = Join-Path $Addon.Path $target.Name uzywa surowego klucza bez kanonikalizacji/kontroli zawierania w $Addon.Path; klucz '../../../<plik>' rozwiazuje sie i kopiuje plik spoza sandboxa addonu. Split-Path -Leaf sanityzuje tylko pochodny relativePath, nie $sourcePath."
+    location: "install-addons.ps1:407"
+    evidence: "$sourcePath = Join-Path $Addon.Path $target.Name  # $target.Name = klucz targets z addon.json"
+    suggestion: "Kanonikalizowac $sourcePath ([IO.Path]::GetFullPath) i weryfikowac ze jest potomkiem $Addon.Path przed Test-Path/Copy-Item; reject kluczy z '..' lub absolutnych."
+    found_in_iteration: 3
+    status: open
+  - id: "M53"
+    severity: major
+    lens: duplicates
+    item: "statusline-wrapper.mjs to 226-z-227-liniowy near-exact SOURCE FORK miedzy dwoma addonami. usage-pace/files/statusline-wrapper.usage-pace.mjs (294 linii) ma pierwsze 226 linii BAJT W BAJT identyczne ze statusline-advanced/files/.claude/statusline-wrapper.mjs (ten sam header v8.1, MODEL_EFFORT_REGEX, logika ctx/effort/changed-files); jedyna roznica to dodany import fs + ~67-liniowy segment usage-pace. usage-pace/install.sh:42 'cp' nadpisuje plik statusline-advanced tym forkiem -> kazda poprawka 226 linii statusline-advanced jest cicho cofana przy nast. uruchomieniu usage-pace. Dryf JUZ widoczny: oba wrappery v8.1, a statusline-advanced/addon.json = 8.3.0. ODMIENNE od M44 (M44 = kolizja zapisu runtime; to = zduplikowane 226-liniowe ZRODLO = fork utrzymaniowy)."
+    location: "addons/usage-pace/files/statusline-wrapper.usage-pace.mjs:1-227 (dup addons/statusline-advanced/files/.claude/statusline-wrapper.mjs:1-227); overwrite usage-pace/install.sh:42"
+    evidence: "comm: 226 linii wspolnych, 1 SA-only, 68 UP-only; jedyna rozna wspolna linia: import (UP dodaje writeFileSync,renameSync)"
+    suggestion: "Zlikwidowac fork: usage-pace AUGMENTUJE istniejacy wrapper przy instalacji (inject segmentu / wspolny modul), nie ship+overwrite kopii; minimum: sync-check w install.sh ktory abortuje gdy baza rozjechala sie z oczekiwana."
+    found_in_iteration: 3
+    status: open
+  - id: "M54"
+    severity: major
+    lens: portability
+    item: "safe-permissions postinstall robi SELF-RECURSIVE WinPS spawn do sciezki $env:USERPROFILE. Na desktop Linux/macOS pwsh (deklarowanym-wspieranym, bo brak platform-gate — M3), Invoke-Expression odpala 'powershell -ExecutionPolicy Bypass -File \"$env:USERPROFILE/.claude/scripts/install-safe-permissions.ps1\"': (a) $env:USERPROFILE null -> sciezka zwija sie do root-absolutnej '/.claude/scripts/...' (plik skopiowany do $HOME/.claude, nie /), (b) literal 'powershell' nie istnieje na Linux/macOS (jest 'pwsh'). Oba fail; postinstall to krok wirujacy ochrone cc/ccd -> rdzen addonu nigdy sie nie instaluje. Inny niz M2 (.sh) — to .ps1 postinstall wolajacy drugi WinPS na sciezce ktora rozwiazuje sie tylko na Windows."
+    location: "addons/safe-permissions/addon.json:16"
+    evidence: "\"postinstall\": \"powershell -ExecutionPolicy Bypass -File \\\"$env:USERPROFILE/.claude/scripts/install-safe-permissions.ps1\\\"\""
+    suggestion: "Gate per platforma; na non-Windows skip lub 'pwsh'; budowac sciezke z faktycznego targetu ($HOME/.claude/scripts) zamiast $env:USERPROFILE by null nie dawal root-path."
+    found_in_iteration: 3
+    status: open
+  - id: "M55"
+    severity: major
+    lens: portability
+    item: "statusline-advanced rejestruje 'node ...mjs' dla statusLine + 2 hookow, ale postinstall (patch-statusline.ps1) NIGDY nie sprawdza ze node istnieje, a jedyny check node jest w petli zaleznosci install-addons.ps1 omijanej gdy addon idzie wlasna sciezka postinstall. Na swiezym Windows bez Node settings.json zostaje zmutowany by wolac 'node' przy KAZDYM renderze paska i PostToolUse/UserPromptSubmit przy kazdej edycji -> trwale porazki spawn, zepsuty pasek. Off-Windows ten patch w ogole sie nie odpala (WinPS-only) -> deklarowany 'Node.js statusline' nie ma sciezki instalacji poza Windows."
+    location: "addons/statusline-advanced/patch-statusline.ps1:16,26,64"
+    evidence: "$newCmd = \"node $userHome/.claude/statusline-wrapper.mjs\" ; $trackCmd = \"node $userHome/.claude/hooks/dist/track-changed-files.mjs\""
+    suggestion: "Probe Get-Command node przed zapisem komend statusLine/hookow; brak -> warn + skip rejestracji zamiast wirowania komendy ktora pada przy kazdym zdarzeniu."
+    found_in_iteration: 3
+    status: open
+
+iterations:
+  - number: 1
+    timestamp: "2026-06-10T21:55:00+02:00"
+    new_issues_found: 28
+    new_cm_found: 28
+    consensus: dirty
+    verdicts:
+      - {lens: bugs, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: security, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: duplicates, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: portability, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: style, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+    cross_lens_dedup_notes: "Scalono po root cause: B-maj-15 -> C2 (USERPROFILE); B-maj-2+P-maj-2+St-maj-6 -> M2 (token $ADDON_DIR); B-maj-3+P-maj-1 -> M3 (platform ignorowany); B-maj-4+D-maj-3+P-maj-5+St-maj-1 -> M4 (postInstall doc-drift); B-maj-9+D-maj-2 -> M11 (BOM); D-maj-4+St-maj-4+P-maj-4 -> M22 (README)."
+    minor_families:
+      - {lens: bugs, pattern: "ConvertTo-Json -Depth 10 cicho obcina glebsze struktury przy RMW settings", count: 4, example: "install-addons.ps1:259"}
+      - {lens: bugs, pattern: "single-element array unroll (Get-Addons 1 addon -> hashtable; Where-Object 1 wynik -> obiekt)", count: 2, example: "install-addons.ps1:297"}
+      - {lens: bugs, pattern: "higiena backupow (akumulacja bez limitu czytaj; kolizje stempla dziennego; brak backupu przed chirurgia regex/JSON)", count: 4, example: "addons/czytaj/install.sh:120"}
+      - {lens: bugs, pattern: "kruchosc literal-string patchy na CRLF/whitespace -> silent [SKIP]", count: 2, example: "addons/windows-console-fix/patch-all.ps1:41-42"}
+      - {lens: bugs, pattern: "interaktywne prompty blokuja unattended (Read-Host, ReadKey rzuca w non-interactive)", count: 3, example: "install-addons.ps1:374,659"}
+      - {lens: bugs, pattern: "czytaj: DST nie czyszczone mimo komentarza o snapshocie; brakujace zrodla cicho pomijane; malformed settings -> skeleton (z backupem)", count: 3, example: "addons/czytaj/install.sh:80-90"}
+      - {lens: bugs, pattern: "brak lockingu na rownolegly RMW settings.json (zywa sesja CC moze zgubic patch)", count: 4, example: "addons/sound-notification/patch-settings.ps1:23-89"}
+      - {lens: bugs, pattern: "ccv3 install.ps1 bez fallbacku ADDON_DIR + npm stderr w 2>$null", count: 2, example: "addons/ccv3-structure-check/install.ps1:4,9"}
+      - {lens: bugs, pattern: "set-windows-accent: ten sam BGR DWord do AccentColor i ColorizationColor (ARGB?) — INFERRED, kosmetyka", count: 1, example: "addons/terminal-theme/set-windows-accent.ps1:26"}
+      - {lens: bugs, pattern: "stray pipeline output (return $true drukowane jako 'True'); hardcoded wersja w nazwie katalogu", count: 2, example: "install-addons.ps1:603"}
+      - {lens: security, pattern: "backupy settings.json (chmod 600 zywy) kopiowane z domyslnym umask — permission downgrade", count: 2, example: "addons/czytaj/install.sh:120"}
+      - {lens: security, pattern: "ExecutionPolicy Bypass w README + kazdym postinstall .ps1", count: 6, example: "README.md:10"}
+      - {lens: security, pattern: "niequotowany $ADDON_DIR w bashowych postinstall stringach (spacje w sciezce klonu)", count: 3, example: "addons/czytaj/addon.json"}
+      - {lens: security, pattern: "Copy-Item -Recurse -Force do $HOME bez symlink-guard (czytaj uzywa cp -P, PS installer nie)", count: 1, example: "install-addons.ps1:528"}
+      - {lens: security, pattern: "niepodpisany .exe w repo kopiowany bez checksumy (ClipboardToFile.exe; sibling byl AV-flagged)", count: 1, example: "addons/clipboard-workflow-helper/install-extension.ps1:98"}
+      - {lens: duplicates, pattern: "ASCII banner box duplikowany", count: 8, example: "install-addons.ps1:62"}
+      - {lens: duplicates, pattern: "string 'powershell -ExecutionPolicy Bypass -File %ADDON_DIR%...' powtarzany per addon.json", count: 7, example: "addons/sound-notification/addon.json:11"}
+      - {lens: duplicates, pattern: "wersje literalne zduplikowane/dryfujace (clipboard 1.2.0 x3 + banner v1.2; statusline v8.1 vs 8.3.0)", count: 6, example: "addons/clipboard-workflow-helper/install-extension.ps1:77"}
+      - {lens: duplicates, pattern: "bash dependency-probe snippet reimplementowany per .sh", count: 3, example: "czytaj:33 vs ssot:17 vs usage-pace:17"}
+      - {lens: duplicates, pattern: "literaly USERPROFILE\\.claude / $HOME/.claude powtorzone 16x (root cause = M24)", count: 16, example: "windows-console-fix/patch-all.ps1:153"}
+      - {lens: duplicates, pattern: "zoo formatow backup-suffix (4 schematy)", count: 4, example: "install-addons.ps1:519 vs ssot:44"}
+      - {lens: duplicates, pattern: "WriteAllText+UTF8Encoding(false) snippet powtarzany (1 wywolanie bez arg encoding)", count: 6, example: "terminal-theme:89 vs statusline:103"}
+      - {lens: duplicates, pattern: "intra-file near-dup: statusline patch 2x ~30 linii (track vs clear) parametryzowalne", count: 2, example: "patch-statusline.ps1:30-61 vs 67-97"}
+      - {lens: portability, pattern: "hardcoded windowsowe project-rooty w Find-ProjectClaudeDir (martwe na innej maszynie)", count: 3, example: "install-addons.ps1:92 'D:\\Projekty DELL KG'"}
+      - {lens: portability, pattern: "exec-bit zgubiony w gicie: usage-pace/install.sh 100644 (siblings 100755)", count: 1, example: "git ls-files -s addons/usage-pace/install.sh"}
+      - {lens: portability, pattern: "Termux-hardcoded shebang czyni graceful-refusal czytaja nieosiagalnym na desktop Linux przy bezposrednim exec", count: 1, example: "addons/czytaj/install.sh:1"}
+      - {lens: portability, pattern: "brak .gitattributes '*.sh text eol=lf' (dzis LF/no-BOM, klon Windows z autocrlf moze zCRLFowac)", count: 1, example: "repo root"}
+      - {lens: portability, pattern: "narzedzia zakladane bez probe: pip, winget, npm, cmp", count: 4, example: "install-addons.ps1:342"}
+      - {lens: portability, pattern: "PS-edition: System.Web.Extensions tylko WinPS5.1; literal 'powershell' nigdy 'pwsh' w postinstallach", count: 2, example: "addons/sound-notification/patch-settings.ps1:32"}
+      - {lens: portability, pattern: "Ensure-SettingsEnv BOM (= M11, echo rodziny)", count: 1, example: "install-addons.ps1:259"}
+      - {lens: style, pattern: "dialekty tagow statusu ([OK]/[!]/[X]/[~] vs [WARN]/[ERROR] vs OK:/BLAD: vs [--])", count: 5, example: "patch-all.ps1:16 vs install-addons.ps1:71"}
+      - {lens: style, pattern: "konwencja PL/EN komunikatow lamana/mieszana in-file; diakrytyki niespojne", count: 4, example: "patch-statusline.ps1:58 (EN) vs :60 (PL)"}
+      - {lens: style, pattern: "Write-* helpery re-deklarowane z rozbieznymi podzbiorami; omijane dla bledow", count: 8, example: "sound-notification:93 inline '[X]' mimo helperow"}
+      - {lens: style, pattern: "backup naming/practice 4 schematy + 3 patchery bez backupu", count: 7, example: "czytaj:120"}
+      - {lens: style, pattern: "version-drift naglowki/banery vs zrodlo prawdy", count: 4, example: "install-addons.ps1:2 'v2.3' vs :52 '2.6.0'"}
+      - {lens: style, pattern: "prologi bash niespojne (set -e vs -euo pipefail vs -eu; shebangi rozne)", count: 3, example: "czytaj:1,6 vs ssot:1,5"}
+      - {lens: style, pattern: "style promptow Y/N ([T/n] vs [t/N] vs (t/n))", count: 3, example: "patch-all.ps1:18"}
+      - {lens: style, pattern: "TODO bez ticketu", count: 1, example: "addons/czytaj/install.sh:18"}
+      - {lens: style, pattern: "martwa zmienna lokalna ($hasKmylpenter)", count: 1, example: "install-theme.ps1:177"}
+      - {lens: style, pattern: "naruszenie konwencji trailing-slash w targets (funkcjonalny skutek = M18)", count: 1, example: "addons/todo/addon.json"}
+  - number: 2
+    timestamp: "2026-06-10T22:05:00+02:00"
+    new_issues_found: 23
+    new_cm_found: 23
+    consensus: dirty
+    angle: "leaf modules / error paths / edge cases; exclude 28 znanych"
+    verdicts:
+      - {lens: bugs, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: security, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: duplicates, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: portability, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: style, status: issues_found, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+    cross_lens_dedup_notes: "C3 (czytaj missing files) = duplicates; potwierdzony grepem referencji. C4 (usage-pace bind-mount) = portability. M29 pip = bugs+security scalone. M33 Find-Project = bugs+security. M34 golden = bugs+security+portability scalone. M37 LiteralPath = security+portability. M40 ANSI = bugs+security+portability. Style iter2 = w wiekszosci re-find M4/M22 + nowe rodziny minorow (notes/author/metadata)."
+    minor_families:
+      - {lens: bugs, pattern: "valid-JSON wrong-shape crashuje patcher settings (czytaj heredoc zaklada dict-of-lists; hooks-as-list/entry-as-string -> AttributeError, set -e abort po kopii plikow)", count: 1, example: "addons/czytaj/install.sh:137-149"}
+      - {lens: bugs, pattern: "Set-Content bez -Encoding re-enkoduje patchowane zrodla na ANSI (PS5) — mojibake (= rodzina M40 dla patch-all)", count: 2, example: "addons/windows-console-fix/patch-all.ps1:56,139"}
+      - {lens: bugs, pattern: "secondary error maskuje primary: Push-Location rzuca (brak hooksDir/ADDON_DIR), finally Pop-Location bledzi na pustym stosie", count: 1, example: "addons/ccv3-structure-check/install.ps1:7,17-19"}
+      - {lens: bugs, pattern: "stray artefakty: ssot atomic_install zostawia $dst.tmp przy przerwaniu; usage-pace akumuluje $GOLD.now/$GOLD.po", count: 2, example: "addons/ssot-dry-audit/install.sh:47-48"}
+      - {lens: bugs, pattern: "manifest shape unvalidated: targets jako string -> PSObject enumeruje Length/Chars pseudo-targety; brak name/displayName -> puste etykiety", count: 1, example: "install-addons.ps1:406-411"}
+      - {lens: bugs, pattern: "$env:ADDON_DIR czyszczony przez $null assignment (usuwa pre-istniejacy user env zamiast restore)", count: 1, example: "install-addons.ps1:547,555"}
+      - {lens: bugs, pattern: "statusline clear-changed-files dopisywany do PIERWSZEGO istniejacego wpisu UserPromptSubmit niezaleznie od wlasciciela (dziedziczy jego matcher)", count: 1, example: "addons/statusline-advanced/patch-statusline.ps1:78-87"}
+      - {lens: security, pattern: "-replace z interpolowanym replacement ($TargetBase/$Addon.Path): tokeny $&/$1 w sciezce Windows korumpuja wynik", count: 3, example: "install-addons.ps1:482-483,548"}
+      - {lens: security, pattern: "idempotencja przez -match po CALYM pliku (string-sniff) -> false-positive skip gdy fraza w innym polu (permissions.deny)", count: 2, example: "addons/sound-notification/patch-settings.ps1:26"}
+      - {lens: security, pattern: "HOME interpolowany w inline 'python -c' zrodlo (apostrof/backslash w $HOME lamie/wstrzykuje; czytaj robi to dobrze quoted-heredoc+argv)", count: 1, example: "addons/ssot-dry-audit/install.sh:78-91"}
+      - {lens: security, pattern: "pip install $Package bez '--' separatora -> nazwa pakietu z '-' dziala jak opcja pip", count: 1, example: "install-addons.ps1:342"}
+      - {lens: portability, pattern: "lokalizacje VS Code tylko windowsowe (APPDATA/USERPROFILE); ~/.config/Code i ~/.vscode nigdy nieprobowane", count: 2, example: "addons/terminal-theme/install-theme.ps1:128-131"}
+      - {lens: portability, pattern: "komendy hookow zapisywane w settings.json w skladni jednej platformy (%USERPROFILE%+'powershell' vs 'bash $HOME') -> przy sync/bind martwy szum obcej platformy", count: 2, example: "addons/sound-notification/patch-settings.ps1:42"}
+      - {lens: style, pattern: "notes field dual-purpose: changelog dump vs user-hint vs brak (x2); installer drukuje wszystko jako 'Uwagi:'", count: 5, example: "addons/statusline-advanced/addon.json"}
+      - {lens: style, pattern: "addon.json metadata zoo: description EN x2 vs PL x15; trailing-period x3; author 'KFG' x9 vs 'kmylpenter' x7 vs brak x1", count: 6, example: "addons/ccv3-structure-check/addon.json:5"}
+      - {lens: style, pattern: "magic numbers inline bez stalej: -Depth 10 x5; MaxJsonLength 10MB; hook timeout 2/3/5/10 rozne per addon; hardcoded indent literals", count: 13, example: "install-addons.ps1:259"}
+      - {lens: style, pattern: "PS naming: unapproved verb Ensure-SettingsEnv; plural Get-Addons; param $Addon (hashtable) shadowuje script param [string]$Addon", count: 3, example: "install-addons.ps1:212"}
+      - {lens: style, pattern: "kryptyczne audit-ID komentarze (F32/F50/F49/F21) bez wskaznika do YAML", count: 4, example: "addons/czytaj/install.sh:103"}
+
+  - number: 3
+    timestamp: "2026-06-10T22:40:00+02:00"
+    new_issues_found: 9
+    new_cm_found: 9
+    new_critical_found: 0
+    consensus: dirty
+    angle: "adversarial / leaf — sciezki bledu usage-pace .sh, integralnosc rish, traversal przez klucz targets, cross-addon forki; exclude 51"
+    discovery_rate_vs_prev: 0.39
+    verdicts:
+      - {lens: bugs, status: issues_found, new_majors: 3, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/usage-pace/files/usage/pace.sh","/root/projekty/KFG-Addons/addons/usage-pace/files/statusline-wrapper.usage-pace.mjs","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1"]}
+      - {lens: security, status: issues_found, new_majors: 2, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/setup-shizuku.sh","/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/setup-adb-pairing.sh","/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/_speak.py","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1"]}
+      - {lens: duplicates, status: issues_found, new_majors: 1, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/files/.claude/statusline-wrapper.mjs","/root/projekty/KFG-Addons/addons/usage-pace/files/statusline-wrapper.usage-pace.mjs","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: portability, status: issues_found, new_majors: 3, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/safe-permissions/addon.json","/root/projekty/KFG-Addons/addons/safe-permissions/files/.claude/scripts/install-safe-permissions.ps1","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+      - {lens: style, status: no_issues, deduped_all: true, files_examined: ["/root/projekty/KFG-Addons/install-addons.ps1","/root/projekty/KFG-Addons/addons/ccv3-structure-check/install.ps1","/root/projekty/KFG-Addons/addons/clipboard-workflow-helper/install-extension.ps1","/root/projekty/KFG-Addons/addons/czytaj/install.sh","/root/projekty/KFG-Addons/addons/sound-notification/patch-settings.ps1","/root/projekty/KFG-Addons/addons/ssot-dry-audit/install.sh","/root/projekty/KFG-Addons/addons/statusline-advanced/patch-statusline.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/install-theme.ps1","/root/projekty/KFG-Addons/addons/terminal-theme/set-windows-accent.ps1","/root/projekty/KFG-Addons/addons/usage-pace/install.sh","/root/projekty/KFG-Addons/addons/windows-console-fix/patch-all.ps1","/root/projekty/KFG-Addons/ADDON-DEVELOPMENT.md","/root/projekty/KFG-Addons/README.md"]}
+    cross_lens_dedup_notes: "M48 (in-install restore) odrozniony od M15/M34. M52 (targets KEY traversal) odrozniony od M20 (dest VALUE). M53 (wrapper SOURCE fork) odrozniony od M44 (write collision). Portability 'VSCode JSONC corruption' = DUP M13 (zwiniety, nie itemizowany ponownie). M55 statusline node-probe odrozniony od C2 (C2=brak Termux path; M55=brak probe node na Windows). Style: ZERO nowych (DEDUPED_ALL=true) — lens wyczerpany."
+    minor_families:
+      - {lens: bugs, pattern: "run-pace-tests.sh hardcoduje PACE=/root/.claude/usage/pace.sh — harness testuje tylko strone proot, nigdy sciezki Termux", count: 1, example: "addons/usage-pace/files/usage/run-pace-tests.sh:4"}
+      - {lens: security, pattern: "unquoted glob w chmod nad katalogiem instalacyjnym (word-splitting nieszkodliwy na znanych nazwach, bledy polkniete || true)", count: 2, example: "addons/czytaj/install.sh:92-93"}
+      - {lens: portability, pattern: "Set-Content -NoNewline pisze UTF-8 BOM do zrodel .ts/.py potem npm build (PS5.1; rodzina M40)", count: 1, example: "addons/windows-console-fix/patch-all.ps1:56"}
+      - {lens: portability, pattern: "$HOME z apostrofem w inline 'python3 -c' zrodle (ssot smoke; macOS O'Brien -> SyntaxError -> false 'smoke failed')", count: 1, example: "addons/ssot-dry-audit/install.sh:80-82"}
+      - {lens: portability, pattern: "PL diakrytyki Write-Host z .ps1 na konsoli Windows CP852/CP1250 bez [Console]::OutputEncoding guard -> mojibake", count: 8, example: "addons/terminal-theme/set-windows-accent.ps1"}
+
+summary:
+  total: 59
+  critical: 4
+  major: 55
+  minor: 0
+  exit_status: completed_judgment_stop
+  confidence:
+    critical_set: "HIGH — 3 iteracje, 0 nowych krytycznych w iter3, zestaw {C1,C2,C3,C4} stabilny i wzajemnie potwierdzony przez lensy"
+    major_set: "MEDIUM — kompletny i reprezentatywny, ale ogon majorow NIE wyczerpany (iter3 wciaz +9, rate 0.39 malejaca); 1-2 kolejne iteracje doszlyby do converged_cm"
+    minor_set: "AGREGOWANY (profile standard/floor major) — w iterations[].minor_families, NIE itemizowany"
+  note: "3 iteracje, cross-lens dedup. NIE pelna formalna konwergencja (converged_cm wymaga 2x new_cm==0); stop decyzyjny bo krytyczne zbiezne + majory malejace + endgame limitow tygodniowych usera. Wszystkie issues status=open (to AUDIT — naprawa = osobny /petla solve)."
+  verdict_dla_usera: "Instalator NIE spelnia twardego wymagania cross-platform (Termux+desktop): C2 (zero sciezki Termux dla glownego instalatora + 15/18 addonow), C4 (usage-pace ukryty bind-mount), liczne portability-majory (M41 ssot, M42 swiezy Windows, M43 pwsh Linux, M54 safe-permissions, M55 node). Plus systemowe: C1/M-rodzina (kontrakt addon.json doc-vs-kod), bezpieczenstwo (M19 iex bez bramki, M20/M52 traversal, M36 destrukcyjny cleanup), niezawodnosc (cicha utrata danych w patcherach settings.json: M8/M30/M31, brak izolacji bledow M28)."
