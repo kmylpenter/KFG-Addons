@@ -6,8 +6,14 @@
   "author": "KFG",
   "platform": "termux+proot",
   "dependencies": {
-    "system": ["termux-api", "python3", "bash"],
-    "android-apk": ["Termux:API (F-Droid)"]
+    "system": [
+      "termux-api",
+      "python3",
+      "bash"
+    ],
+    "android-apk": [
+      "Termux:API (F-Droid)"
+    ]
   },
   "targets": {
     "files/usage/": "~/.claude/usage/",
@@ -16,5 +22,5 @@
   "scripts": {
     "postinstall": "bash $ADDON_DIR/install.sh"
   },
-  "notes": "Dwa swiaty: pasek statusu + pace.sh licza w proot; harmonogram i powiadomienia chodza natywnie w Termuksie (termux-job-scheduler co 6 h). Jeden wspolny cache ~/.claude/usage-cache.json (zapis atomowy). Po instalacji w proot wymagana JEDNA komenda w Termuksie: bash ~/.claude/usage/install-termux.sh. Odinstalowanie: bash ~/.claude/usage/rollback.sh."
+  "notes": "Dwa swiaty: pasek statusu + pace.sh licza w proot; harmonogram i powiadomienia chodza natywnie w Termuksie (termux-job-scheduler co 6 h). Jeden wspolny cache ~/.claude/usage-cache.json (zapis atomowy). Po instalacji w proot wymagana JEDNA komenda w Termuksie: bash ~/.claude/usage/install-termux.sh. Odinstalowanie: bash ~/.claude/usage/rollback.sh. UWAGA: bazowy wrapper pochodzi ze statusline-advanced; usage-pace go patchuje. Instaluj/reinstaluj PO statusline-advanced (w -All kolejnosc alfabetyczna juz to zapewnia)."
 }

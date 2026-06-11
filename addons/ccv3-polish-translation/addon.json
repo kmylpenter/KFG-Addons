@@ -6,9 +6,10 @@
   "platform": "any",
   "author": "kmylpenter",
   "dependencies": {},
-  "targets": {
-    "files/skills/skill-rules.json": "~/.claude/skills/skill-rules.json"
-  },
+  "targets": {},
   "postInstall": null,
-  "notes": "UWAGA: Nadpisuje skill-rules.json. V6.1: 100% testow, slang PL (wrzuc/ogarnij/schrzanilo), intentPatterns dla zapisz/kontynuuj, regresja EN naprawiona."
+  "notes": "UWAGA: Nadpisuje skill-rules.json. V6.1: 100% testow, slang PL (wrzuc/ogarnij/schrzanilo), intentPatterns dla zapisz/kontynuuj, regresja EN naprawiona.",
+  "scripts": {
+    "postinstall": "python3 %ADDON_DIR%/merge_skill_rules.py %ADDON_DIR%/files/skills/skill-rules.json"
+  }
 }
