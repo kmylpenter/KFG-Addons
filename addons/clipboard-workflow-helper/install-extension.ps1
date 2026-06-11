@@ -45,16 +45,28 @@ foreach ($pattern in $oldPatterns) {
 # Wyczysc extensions.json cache
 if (Test-Path $extensionsJsonPath) {
     try {
-        $extJson = Get-Content $extensionsJsonPath -Raw | ConvertFrom-Json
+        # M35: @(...) wymusza tablice — bez tego 1 wynik = obiekt, 0 wynikow = $null,
+        # a .Count i serializacja sypia sie / zapisuja zly ksztalt.
+        $extJson = @(Get-Content -LiteralPath $extensionsJsonPath -Raw | ConvertFrom-Json)
         $originalCount = $extJson.Count
 
-        $extJson = $extJson | Where-Object {
+        $extJson = @($extJson | Where-Object {
             $_.identifier.id -notmatch "clipboard-workflow-helper"
-        }
+        })
 
         $removedCount = $originalCount - $extJson.Count
         if ($removedCount -gt 0) {
-            $extJson | ConvertTo-Json -Depth 10 | Set-Content $extensionsJsonPath -Encoding UTF8
+            # backup przed zapisem cudzego configu
+            Copy-Item -LiteralPath $extensionsJsonPath -Destination "$extensionsJsonPath.bak-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')" -Force
+            if ($extJson.Count -eq 0) {
+                $json = "[]"
+            } else {
+                $json = ConvertTo-Json -InputObject $extJson -Depth 10
+                # PS5.1: ConvertTo-Json na 1-elem tablicy daje OBIEKT — wymus nawiasy tablicy
+                if ($extJson.Count -eq 1) { $json = "[$json]" }
+            }
+            # zapis bez BOM (Set-Content -Encoding UTF8 dodaje BOM -> psuje JSON.parse)
+            [System.IO.File]::WriteAllText($extensionsJsonPath, $json, [System.Text.UTF8Encoding]::new($false))
             Write-OK "Usunieto $removedCount wpisow z extensions.json"
             $cleaned += $removedCount
         }
@@ -93,10 +105,24 @@ foreach ($legacy in $legacyExePaths) {
     }
 }
 
-# Kopiuj calosc (wyklucz legacy ClipboardListener.exe gdyby przetrwal)
 Write-Info "Kopiowanie do $targetDir"
-Copy-Item -Path $extensionSourceDir -Destination $targetDir -Recurse -Force -Exclude "ClipboardListener.exe" -ErrorAction Continue
-
+# M10: jesli target przetrwal czyszczenie (lock/AV), Copy-Item -Recurse ZAGNIEZDZILBY
+# zrodlo jako podfolder (rozbita extension). Oprozni target przed kopia.
+if (Test-Path -LiteralPath $targetDir) {
+    try {
+        Remove-Item -LiteralPath $targetDir -Recurse -Force -ErrorAction Stop
+    } catch {
+        Write-Warn "Nie mozna oproznic $targetDir ($_) — przerywam, nie zagniezdzam kopii"
+        exit 1
+    }
+}
+New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+# M38: -Exclude na sciezce KATALOGOWEJ nie filtruje dzieci w WinPS5.1 — kopiuj ZAWARTOSC ('\*'),
+# wtedy -Exclude dziala na elementach top-level.
+Copy-Item -Path (Join-Path $extensionSourceDir '*') -Destination $targetDir -Recurse -Force -Exclude "ClipboardListener.exe" -ErrorAction Stop
+# M38 backstop: gdyby exe sie przeslizgnal mimo -Exclude, usun po kopii
+$strayExe = Join-Path $targetDir "ClipboardListener.exe"
+if (Test-Path -LiteralPath $strayExe) { Remove-Item -LiteralPath $strayExe -Force -ErrorAction SilentlyContinue }
 Write-OK "Extension skopiowana"
 
 # ============================================================

@@ -24,15 +24,34 @@ try {
     # Convert hex to BGR (Windows uses BGR format)
     # #3A90C8 -> RGB(58, 144, 200) -> BGR: 0x00C8903A
     $blueLight = 0x00C8903A
+    # M_INFERRED: ColorizationColor/Afterglow to ARGB - DWM oczekuje pelnej alpha (0xFF),
+    # alpha 0x00 daje "przezroczysty" kolor. AccentColor (ABGR) zostawiamy bez zmian.
+    $blueLightArgb = 0xFFC8903A
 
     # Set accent color in registry
     $dwmPath = "HKCU:\SOFTWARE\Microsoft\Windows\DWM"
     $themePath = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 
+    # M_INFERRED: backup starych wartosci rejestru przed nadpisaniem (jak cofnac - ponizej)
+    $dwmBackupNames = @("AccentColor", "ColorizationColor", "ColorizationAfterglow", "ColorPrevalence")
+    $dwmBackup = @{}
+    foreach ($name in $dwmBackupNames) {
+        $old = (Get-ItemProperty -Path $dwmPath -Name $name -ErrorAction SilentlyContinue).$name
+        if ($null -ne $old) { $dwmBackup[$name] = $old }
+    }
+    if ($dwmBackup.Count -gt 0) {
+        Write-Host "  --> Backup starych wartosci DWM (aby cofnac, ustaw je z powrotem):" -ForegroundColor Cyan
+        foreach ($name in $dwmBackup.Keys) {
+            Write-Host ("      {0} = 0x{1:X8}" -f $name, $dwmBackup[$name]) -ForegroundColor Gray
+        }
+    } else {
+        Write-Host "  --> Brak poprzednich wartosci DWM (aby cofnac: usun dodane klucze z $dwmPath)" -ForegroundColor Cyan
+    }
+
     # Enable custom accent color
     Set-ItemProperty -Path $dwmPath -Name "AccentColor" -Value $blueLight -Type DWord -Force
-    Set-ItemProperty -Path $dwmPath -Name "ColorizationColor" -Value $blueLight -Type DWord -Force
-    Set-ItemProperty -Path $dwmPath -Name "ColorizationAfterglow" -Value $blueLight -Type DWord -Force
+    Set-ItemProperty -Path $dwmPath -Name "ColorizationColor" -Value $blueLightArgb -Type DWord -Force
+    Set-ItemProperty -Path $dwmPath -Name "ColorizationAfterglow" -Value $blueLightArgb -Type DWord -Force
 
     # Set color prevalence (show accent color on title bars and window borders)
     Set-ItemProperty -Path $dwmPath -Name "ColorPrevalence" -Value 1 -Type DWord -Force

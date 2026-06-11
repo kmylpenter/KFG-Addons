@@ -53,7 +53,9 @@ if ((Test-Path $pythonwPath) -and (Test-Path $startupFile)) {
 
         if ($content.Contains($oldPattern)) {
             $content = $content.Replace($oldPattern, $newPattern)
-            Set-Content $startupFile -Value $content -NoNewline
+            # M40: backup + zapis UTF-8 bez BOM (Set-Content bez -Encoding = ANSI na PS5.1)
+            Copy-Item -LiteralPath $startupFile -Destination "$startupFile.bak-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')" -Force
+            [System.IO.File]::WriteAllText($startupFile, $content, [System.Text.UTF8Encoding]::new($false))
             Write-Host "        [PATCHED] startup.py"
             $patchCount++
         } else {
@@ -129,14 +131,20 @@ if (Test-Path $hooksDir) {
 
                 $modified = $false
                 foreach ($p in $patterns) {
-                    if ($content.Contains($p.old) -and -not $content.Contains("windowsHide")) {
+                    # M14: USUNIETO klauzule '-not Contains("windowsHide")'. Blokowala dokonczenie
+                    # czesciowo spatchowanych plikow (gdy 1 spawn juz mial windowsHide, reszta byla
+                    # pomijana NA ZAWSZE -> "[OK] All hooks already patched"). Idempotencje daje juz to,
+                    # ze wzorce $p.old matchuja tylko opcje BEZ windowsHide — po patchu nie pasuja ponownie.
+                    if ($content.Contains($p.old)) {
                         $content = $content.Replace($p.old, $p.new)
                         $modified = $true
                     }
                 }
 
                 if ($modified) {
-                    Set-Content $filePath -Value $content -NoNewline
+                    # M40: backup + zapis UTF-8 bez BOM (Set-Content bez -Encoding = ANSI na PS5.1 -> mojibake polskich znakow/emoji)
+                    Copy-Item -LiteralPath $filePath -Destination "$filePath.bak-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')" -Force
+                    [System.IO.File]::WriteAllText($filePath, $content, [System.Text.UTF8Encoding]::new($false))
                     Write-Host "        [PATCHED] $file"
                     $hooksPatched++
                 }
