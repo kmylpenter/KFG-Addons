@@ -14,19 +14,23 @@ echo ""
 echo "==> Instalacja addonu: ssot-dry-audit v2.0"
 echo ""
 
-if ! command -v python3 >/dev/null 2>&1; then
+# M41: probe python3 / python / py (Windows Git Bash zwykle nie ma 'python3')
+PYBIN=""
+for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && { PYBIN="$c"; break; }; done
+if [ -z "$PYBIN" ]; then
   echo "  [X] BRAK: python3 (wymagany)."
   echo "      Termux: pkg install python"
   echo "      Linux:  apt install python3"
   echo "      macOS:  brew install python3"
+  echo "      Windows: zainstaluj Python (python.org) lub uzyj install-addons.ps1"
   exit 1
 fi
 
-PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-echo "  [OK] python3: $PY_VER"
+PY_VER=$("$PYBIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+echo "  [OK] python: $PYBIN $PY_VER"
 
 # Helper requires Python 3.10+ (uses `list[dict]` and `| None` syntax).
-PY_OK=$(python3 -c 'import sys; print(int(sys.version_info >= (3, 10)))')
+PY_OK=$("$PYBIN" -c 'import sys; print(int(sys.version_info >= (3, 10)))')
 if [ "$PY_OK" != "1" ]; then
   echo "  [X] python3 $PY_VER za stary — wymagany 3.10+"
   exit 1
@@ -75,11 +79,18 @@ for legacy in "audyt-ssot.md" "naprawssot.md"; do
 done
 
 # Smoke test: helper parses + reports schema_version.
-SCHEMA=$(python3 -c "
+# M41: sciezki przez ENV (nie interpolacja do zrodla Pythona) — apostrof w $HOME
+# (np. /Users/O'Brien) lamalby string-literal i dawal falszywe 'smoke test failed'.
+SCHEMA=$(SKILL_DST="$SKILL_DST" PYBIN="$PYBIN" "$PYBIN" - 2>&1 <<'PY'
 import json, subprocess, sys, tempfile, os
+skill = os.environ['SKILL_DST']; pybin = os.environ['PYBIN']
 with tempfile.TemporaryDirectory() as td:
     os.chdir(td)
-    r = subprocess.run(['python3', '$SKILL_DST/scripts/detect_duplicates.py', '.'],
+    # Helper traktuje PUSTY scan jako blad (exit 1, jego wlasny guard "no files scanned").
+    # Smoke ma weryfikowac parsowanie+schema_version, wiec daj mu 1 plik do zeskanowania.
+    with open('sample.py', 'w') as f:
+        f.write('def a():\n    return 1\n')
+    r = subprocess.run([pybin, os.path.join(skill, 'scripts', 'detect_duplicates.py'), '.'],
                         capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
         sys.exit(f'helper exit {r.returncode}: {r.stderr}')
@@ -88,7 +99,8 @@ with tempfile.TemporaryDirectory() as td:
     except json.JSONDecodeError as e:
         sys.exit(f'helper output not JSON: {e}')
     print(data.get('schema_version', 'MISSING'))
-" 2>&1) || { echo "  [X] smoke test failed: $SCHEMA"; exit 1; }
+PY
+) || { echo "  [X] smoke test failed: $SCHEMA"; exit 1; }
 
 if [ "$SCHEMA" = "2.0" ]; then
   echo "  [OK] helper smoke test: schema_version=$SCHEMA"

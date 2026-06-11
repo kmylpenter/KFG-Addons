@@ -54,7 +54,7 @@ echo "  [OK] rish wypakowane do $RISH_HOME"
 #     bail. Under PRoot's emulated root `[ -w $DEX ]` is ALWAYS true even after
 #     chmod 400, so stock rish aborts before app_process — which actually loads
 #     the dex fine here. Idempotent; preserves Shizuku's own app_process line. ---
-python3 - "$RISH_HOME/rish" <<'PYEOF'
+python3 - "$RISH_HOME/rish" <<'PYEOF' || { echo "  [X] przerywam — nie symlinkuje niezweryfikowanego rish do PATH"; exit 1; }
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -80,6 +80,13 @@ s = s.replace(
   if [ -w "$DEX" ]; then
     echo "rish: dex still reports writable (PRoot fake-root); letting app_process decide." >&2
   fi''')
+# M51: zweryfikuj, ze kotwica trafila (sentinel pochodzi z replacement powyzej).
+# Bez tego cichy no-op (Shizuku zmienil layout wrappera) zapisalby NIESPATCHOWANY
+# rish, a ten i tak zostalby chmod 755 + symlinkowany jako uprzywilejowany relay.
+if "PRoot fake-root fix (czytaj)" not in s:
+    sys.stderr.write("  [X] rish wrapper: kotwica patcha nie pasuje (Shizuku zmienil layout) — "
+                     "ODMAWIAM zapisu/symlinku niezweryfikowanego relayu\n")
+    sys.exit(2)
 open(p, "w").write(s)
 print("  [OK] rish PRoot fake-root patch applied")
 PYEOF
