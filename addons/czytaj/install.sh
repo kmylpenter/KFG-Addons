@@ -77,21 +77,28 @@ if [ -f "$ADDON_DIR/files/commands/pauza.md" ]; then
   echo "  [OK] commands/pauza.md"
 fi
 
-# Use cp -P (no symlink follow) and explicit file list to avoid orphan files
-# from previous installs surviving. We sync a clean snapshot.
+# SSOT: kopiuj DYNAMICZNIE wszystkie pliki ze zrodla (cp -P, bez podazania za symlinkami).
+# Recznia lista powodowala dryf — brakowalo precache.py i volume_watcher.py, ktore sa
+# wywolywane przez instalowane hooki (toggle.sh -> volume_watcher.py, stop.py -> precache.py),
+# wiec swiezy install dostarczal kod wolajacy nieistniejace pliki. Lista = zawartosc katalogu.
 HOOK_SRC="$ADDON_DIR/files/hooks/czytaj"
 HOOK_DST="$CLAUDE_DIR/hooks/czytaj"
-for f in _speak.py piper_server.py piper_stream.py pre-tool-use.py pre-tool-use.sh \
-         stop.py stop.sh user-prompt-submit.sh toggle.sh silent.wav preheat.wav \
-         setup-adb-pairing.sh setup-shizuku.sh; do
-  if [ -f "$HOOK_SRC/$f" ]; then
-    cp -P "$HOOK_SRC/$f" "$HOOK_DST/$f"
-  fi
+mkdir -p "$HOOK_DST"
+copied=0
+for src in "$HOOK_SRC"/*; do
+  [ -f "$src" ] || continue                       # pomin __pycache__ i inne katalogi
+  case "$(basename "$src")" in *.bak|*.pyc) continue ;; esac
+  cp -P "$src" "$HOOK_DST/$(basename "$src")" && copied=$((copied + 1))
+done
+# Clean snapshot: usun z DST osierocone pliki runtime (*.py/*.sh/*.wav), ktorych juz nie ma w SRC
+for dst in "$HOOK_DST"/*.py "$HOOK_DST"/*.sh "$HOOK_DST"/*.wav; do
+  [ -f "$dst" ] || continue
+  [ -f "$HOOK_SRC/$(basename "$dst")" ] || { rm -f "$dst"; echo "  [--] usunieto osierocony: $(basename "$dst")"; }
 done
 chmod 700 "$HOOK_DST"
 chmod 644 "$HOOK_DST/"*.py "$HOOK_DST/"*.wav 2>/dev/null || true
 chmod 755 "$HOOK_DST/"*.sh 2>/dev/null || true
-echo "  [OK] hooks/czytaj/ (synced)"
+echo "  [OK] hooks/czytaj/ (synced $copied plikow)"
 
 # --- Remove the legacy czytaj skill ---
 # Superseded by the /czytaj command (both just delegate to toggle.sh). Shipping
