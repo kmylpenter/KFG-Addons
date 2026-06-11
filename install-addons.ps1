@@ -80,38 +80,22 @@ function Write-Skip { param([string]$Msg) Write-Host "    [~] $Msg" -ForegroundC
 function Find-ProjectClaudeDir {
     <#
     .SYNOPSIS
-    Szuka projektowego .claude/ katalogu w parent directories
-    Dynamicznie wykrywa na podstawie CWD i znanych wzorców
+    Szuka projektowego .claude/ katalogu idac w gore od CWD (ancestor-walk).
     #>
 
-    # Dynamiczne wykrywanie projektów - szukaj w typowych lokalizacjach
-    $projectRoots = @(
-        "$env:USERPROFILE\Projects",
-        "$env:USERPROFILE\projekty",
-        "C:\Projekty",
-        "D:\Projekty DELL KG",
-        "D:\Projekty StriX"
-    )
-
-    # Znajdz istniejace rooty projektow
-    foreach ($root in $projectRoots) {
-        if (Test-Path $root) {
-            $claudeDir = Join-Path $root ".claude"
-            if (Test-Path $claudeDir) {
-                return $claudeDir
-            }
-        }
-    }
-
-    # Fallback: szukaj od CWD w gore
-    $current = Get-Location
+    # M33: ancestor-walk od CWD jako JEDYNE zrodlo prawdy.
+    # (Usunieto hardkodowana liste rootow maszyny autora - znajdowala .claude w
+    #  korzeniu kontenera/dysku i lokowala instalacje, w tym hooki auto-exec, w
+    #  obcym projekcie. .claude musi nalezec do realnego projektu nad CWD.)
+    $globalClaude = Join-Path $TargetBase ".claude"
+    $current = (Get-Location).Path
     while ($current) {
         $claudeDir = Join-Path $current ".claude"
-        if ((Test-Path $claudeDir) -and ($claudeDir -ne (Join-Path $env:USERPROFILE ".claude"))) {
+        if ((Test-Path -LiteralPath $claudeDir -PathType Container) -and ($claudeDir -ne $globalClaude)) {
             return $claudeDir
         }
         $parent = Split-Path $current -Parent
-        if ($parent -eq $current) { break }
+        if (-not $parent -or $parent -eq $current) { break }  # korzen dysku
         $current = $parent
     }
 
@@ -229,8 +213,14 @@ function Ensure-SettingsEnv {
     }
 
     try {
-        $settingsRaw = Get-Content $settingsPath -Raw
+        $settingsRaw = Get-Content -LiteralPath $settingsPath -Raw
         $settings = $settingsRaw | ConvertFrom-Json
+
+        # M11: walidacja - jesli JSON pusty/uszkodzony ConvertFrom-Json zwraca $null; nie nadpisuj
+        if ($null -eq $settings) {
+            Write-Err "settings.json pusty lub niepoprawny JSON - pomijam aktualizacje env"
+            return
+        }
 
         # Upewnij sie ze sekcja env istnieje
         if (-not $settings.env) {
@@ -256,7 +246,13 @@ function Ensure-SettingsEnv {
         }
 
         if ($changed) {
-            $settings | ConvertTo-Json -Depth 10 | Set-Content $settingsPath -Encoding UTF8
+            # M11: backup przed zapisem cudzego configu
+            $bkp = "$settingsPath.backup-$(Get-Date -Format 'yyyy-MM-dd-HHmm')"
+            Copy-Item -LiteralPath $settingsPath -Destination $bkp -Force
+            Write-Info "Backup: $bkp"
+            # M11: WriteAllText bez BOM (PS5 Set-Content -Encoding UTF8 dodaje BOM, ktory lamie JSON.parse w Node)
+            $json = $settings | ConvertTo-Json -Depth 10
+            [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
             Write-OK "Zaktualizowano settings.json (env)"
         }
     } catch {
@@ -276,7 +272,7 @@ function Get-Addons {
         $jsonPath = Join-Path $folder.FullName "addon.json"
         if (Test-Path $jsonPath) {
             try {
-                $json = Get-Content $jsonPath -Raw | ConvertFrom-Json
+                $json = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json
                 $addons += @{
                     Name = $json.name
                     DisplayName = $json.displayName
@@ -286,6 +282,7 @@ function Get-Addons {
                     Targets = $json.targets
                     Scripts = $json.scripts
                     ensureEnv = $json.ensureEnv
+                    Platform = $json.platform   # M3: termux|termux+proot|any|windows|brak(=any)
                     Path = $folder.FullName
                     Notes = $json.notes
                 }
@@ -297,6 +294,19 @@ function Get-Addons {
     return $addons
 }
 
+# M27: bezpieczne parsowanie wersji - normalizuje '0'->'0.0', '18'->'18.0' i odporne na smieci.
+# [version] wymaga min. jednej kropki; bezkropkowe/puste wartosci rzucaja, wiec TryParse z paddingiem.
+function ConvertTo-SafeVersion {
+    param([string]$Raw)
+    if (-not $Raw) { $Raw = "0" }
+    $Raw = ($Raw -replace '[^\d\.].*$', '').Trim()   # utnij ogon (np. '1.2-rc' -> '1.2'), zostaw cyfry/kropki
+    if ($Raw -eq "") { $Raw = "0" }
+    if ($Raw -notmatch '\.') { $Raw = "$Raw.0" }     # '18' -> '18.0'
+    [version]$parsed = $null
+    if ([version]::TryParse($Raw, [ref]$parsed)) { return $parsed }
+    return [version]"0.0"
+}
+
 function Test-Dependency {
     param([string]$Name, [string]$MinVersion)
 
@@ -306,7 +316,8 @@ function Test-Dependency {
                 $ver = python --version 2>&1 | Out-String
                 if ($ver -match '(\d+\.\d+)') {
                     $current = $Matches[1]
-                    if ([version]$current -ge [version]$MinVersion) {
+                    # M27: normalizuj obie strony zanim porownasz (puste/bezkropkowe minVer nie moga rzucac)
+                    if ((ConvertTo-SafeVersion $current) -ge (ConvertTo-SafeVersion $MinVersion)) {
                         return @{ OK = $true; Version = $current }
                     }
                     return @{ OK = $false; Version = $current; Required = $MinVersion }
@@ -318,7 +329,9 @@ function Test-Dependency {
             try {
                 $ver = node --version 2>&1 | Out-String
                 if ($ver -match '(\d+)') {
-                    return @{ OK = ([int]$Matches[1] -ge [int]$MinVersion); Version = $Matches[0] }
+                    # M27: minVer typu '18.17' nie zmiesci sie w [int] - porownaj jako wersje
+                    $ok = (ConvertTo-SafeVersion $Matches[1]) -ge (ConvertTo-SafeVersion $MinVersion)
+                    return @{ OK = $ok; Version = $Matches[0] }
                 }
             } catch {}
             return @{ OK = $false; Version = $null }
@@ -339,13 +352,52 @@ function Install-PythonPackage {
     param([string]$Package)
     Write-Info "Instaluje pakiet Python: $Package"
     try {
+        # M1/M29: pip to natywny proces - try/catch go NIE lapie. Sprawdz $LASTEXITCODE.
+        $global:LASTEXITCODE = 0
         pip install $Package 2>&1 | Out-Null
-        Write-OK "Zainstalowano: $Package"
-        return $true
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Zainstalowano: $Package"
+            return $true
+        }
+        Write-Err "Blad instalacji $Package (pip exit $LASTEXITCODE)"
+        return $false
     } catch {
-        Write-Err "Blad instalacji $Package"
+        Write-Err "Blad instalacji $Package : $_"
         return $false
     }
+}
+
+function Install-NpmPackage {
+    param([string]$Package)
+    Write-Info "Instaluje pakiet npm: $Package"
+    try {
+        # M32: npm to natywny proces - sprawdz $LASTEXITCODE (try/catch nie wystarczy).
+        $global:LASTEXITCODE = 0
+        npm install -g $Package 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-OK "Zainstalowano: $Package"
+            return $true
+        }
+        Write-Err "Blad instalacji $Package (npm exit $LASTEXITCODE)"
+        return $false
+    } catch {
+        Write-Err "Blad instalacji $Package : $_"
+        return $false
+    }
+}
+
+# M20/M47/M52: kontrola traversal i rozwijanie celu sa zrobione INLINE w petli
+# targetow (Install-Addon) — zweryfikowana logika dziala dla wszystkich realnych
+# ksztaltow targetow. Guard '..' przy starcie iteracji odrzuca traversal w kluczu
+# i wartosci zanim cokolwiek skopiujemy.
+
+# M3: czy addon pasuje do hosta. Tu (.ps1) host = Windows. Akceptuj platformy
+# zawierajace 'windows' lub 'any'; brak pola = 'any'.
+function Test-HostPlatform {
+    param([string]$Platform)
+    if (-not $Platform -or $Platform.Trim() -eq "") { return $true }   # brak = any
+    $p = $Platform.ToLower()
+    return ($p -match 'windows' -or $p -match 'any')
 }
 
 function Install-Addon {
@@ -354,6 +406,12 @@ function Install-Addon {
     Write-Host ""
     Write-Host "  Installing: $($Addon.DisplayName) v$($Addon.Version)" -ForegroundColor Yellow
     Write-Host "  -------------------------------------------------------------" -ForegroundColor DarkGray
+
+    # M3: pomin addony niepasujace do platformy Windows
+    if (-not (Test-HostPlatform $Addon.Platform)) {
+        Write-Skip "Pomijam $($Addon.Name) - platforma '$($Addon.Platform)' nie obejmuje windows/any"
+        return $true   # pominiecie to nie blad
+    }
 
     # Check dependencies
     if ($Addon.Dependencies) {
@@ -398,16 +456,33 @@ function Install-Addon {
                         Install-PythonPackage -Package $pkg
                     }
                 }
+                # M32: node packages — wczesniej dokumentowane ale nieinstalowane
+                if ($depName -eq "node" -and $depConfig.packages) {
+                    foreach ($pkg in $depConfig.packages) {
+                        Install-NpmPackage -Package $pkg
+                    }
+                }
             }
         }
     }
 
     # Copy files (v2.1: fix dla pojedynczych plikow do ~/.claude/)
     foreach ($target in $Addon.Targets.PSObject.Properties) {
+        # M17: inicjalizuj $existing per-iteracja. Bylo ustawiane tylko w galezi
+        # isClaudeTarget, a konsumowane PO niej (backup ~631, cleanup ~621) -> dla
+        # nie-claude targetu czytalo $existing z POPRZEDNIej iteracji (zly backup),
+        # a jako pierwszy target -> $null.Found rzucalo pod EAP=Stop.
+        $existing = @{ Found = $false; Path = $null; Location = "none" }
         $sourcePath = Join-Path $Addon.Path $target.Name
         $targetValue = $target.Value
 
-        if (-not (Test-Path $sourcePath)) {
+        # M20/M52: odrzuc traversal w KLUCZU (zrodlo) i WARTOSCI (cel) zanim cokolwiek skopiujemy
+        if ($target.Name -match '\.\.' -or $targetValue -match '\.\.') {
+            Write-Err "Pomijam target z '..' (traversal): $($target.Name) -> $targetValue"
+            continue
+        }
+
+        if (-not (Test-Path -LiteralPath $sourcePath)) {
             Write-Warn "Brak zrodla: $sourcePath"
             continue
         }
@@ -451,8 +526,8 @@ function Install-Addon {
                 # Juz istnieje - sprawdz czy mamy nowsza wersje
                 # Dla plikow: porownaj plik z plikiem, nie katalog z katalogiem
                 if ($isSourceFile) {
-                    $sourceTime = (Get-Item $sourcePath).LastWriteTime
-                    $targetTime = (Get-Item $existing.Path -ErrorAction SilentlyContinue).LastWriteTime
+                    $sourceTime = (Get-Item -LiteralPath $sourcePath).LastWriteTime
+                    $targetTime = (Get-Item -LiteralPath $existing.Path -ErrorAction SilentlyContinue).LastWriteTime
                     $isNewer = $sourceTime -gt $targetTime
                 } else {
                     $isNewer = Test-SourceNewer -SourceDir $sourcePath -TargetDir $existing.Path
@@ -500,11 +575,18 @@ function Install-Addon {
         # sciezke pliku jako katalog (bug z v2.5 i wczesniejszych)
         if ($isSourceFile) {
             $expectedFilePath = Join-Path $targetPath (Split-Path $sourcePath -Leaf)
-            if ((Test-Path $expectedFilePath) -and (Test-Path $expectedFilePath -PathType Container)) {
-                Write-Warn "Wykryto uszkodzona sciezke (katalog zamiast pliku): $expectedFilePath"
-                Remove-Item -Path $expectedFilePath -Recurse -Force
-                Write-OK "Usunieto uszkodzony katalog"
-                # v2.6: cleanup uniewaznia detekcje - po usunieciu traktuj jako nowy plik
+            if ((Test-Path -LiteralPath $expectedFilePath) -and (Test-Path -LiteralPath $expectedFilePath -PathType Container)) {
+                # M36: NIE kasuj rekursywnie (heurystyka; w WinPS5.1 -Recurse na junction/symlink
+                # kasuje ZAWARTOSC celu). Kwarantanna przez rename + guard ReparsePoint.
+                $attrs = (Get-Item -LiteralPath $expectedFilePath -Force).Attributes
+                if ($attrs -band [System.IO.FileAttributes]::ReparsePoint) {
+                    Write-Warn "Sciezka to symlink/junction: $expectedFilePath — NIE ruszam, pomijam target"
+                    continue
+                }
+                $quar = "$expectedFilePath.corrupt-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')"
+                Write-Warn "Wykryto katalog zamiast pliku: $expectedFilePath -> kwarantanna $quar"
+                Rename-Item -LiteralPath $expectedFilePath -NewName (Split-Path $quar -Leaf)
+                # cleanup uniewaznia detekcje - po przeniesieniu traktuj jako nowy plik
                 $existing.Found = $false
             }
         }
@@ -517,13 +599,13 @@ function Install-Addon {
         # Backup przed nadpisaniem (v2.3) - tylko gdy istniejacy plik jest faktycznie plikiem
         if ($existing.Found -and $isSourceFile -and (Test-Path $existing.Path -PathType Leaf)) {
             $backupPath = "$($existing.Path).backup-$(Get-Date -Format 'yyyy-MM-dd-HHmm')"
-            Copy-Item -Path $existing.Path -Destination $backupPath -Force
+            Copy-Item -LiteralPath $existing.Path -Destination $backupPath -Force
             Write-Info "Backup: $backupPath"
         }
 
         # Kopiuj - dla plikow nie uzywaj wildcard
         if ($isSourceFile) {
-            Copy-Item -Path $sourcePath -Destination $targetPath -Force
+            Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
         } else {
             Copy-Item -Path "$sourcePath*" -Destination $targetPath -Recurse -Force
         }
@@ -545,14 +627,25 @@ function Install-Addon {
         Write-Info "Uruchamiam postinstall script..."
         # Ustaw zmienne srodowiskowe dla postinstall skryptu
         $env:ADDON_DIR = $Addon.Path
-        $postinstallCmd = $Addon.Scripts.postinstall -replace "%ADDON_DIR%", $Addon.Path
+        # M2: podstaw OBA tokeny (.Replace = literalnie, bez metaznakow regex w sciezce).
+        # Bashowe postinstalle uzywaja $ADDON_DIR; bez tego "bash $ADDON_DIR/install.sh"
+        # szlo do iex jako pusta zmienna PS -> "bash /install.sh".
+        $env:CLAUDE_TARGET_BASE = (Join-Path $TargetBase ".claude")   # M24: wspolny korzen dla postinstalli
+        $postinstallCmd = $Addon.Scripts.postinstall.Replace("%ADDON_DIR%", $Addon.Path).Replace('$ADDON_DIR', $Addon.Path)
         try {
+            $global:LASTEXITCODE = 0
             Invoke-Expression $postinstallCmd
-            Write-OK "Postinstall wykonany"
+            # M1: native exit!=0 NIE rzuca wyjatku -> sprawdz $LASTEXITCODE jawnie
+            if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+                Write-Err "Postinstall ZWROCIL BLAD (exit $LASTEXITCODE) — addon moze nie dzialac"
+            } else {
+                Write-OK "Postinstall wykonany"
+            }
         } catch {
             Write-Warn "Blad postinstall: $_"
         } finally {
             $env:ADDON_DIR = $null  # Posprzataj
+            $env:CLAUDE_TARGET_BASE = $null
         }
     }
 
@@ -600,19 +693,24 @@ if ($Addon) {
         Write-Host "  Dostepne: $($addons.Name -join ', ')" -ForegroundColor Gray
         exit 1
     }
-    Install-Addon -Addon $selected
-    exit 0
+    # M1/M29: przechwyc wynik (propagacja do kodu wyjscia + brak wycieku 'True' na stdout)
+    $ok = Install-Addon -Addon $selected
+    if ($ok) { exit 0 } else { exit 1 }
 }
 
 # All mode
 if ($All) {
     Write-Host "  Instaluje wszystkie dodatki ($($addons.Count))..." -ForegroundColor White
+    $failed = 0
     foreach ($a in $addons) {
-        Install-Addon -Addon $a
+        if (-not (Install-Addon -Addon $a)) { $failed++ }
     }
     Write-Host ""
-    Write-OK "Wszystkie dodatki zainstalowane!"
-    exit 0
+    if ($failed -eq 0) {
+        Write-OK "Wszystkie dodatki zainstalowane!"; exit 0
+    } else {
+        Write-Err "$failed addon(ow) zakonczylo z bledami — patrz wyzej"; exit 1
+    }
 }
 
 # Interactive mode
@@ -637,15 +735,18 @@ if ($choice -match "^[Qq]") {
     exit 0
 }
 
+$failed = 0
 if ($choice -match "^[Aa]") {
     foreach ($a in $addons) {
-        Install-Addon -Addon $a
+        if (-not (Install-Addon -Addon $a)) { $failed++ }
     }
 } else {
-    $indices = $choice -split "," | ForEach-Object { [int]$_.Trim() - 1 }
+    # M16: filtruj tokeny do samych cyfr PRZED castem (pod EAP=Stop "1," / "1;2" rzucaly terminating error)
+    $indices = @($choice -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ - 1 })
+    if ($indices.Count -eq 0) { Write-Warn "Brak poprawnych numerow w '$choice'" }
     foreach ($i in $indices) {
         if ($i -ge 0 -and $i -lt $addons.Count) {
-            Install-Addon -Addon $addons[$i]
+            if (-not (Install-Addon -Addon $addons[$i])) { $failed++ }
         }
     }
 }
@@ -657,3 +758,5 @@ Write-Host "  +-----------------------------------------------------------+" -Fo
 Write-Host ""
 Write-Host "  Nacisnij dowolny klawisz, aby zamknac..." -ForegroundColor DarkGray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+# M1/M29: kod wyjscia odzwierciedla porazki (tryb interaktywny)
+if ($failed -gt 0) { exit 1 } else { exit 0 }
