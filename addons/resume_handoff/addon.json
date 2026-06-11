@@ -3,6 +3,7 @@
   "displayName": "Resume Handoff YAML Fix",
   "description": "Fix: zmienia rozszerzenie handoffow z .md na .yaml",
   "version": "1.0.0",
+  "platform": "any",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {

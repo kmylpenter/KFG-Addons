@@ -3,6 +3,7 @@
   "displayName": "TODO Skill",
   "description": "Persistent TODO list across sessions - /todo add, list, done",
   "version": "1.0.0",
+  "platform": "any",
   "targets": {
     "files/skills/todo": "~/.claude/skills/"
   },

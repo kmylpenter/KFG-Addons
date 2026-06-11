@@ -2,6 +2,7 @@
   "name": "clipboard-workflow-helper",
   "displayName": "Clipboard Workflow Helper",
   "version": "1.2.0",
+  "platform": "windows",
   "description": "VS Code extension: Ctrl+C auto-unselect, Ctrl+A+C timeline entry, auto-backup plików (Claude Code compatible)",
   "author": "KFG",
   "targets": {},

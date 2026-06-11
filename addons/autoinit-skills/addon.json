@@ -3,6 +3,7 @@
   "displayName": "AutoInit Skills",
   "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla, /petla-noc",
   "version": "2.1.0",
+  "platform": "any",
   "author": "KFG",
   "dependencies": {},
   "targets": {

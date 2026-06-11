@@ -3,6 +3,7 @@
   "displayName": "End of Session",
   "description": "Zakonczenie sesji: handoff + stats + projekt push + history push",
   "version": "1.4.0",
+  "platform": "any",
   "author": "kmylpenter",
   "dependencies": {},
   "targets": {

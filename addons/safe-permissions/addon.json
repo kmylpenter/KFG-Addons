@@ -3,9 +3,12 @@
   "displayName": "Safe Permissions (YOLO Protection)",
   "description": "4-warstwowa ochrona + komendy cc/ccd dla YOLO mode",
   "version": "3.2.0",
+  "platform": "windows",
   "author": "kmylpenter",
   "dependencies": {
-    "npm": ["trash-cli"]
+    "npm": [
+      "trash-cli"
+    ]
   },
   "targets": {
     "files/.claude/hooks/src/safe-permissions.ts": "~/.claude/hooks/src/safe-permissions.ts",

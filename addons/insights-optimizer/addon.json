@@ -3,6 +3,7 @@
   "displayName": "Insights Optimizer",
   "description": "Optymalizacja Claude Code na podstawie analizy Insights Report - reguly, hooki, uprawnienia, CLAUDE.md",
   "version": "1.0.0",
+  "platform": "any",
   "author": "kmylpenter",
   "dependencies": {
     "node": {

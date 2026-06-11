@@ -3,6 +3,7 @@
   "displayName": "Migrate Claude History",
   "description": "Migracja historii konwersacji Claude miedzy urzadzeniami (GUI + CLI)",
   "version": "1.0.1",
+  "platform": "any",
   "author": "kmylpenter",
   "dependencies": {
     "python": {

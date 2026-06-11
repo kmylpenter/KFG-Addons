@@ -3,6 +3,7 @@
   "displayName": "StatusLine Advanced",
   "description": "Zaawansowana linia statusu: ctx% │ model/ctx │ effort │ $cost │ projekt + zmienione pliki (per-turn). Node.js + PostToolUse/UserPromptSubmit hooks.",
   "version": "8.3.0",
+  "platform": "any",
   "author": "kmylpenter",
   "dependencies": {
     "node": {

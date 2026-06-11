@@ -8,8 +8,9 @@ Instrukcja tworzenia nowych dodatkow dla KFG-Addons.
 addons/
 └── nazwa-dodatku/
     ├── addon.json          # WYMAGANE - metadata
-    ├── install.ps1         # OPCJONALNE - custom instalator
-    └── files/              # WYMAGANE - pliki do skopiowania
+    ├── install.sh          # OPCJONALNE - postinstall bash (wiazany przez scripts.postinstall)
+    ├── install.ps1         # OPCJONALNE - postinstall PowerShell (j.w.)
+    └── files/              # pliki do skopiowania (opcjonalne dla addonow tylko-postinstall)
         ├── skills/         # Skills dla Claude Code
         │   └── nazwa/
         │       └── SKILL.md
@@ -29,6 +30,7 @@ addons/
   "displayName": "Czytelna Nazwa",
   "description": "Krotki opis co robi dodatek",
   "version": "1.0.0",
+  "platform": "any",
   "author": "twoj-username",
 
   "dependencies": {
@@ -36,21 +38,17 @@ addons/
       "required": true,
       "minVersion": "3.8",
       "packages": ["requests", "pillow"]
-    },
-    "node": {
-      "required": false,
-      "minVersion": "18",
-      "packages": ["puppeteer"]
     }
   },
 
   "targets": {
     "files/skills/nazwa/": "~/.claude/skills/nazwa/",
-    "files/templates/scripts/": "~/.templates/scripts/",
     "files/hooks/": "~/.claude/hooks/"
   },
 
-  "postInstall": "echo 'Gotowe!'",
+  "scripts": {
+    "postinstall": "bash %ADDON_DIR%/install.sh"
+  },
   "notes": "Dodatkowe uwagi dla uzytkownika"
 }
 ```
@@ -59,30 +57,46 @@ addons/
 
 | Pole | Typ | Opis |
 |------|-----|------|
-| `name` | string | Unikalna nazwa (lowercase, bez spacji) |
+| `name` | string | Unikalna nazwa (lowercase, myslnik nie podkreslnik) |
 | `displayName` | string | Nazwa wyswietlana |
 | `description` | string | Krotki opis |
 | `version` | string | Wersja semver (1.0.0) |
-| `targets` | object | Mapowanie zrodlo -> cel |
 
 ### Pola opcjonalne
 
 | Pole | Typ | Opis |
 |------|-----|------|
+| `platform` | string | `any` \| `windows` \| `termux` \| `termux+proot`. Instalator pomija addony nie-pasujace do hosta. Brak = `any`. |
+| `targets` | object | Mapowanie zrodlo -> cel (pominqc dla addonow tylko-postinstall) |
 | `author` | string | Autor dodatku |
-| `dependencies` | object | Zaleznosci systemowe |
-| `postInstall` | string | Komenda po instalacji |
-| `notes` | string | Uwagi dla uzytkownika |
+| `dependencies` | object | Zaleznosci (schemat nizej) |
+| `scripts.postinstall` | string | **To pole instalator WYKONUJE** (nie top-level `postInstall`). Tokeny `%ADDON_DIR%` i `$ADDON_DIR` -> katalog addonu. |
+| `ensureEnv` | object | Zmienne do dopisania do `settings.json` (`{"KEY":"value"}`) |
+| `notes` | string | Uwagi dla uzytkownika (drukowane po instalacji) |
+
+> **UWAGA (kontrakt):** instalator wykonuje `scripts.postinstall`, NIE top-level `postInstall`.
+> Postinstalle PowerShell (`powershell -File ...`) sa pomijane poza Windowsem; bashowe
+> (`bash %ADDON_DIR%/install.sh`) poza Windowsem. Dla cross-platform: `platform: any` + osobne
+> sciezki, albo dwa instalatory (`install.sh` dla bash, `.ps1` wolany przez `scripts.postinstall`).
 
 ## Zaleznosci
 
-### Obslugiwane typy
+### Dwa schematy `dependencies`
 
-| Typ | Sprawdzanie | Auto-instalacja |
+**Schemat obiektowy** (czytany przez instalator — sprawdza wersje i instaluje pakiety):
+
+| Typ | Sprawdzanie | Auto-instalacja (Windows) |
 |-----|-------------|-----------------|
 | `python` | `python --version` | winget + pip |
 | `node` | `node --version` | winget + npm |
 | inne | `Get-Command` | pytanie uzytkownika |
+
+**Schemat tablicowy** (informacyjny — instalator bash tylko OSTRZEGA o braku):
+```json
+"dependencies": { "system": ["termux-api", "python3"], "android-apk": ["Termux:API (F-Droid)"] }
+```
+Uzywaj obiektowego dla zaleznosci, ktore instalator ma sprawdzac/instalowac; tablicowego dla
+czysto informacyjnych (np. apki Androida, ktorych i tak nie zainstaluje skrypt).
 
 ### Pakiety Python
 
@@ -115,11 +129,13 @@ Format: `"sciezka/w/repo/": "sciezka/docelowa/"`
 
 ### Specjalne sciezki
 
-| Symbol | Rozwiniecie (Windows) |
-|--------|----------------------|
-| `~/` | `C:\Users\USERNAME\` |
-| `~/.claude/` | `C:\Users\USERNAME\.claude\` |
-| `~/.templates/` | `C:\Users\USERNAME\.templates\` |
+| Symbol | Windows (install-addons.ps1) | Termux/Linux/macOS (install-addons.sh) |
+|--------|------------------------------|----------------------------------------|
+| `~/` | `C:\Users\USERNAME\` | `$HOME/` |
+| `~/.claude/` | `C:\Users\USERNAME\.claude\` | `$HOME/.claude/` (lub `$CLAUDE_TARGET_BASE`) |
+| `~/.templates/` | `C:\Users\USERNAME\.templates\` | `$HOME/.templates/` |
+
+Segment `..` w kluczu lub wartosci `targets` jest ODRZUCANY (ochrona przed traversal).
 
 ### Wzorce targets (WAZNE!)
 
@@ -254,8 +270,12 @@ addons/
 ### 1. Lokalna instalacja
 
 ```powershell
-cd KFG-Addons
+# Windows
 .\install-addons.ps1 -Addon nazwa-dodatku
+```
+```bash
+# Termux / proot / Linux / macOS
+bash install-addons.sh --addon nazwa-dodatku
 ```
 
 ### 2. Weryfikacja plikow

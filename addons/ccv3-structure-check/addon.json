@@ -2,6 +2,7 @@
   "name": "ccv3-structure-check",
   "displayName": "CCv3 Structure Check",
   "version": "1.1.0",
+  "platform": "windows",
   "description": "CCv3 infrastructure: auto-create thoughts/ structure + ledger staleness warnings based on ctx%",
   "author": "KFG",
   "hooks": {

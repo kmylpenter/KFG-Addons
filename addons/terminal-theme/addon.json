@@ -2,6 +2,7 @@
   "name": "terminal-theme",
   "displayName": "KMYLPENTER Terminal Theme",
   "version": "2.2.0",
+  "platform": "windows",
   "description": "Full color scheme: Windows Terminal + VS Code + Windows 11 accent (opcjonalnie)",
   "author": "KFG",
   "targets": {},
