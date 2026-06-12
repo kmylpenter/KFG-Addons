@@ -1,0 +1,22 @@
+{
+  "name": "env-doctor",
+  "displayName": "Env Doctor",
+  "description": "Spojne, dzialajace srodowisko Claude na kazdym urzadzeniu: reguly nastepcy (successor-calibration, corpus-maintenance, agent-model-selection), brakujacy memory_service.py (sqlite learnings), naprawiony hook epistemic-reminder, przenosny self-test infrastruktury + skill /env-doctor (diagnoza i naprawa metoda, nie diffami).",
+  "version": "1.0.0",
+  "platform": "any",
+  "author": "KFG",
+  "dependencies": {},
+  "targets": {
+    "files/.claude/rules/successor-calibration.md": "~/.claude/rules/",
+    "files/.claude/rules/corpus-maintenance.md": "~/.claude/rules/",
+    "files/.claude/rules/agent-model-selection.md": "~/.claude/rules/",
+    "files/.claude/scripts/core/db/memory_service.py": "~/.claude/scripts/core/db/",
+    "files/.claude/scripts/infra-selftest.sh": "~/.claude/scripts/",
+    "files/.claude/hooks/dist/epistemic-reminder.mjs": "~/.claude/hooks/dist/",
+    "files/.claude/skills/env-doctor/": "~/.claude/skills/env-doctor/"
+  },
+  "scripts": {
+    "postinstall": "python3 %ADDON_DIR%/postinstall.py"
+  },
+  "notes": "Po instalacji: szybki test = bash ~/.claude/scripts/infra-selftest.sh; pelna diagnoza+naprawa = /env-doctor w Claude. Wpis hooka i env dziaja od NASTEPNEJ sesji. Postinstall niczego nie nadpisuje (add-if-absent); maszyny z DATABASE_URL zachowuja postgres."
+}

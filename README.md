@@ -44,6 +44,7 @@ honoruje pole `platform` z `addon.json` i **pomija dodatki tylko-Windows**
 | **ccv3-structure-check** | Auto-tworzenie struktury thoughts/ + ledger | windows |
 | **clipboard-workflow-helper** | Rozszerzenie VS Code: Ctrl+C/Ctrl+A+C workflow | windows |
 | **czytaj** | Tryb czytania TTS (hands-free, np. w aucie) | termux |
+| **env-doctor** | Spójne środowisko ~/.claude: reguły następcy + memory_service + selftest + skill /env-doctor | any |
 | **eos** | End of Session: handoff + stats + push | any |
 | **insights-optimizer** | Optymalizacja na podstawie Insights Report | any |
 | **migrateconvo** | Migracja historii Claude między urządzeniami | any |
