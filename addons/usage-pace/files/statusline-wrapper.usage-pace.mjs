@@ -15,6 +15,10 @@ const c_cyan = `${ESC}[38;5;44m`;
 const c_dim = `${ESC}[38;5;240m`;
 const c_yellow = `${ESC}[38;5;220m`;
 const c_violet = `${ESC}[38;5;135m`;
+const c_pink = `${ESC}[38;5;205m`;   // project (tozsamosc, nie alarm)
+const c_slate = `${ESC}[38;5;109m`;  // reset (czas do resetu)
+const c_amber = `${ESC}[38;5;214m`;  // E: extra usage
+const c_gold2 = `${ESC}[38;5;178m`;  // etykieta 7d (wartosc zostaje c_yellow 220)
 
 const SEP = `${c_dim} │ ${reset}`;
 
@@ -28,11 +32,9 @@ function getCtxColor(pct) {
 }
 
 function getEffortColor(level) {
-  if (level === 'max') return c_violet;
-  if (level === 'high') return c_blue;
-  if (level === 'medium') return c_yellow;
-  if (level === 'low') return c_dim;
-  return c_dim; // unknown/pending
+  // jeden kolor tozsamosci (fiolet) — poziom widac w napisie MAX/HIGH/MEDIUM/LOW;
+  // nieznany/pending = dim. (Wczesniej high=blue kolidowal z modelem, medium=yellow z 7d.)
+  return ['max', 'high', 'medium', 'low'].includes(level) ? c_violet : c_dim;
 }
 
 function shortModel(model, ctxWindowSize) {
@@ -158,6 +160,7 @@ try {
   // Czyta TYLKO stdin + cache (zero sieci). Odswieza wspolny cache max raz na 300 s
   // i wtedy odpala pace.sh w tle (odczepiony proces; logika progow = pace.sh, SSOT).
   let usageSegment = null;
+  let spilloverAlert = null;
   try {
     const cachePath = process.env.CLAUDE_USAGE_CACHE_FILE || join(homedir(), '.claude', 'usage-cache.json');
     let cache = null;
@@ -174,6 +177,16 @@ try {
         const fh5 = nb(rl.five_hour), sd7 = nb(rl.seven_day);
         if (fh5) upd.five_hour = fh5;
         if (sd7) upd.seven_day = sd7;
+        // extra usage ze stdin (jesli CC je przysyla) -> swiezsza kwota kredytow
+        // niz 6h fetch z pace.sh; brak w stdin => nie ruszamy cache.
+        if (rl.extra_usage && rl.extra_usage.used_credits != null) {
+          upd.extra_usage = {
+            is_enabled: !!rl.extra_usage.is_enabled,
+            used_credits: rl.extra_usage.used_credits,
+            currency: rl.extra_usage.currency,
+            monthly_limit: rl.extra_usage.monthly_limit,
+          };
+        }
         upd.fetched_at_epoch = nowS;
         upd.source = 'statusline';
         if (data.version) upd.cc_version = data.version;
@@ -207,6 +220,36 @@ try {
       const c_cyanBri = `${ESC}[38;5;51m`;
       const bold = `${ESC}[1m`;
 
+      // spill-over: PONAD 100% limitu. Czy REALNIE leca kredyty zalezy od
+      // extra_usage.is_enabled: false = miesieczny limit (np. user €50) osiagniety
+      // lub wylaczone -> twardy STOP, ZERO wydatkow. Wykrycie ponad-limitu z zywego
+      // stdin (fh/sd); stan/kwota z cache.extra_usage.
+      const overLimit = (fh != null && fh >= 100) || (sd != null && sd >= 100);
+      const eu = (cache && cache.extra_usage) || null;
+      const euKnown = !!eu;
+      const euEnabled = !!(eu && eu.is_enabled);
+      const c_orange = `${ESC}[38;5;208m`;
+      let creditStr = '';
+      if (eu && eu.used_credits != null && eu.used_credits > 0) {
+        const sym = eu.currency === 'EUR' ? '€' : eu.currency === 'USD' ? '$' : (eu.currency ? eu.currency + ' ' : '');
+        creditStr = `${sym}${(eu.used_credits / 100).toFixed(2)}`;
+      }
+      // znacznik segmentu 7d gdy ponad limit: ⚡ realnie wydaje | ⛔ zatkane | (brak) nieznane
+      const overMark = overLimit ? (euEnabled ? '⚡' : euKnown ? '⛔' : '') : '';
+      const overCol = (euEnabled || !euKnown) ? c_red : c_orange;
+      // Ponad limit -> szczegoly TYLKO na osobnej linii (usage line zostaje waska).
+      // Pod limitem -> dyskretne, KROTKIE "E: €X" (waski ekran telefonu).
+      let extraInfo = '';
+      if (overLimit && euEnabled) {
+        spilloverAlert = creditStr
+          ? `${bold}${c_red}⚡ EXTRA USAGE${reset}${c_dim} — ponad limit, leca kredyty: ${reset}${c_red}${creditStr}${reset}`
+          : `${bold}${c_red}⚡ EXTRA USAGE${reset}${c_dim} — ponad limit, leca kredyty${reset}`;
+      } else if (overLimit && euKnown) {
+        spilloverAlert = `${bold}${c_orange}⛔ LIMIT PLANU${reset}${c_dim} — extra usage wył. (cap), bez wydatków${reset}`;
+      } else if (creditStr) {
+        extraInfo = `${c_amber}E: ${creditStr}${reset}`;
+      }
+
       // czas do resetu okna -> zwięźle: "45m" / "2h10m" / "1d4h"
       const fmtDur = (epoch) => {
         if (epoch == null) return null;
@@ -224,26 +267,28 @@ try {
       if (fh != null) {
         const v = Math.round(fh);
         s5 = (proj5 != null)
-          ? `${c_dim}5h ${c_cyanBri}${v}${c_cyan}→${Math.min(999, Math.round(proj5))}%${reset}`
-          : `${c_dim}5h ${c_cyanBri}${v}%${reset}`;
+          ? `${c_cyan}5h ${c_cyanBri}${v}${c_cyan}→${Math.min(999, Math.round(proj5))}%${reset}`
+          : `${c_cyan}5h ${c_cyanBri}${v}%${reset}`;
       }
 
       // 7d: wartość żółta, projekcja pogrubiona w kolorze statusu (+⚠ przy LOW)
       const v7 = Math.round(sd);
       let s7;
-      if (st === 'LOW' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
-      else if (st === 'OK' && proj != null) s7 = `${c_dim}7d ${c_yellow}${v7}${bold}${c_green}→${Math.round(proj)}%${reset}`;
-      else if (st === 'GRACE') s7 = `${c_dim}7d ${c_yellow}${v7}${ESC}[38;5;250m→…${reset}`;  // swieze okno: projekcja niemiarodajna (liczy sie); jasny szary 250, bo dim 240 ginie na czarnym tle
-      else if (proj != null && (st === 'STALE' || fromCache)) s7 = `${c_dim}7d ${c_yellow}${v7}${c_dim}→?%${reset}`;
-      else s7 = `${c_dim}7d ${c_yellow}${v7}%${reset}`;
+      if (overLimit) s7 = `${c_gold2}7d ${bold}${overCol}${v7}%${overMark}${reset}`;  // ponad limit (⚡wydaje/⛔zatkane)
+      else if (st === 'LOW' && proj != null) s7 = `${c_gold2}7d ${c_yellow}${v7}${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
+      else if (st === 'OK' && proj != null) s7 = `${c_gold2}7d ${c_yellow}${v7}${bold}${c_green}→${Math.round(proj)}%${reset}`;
+      else if (st === 'GRACE') s7 = `${c_gold2}7d ${c_yellow}${v7}${ESC}[38;5;250m→…${reset}`;  // swieze okno: projekcja niemiarodajna (liczy sie); jasny szary 250, bo dim 240 ginie na czarnym tle
+      else if (proj != null && (st === 'STALE' || fromCache)) s7 = `${c_gold2}7d ${c_yellow}${v7}${c_dim}→?%${reset}`;
+      else s7 = `${c_gold2}7d ${c_yellow}${v7}%${reset}`;
 
       // resety zgrupowane na końcu: "↺ 2h10m / 1d4h"
       const r5 = (rl && rl.five_hour && rl.five_hour.resets_at) || (cache && cache.five_hour && cache.five_hour.resets_at_epoch);
       const r7 = (rl && rl.seven_day && rl.seven_day.resets_at) || (cache && cache.seven_day && cache.seven_day.resets_at_epoch);
       const d5 = fmtDur(r5), d7 = fmtDur(r7);
-      const resetStr = (d5 || d7) ? `   ${c_dim}↺ ${d5 || '?'} / ${d7 || '?'}${reset}` : '';
+      const resetSeg = (d5 || d7) ? `${c_slate}↺ ${d5 || '?'} / ${d7 || '?'}${reset}` : '';
 
-      usageSegment = `${[s5, s7].filter(Boolean).join('   ')}${resetStr}`;
+      // separatory jak w linii 1 (SEP = " │ ") zamiast potrojnych spacji
+      usageSegment = [s5, s7, resetSeg, extraInfo].filter(Boolean).join(SEP);
     }
   } catch {}
   // ===== koniec usage-pace =====
@@ -288,12 +333,13 @@ try {
     `${ctxColor}${ctxStr}${reset}`,
     `${c_blue}${modelName}${reset}`,
     `${effortColor}${effortIcon}${reset}`,
-    `${c_red}${projectName}${reset}`,
+    `${c_pink}${projectName}${reset}`,
   ];
   let output = parts.join(SEP);
 
   // usage-pace: osobna linijka (pod glowna, nad lista plikow) — waski ekran
   if (usageSegment) output += `\n${usageSegment}`;
+  if (spilloverAlert) output += `\n${spilloverAlert}`;
 
   // Lines 2+: changed files (cyan names, dim dot separators)
   if (fileNames.length > 0) {

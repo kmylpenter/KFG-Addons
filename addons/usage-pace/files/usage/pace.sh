@@ -228,6 +228,23 @@ if MODE == "--scheduled" and age >= TTL:
             else:
                 cache["five_hour"] = fh
                 cache["seven_day"] = sd
+                # extra usage = spill-over PONAD limit planu (kredyty/pieniadze).
+                # Anthropic kontynuuje prace po wyczerpaniu okna, jesli wlaczone.
+                # used_credits jest w setnych jednostki waluty (6040 = 60.40 EUR).
+                eu = body.get("extra_usage")
+                # is_enabled jest WIARYGODNE: false = miesieczny limit (np. user €50)
+                # osiagniety LUB user wylaczyl -> brak spill-over (twardy stop, zero
+                # wydatkow). used_credits/currency bywaja null gdy wylaczone -> zachowaj
+                # ostatnia znana kwote (do informacji "ile dotad zuzyto").
+                if isinstance(eu, dict):
+                    prev_eu = cache.get("extra_usage") or {}
+                    uc = eu.get("used_credits")
+                    cache["extra_usage"] = {
+                        "is_enabled": bool(eu.get("is_enabled")),
+                        "used_credits": uc if uc is not None else prev_eu.get("used_credits"),
+                        "currency": eu.get("currency") or prev_eu.get("currency"),
+                        "monthly_limit": eu.get("monthly_limit") if eu.get("monthly_limit") is not None else prev_eu.get("monthly_limit"),
+                    }
                 cache["fetched_at_epoch"] = now
                 cache["source"] = "api"
     except Exception as e:
@@ -240,6 +257,7 @@ resets = sd.get("resets_at_epoch")
 fetched = float(cache.get("fetched_at_epoch") or 0)
 status, proj, reason = "NO_DATA", None, "brak danych o limicie 7d"
 hours_to_reset = elapsed_pct = None
+spillover = False  # True = jestes PONAD 100% limitu planu -> leci extra usage (kredyty)
 
 if used is not None and resets:
     if now - fetched > STALE_S:
@@ -247,14 +265,31 @@ if used is not None and resets:
     elif resets < now:
         status, reason = "STALE", "okno sie zresetowalo, czekam na swieze dane"
     else:
+        spillover = float(used) >= 100.0  # przekroczony limit planu -> spill-over na kredyty
         hours_to_reset = (resets - now) / 3600.0
-        elapsed_h = max(0.0, min(168.0, 168.0 - hours_to_reset))
+        # --- Re-base guard (rollout Anthropica) ---------------------------------
+        # Licznik 7d bywa prze-bazowany do ~0 W TRAKCIE okna (np. migracja per-model
+        # limitow), przy NIEZMIENIONYM resets_at. Bez tego elapsed liczy sie od
+        # poczatku okna i projekcja pokazuje FALSZYWE LOW (+ powiadomienie) przez
+        # caly tydzien. Kotwiczymy elapsed do chwili ostatniego SPADKU licznika.
+        window_start = resets - WINDOW_S
+        wkey = round(resets / 3600.0)              # klucz okna zaokr. do godziny (API jitteruje resets sub-sek.)
+        hwm = cache.get("seven_day_hwm") or {}
+        same_win = hwm.get("reset_key") == wkey
+        prev_used = hwm.get("used") if same_win else None
+        rebase_epoch = hwm.get("rebase_epoch") if same_win else None
+        if rebase_epoch is None:
+            rebase_epoch = window_start            # nowe okno: kotwica = jego poczatek
+        if prev_used is not None and float(used) < float(prev_used) - 2.0:
+            rebase_epoch = now                     # licznik spadl o >2 pkt -> prze-bazowano TERAZ
+        cache["seven_day_hwm"] = {"reset_key": wkey, "used": float(used), "rebase_epoch": rebase_epoch}
+        elapsed_h = max(0.0, min(168.0, (now - rebase_epoch) / 3600.0))
         elapsed_pct = elapsed_h / 168.0 * 100.0
         remaining = 100.0 - float(used)
         proj = (float(used) / elapsed_pct * 100.0) if elapsed_pct > 0.1 else None
         if elapsed_h < GRACE_H:
             status = "GRACE"
-            reason = "swieze okno (%.0f h od resetu) — za malo danych" % elapsed_h
+            reason = "swieze okno (%.0f h od startu/prze-bazowania) — za malo danych" % elapsed_h
         elif hours_to_reset <= ENDGAME_H:
             if remaining > ENDGAME_REMAIN:
                 status = "LOW"
@@ -283,6 +318,7 @@ if (fh_used is not None and fh_resets and fh_resets > now
     if el5 >= GRACE5_S and el5_pct > 0.1:
         proj5 = float(fh_used) / el5_pct * 100.0
 
+eu = cache.get("extra_usage") or {}
 cache["pace"] = {
     "computed_at_epoch": now,
     "elapsed_pct": round(elapsed_pct, 1) if elapsed_pct is not None else None,
@@ -291,6 +327,9 @@ cache["pace"] = {
     "hours_to_reset": round(hours_to_reset, 1) if hours_to_reset is not None else None,
     "status": status,
     "reason": reason,
+    "spillover": spillover,                       # PONAD limit -> leca kredyty
+    "extra_used_credits": eu.get("used_credits"), # w setnych waluty (6040 = 60.40)
+    "extra_currency": eu.get("currency"),
 }
 
 # ---------- HISTORIA CSV (jeden wiersz na kazdy NOWY odczyt danych) ----------
@@ -380,6 +419,11 @@ p = c.get("pace") or {}
 age = time.time() - float(c.get("fetched_at_epoch") or 0)
 print("Dane sprzed: %.0f min (zrodlo: %s)" % (age / 60, c.get("source", "?")))
 print("Powod: %s" % p.get("reason"))
+if p.get("spillover"):
+    print(">>> SPILL-OVER AKTYWNY: jestes PONAD limit planu — leca extra usage (kredyty)")
+uc = p.get("extra_used_credits")
+if uc:
+    print("Extra usage zuzyte: %.2f %s" % (uc / 100.0, p.get("extra_currency") or ""))
 PYEOF2
   fi
 fi
