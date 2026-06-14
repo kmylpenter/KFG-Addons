@@ -121,10 +121,15 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
    pominięte projekty wypadają z tej nocy), potem wczytaj/utwórz
    `<projekt>/.petla-noc/progress.json` (schema: `templates/progress.schema.json`).
    Walidacja `--skip`: jeśli lista zawiera F — usuń F z listy + wpis do raportu
-   (canary jest nieskipowalny). Projekt z `.git`: IDEMPOTENTNIE (grep przed
-   dopisaniem) dopisz `.petla-noc/` do `.git/info/exclude` — LOKALNY exclude,
-   nie .gitignore, zero zmian tracked; ZAWSZE, niezależnie od czystości drzewa
-   (stan nocy musi przeżyć checkout na base i decyzję "nie merguję").
+   (canary jest nieskipowalny). Projekt z `.git`: IDEMPOTENTNIE zapewnij
+   `<projekt>/.petla-noc/.gitignore` (z `templates/dotgitignore` — allowlist:
+   ignoruje stan roboczy progress/map/reports/cache/staging/locki, TRACKUJE net
+   `tests/`, `tests-wip/`, `sealed/`, `harness/`). Brak → utwórz; istnieje → nie
+   ruszaj. **NIE dopisuj już `.petla-noc/` do `.git/info/exclude`** (porzucone
+   2026-06-14: net testów ma być wersjonowany i przenośny między urządzeniami —
+   patrz STAN). Stan roboczy i tak ignorowany; ignored/untracked przeżywa checkout
+   na base. Starszy blanket-wpis `.petla-noc/` w `.git/info/exclude` → usuń go
+   (inaczej `git add` netu wymagałby `-f`).
 5. **MERGE-GATE (jedyne dozwolone pytanie do usera — przy starcie, zanim noc
    stanie się bezobsługowa):** per projekt-repo wykryj niezmergowane branche
    poprzednich nocy: `git branch --list 'cleanup/*' --no-merged <base_branch>`.
@@ -258,9 +263,12 @@ projekcie/module.
 NIGHT_REPORT_<data>.md # w projects-root (zbiorczy dla wszystkich projektów)
 ```
 
-- `.petla-noc/` jest LOKALNE, POZA gitem (wpis w `.git/info/exclude` — KROK 0
-  pkt 4). Dzięki temu progress/map/testy/raporty przeżywają checkout na base
-  oraz "nie merguję" — wymaganie twarde 4 nie zależy od porannej decyzji usera.
+- `.petla-noc/` ma **wersjonowany net** (`tests/`, `tests-wip/`, `sealed/`, `harness/`)
+  i **ignorowany stan roboczy** (progress/map/reports/cache/staging/locki) — przez
+  committowany `.petla-noc/.gitignore` (KROK 0 pkt 4; rewizja 2026-06-14, dawniej cały
+  katalog był poza gitem przez `.git/info/exclude`). Net jest przenośny (komputer = tablet
+  po `git pull`); stan roboczy lokalny/regenerowalny. Ignored/untracked przeżywa checkout
+  na base oraz "nie merguję" — wymaganie twarde 4 nie zależy od porannej decyzji usera.
   Review robisz z dysku (.petla-noc/reports/) + zbiorczy NIGHT_REPORT w projects-root.
 - Schema progress: `templates/progress.schema.json`. Przy niezgodności/uszkodzeniu:
   NIE truncate — zrób kopię `.bak-<data>`, odbuduj ze źródeł: git (base_branch,

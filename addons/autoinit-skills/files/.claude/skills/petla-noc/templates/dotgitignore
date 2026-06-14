@@ -1,0 +1,14 @@
+# .petla-noc/.gitignore — co git śledzi w katalogu petla-noc/domknij.
+# Reguła: ignoruj CAŁY stan roboczy (regenerowalny), TRACKUJ tylko trwały net testów.
+# Dzięki temu net jest przenośny (komputer = tablet po `git pull`), a churn nocy
+# (progress/map/reports/cache/staging/locki) nie zaśmieca historii repo aplikacji.
+*
+!.gitignore
+!tests/
+!tests/**
+!tests-wip/
+!tests-wip/**
+!sealed/
+!sealed/**
+!harness/
+!harness/**
