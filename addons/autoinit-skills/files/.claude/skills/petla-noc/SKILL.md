@@ -38,7 +38,13 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdat
    modules/*.md odgrywasz narzędziami. WYJĄTKI DO EMISJI: zawartość `templates/`
    (harness, mocki, szkielety raportów) ORAZ kod generowany przez moduły (testy,
    JSDoc, wrapper, __touch) — to są artefakty wyjściowe.
-7. **Model inherit** — subagenty bez parametru `model` (nigdy haiku).
+7. **Model per rola** (jak petla INVARIANT 3) — role OSĄDU (moduł D = audyt+lensy,
+   weryfikacja, solve E, charakteryzacja B, semantyka G/I, wszystkie MUTACJE w głównym
+   kontekście) dziedziczą model sesji, NIGDY downgrade. Read-only analizy czysto
+   MECHANICZNE (A mapa zależności, F-diff canary, H skan martwych kluczy Properties,
+   J detekcja duplikacji) → `model="sonnet"` (osobny cap; wynik weryfikowalny, wpada
+   pod osąd). Nigdy haiku. Rola graniczna: A/B raz przed downgradem. (Rewizja
+   2026-06-14: cap teraz wiążący → uwolnione tokeny = więcej nocnych iteracji.)
 8. **SSOT:** reguły Apps Script (handlery, wywołania dynamiczne, wzorce) mieszkają
    WYŁĄCZNIE w `shared/gas-rules.md` — każdy moduł je CZYTA, żaden nie kopiuje.
    Skill instalowany (`~/.claude/skills/petla-noc/`) = źródło prawdy; mirror
@@ -182,6 +188,11 @@ Wykonanie modułu = `TaskUpdate(in_progress)` → przeczytaj `modules/<X>.md` +
 `shared/gas-rules.md` → wykonaj → zapisz progress.json → `TaskUpdate(completed)`.
 Analizy READ-ONLY (A, D, F-diff, G/H/I/J-raport) fan-outuj na subagenty RÓWNOLEGLE
 per projekt; KAŻDA mutacja plików — sekwencyjnie, w głównym kontekście.
+
+**MODEL PER MODUŁ (INVARIANT 7):** read-only analizy czysto mechaniczne **A, F-diff,
+H, J** → spawnuj z `model="sonnet"` (osobny cap). **D (audyt+lensy)**, B, G, I oraz
+wszystkie mutacje (C, E, P, K, wdrożenia I/G) → model sesji (Opus/Fable), **nigdy
+downgrade** — tam żyje osąd konsensusu.
 
 ### 🔴 RED MODE (RED-TESTS RULE)
 
