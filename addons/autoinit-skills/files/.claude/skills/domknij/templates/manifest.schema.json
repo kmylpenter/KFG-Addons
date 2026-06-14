@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "domknij sealed/manifest.json — SSOT zapiętych testów akceptacyjnych (per projekt)",
+  "type": "object",
+  "required": ["schema", "project", "features"],
+  "properties": {
+    "schema": { "const": "sealed-1" },
+    "project": { "type": "string", "description": "nazwa katalogu projektu" },
+    "features": {
+      "type": "object",
+      "description": "feature-id (kebab) -> stan zapięcia",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status", "accepted", "level", "source_files", "test_files"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["stable", "wip"],
+            "description": "stable = kontrakt w tests/ (canary+bramka); wip = zrzut w tests-wip/ (poza canary)"
+          },
+          "accepted": { "type": "string", "format": "date", "description": "data akceptacji usera" },
+          "session": { "type": "string", "description": "krotki identyfikator sesji zapiecia" },
+          "level": {
+            "type": "string",
+            "enum": ["function", "flow", "mixed"],
+            "description": "poziom zatwierdzenia (zasada twarda #2): funkcja=wejscie->wyjscie; flow=np. doPost->200+wiersz"
+          },
+          "source_files": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "pliki zrodlowe ktore feature dotyka (mapowanie do bramki petla-noc)"
+          },
+          "test_files": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "sciezki testow wzgledem .petla-noc/ (tests/sealed_*.test.js lub tests-wip/sealed_*.test.js)"
+          },
+          "coverage": {
+            "type": "object",
+            "description": "3 kubelki uczciwosci pokrycia (zasada twarda #3)",
+            "properties": {
+              "full": { "type": "array", "items": { "type": "string" }, "description": "czysta logika JS — dokladny kontrakt" },
+              "mock_gated": { "type": "array", "items": { "type": "string" }, "description": "za mockami — logika wokol wywolania GAS, nie efekt" },
+              "out_of_scope": { "type": "array", "items": { "type": "string" }, "description": "live UrlFetch, triggery, >300 linii, JS klienta w index.html" }
+            }
+          },
+          "unconfirmed_cases": {
+            "type": "integer",
+            "default": 0,
+            "description": "liczba case'ow confirmed:false (dopisane z odczytu kodu, tylko w tests-wip/)"
+          },
+          "handoff": {
+            "type": ["string", "null"],
+            "description": "sciezka HANDOFF.md jesli feature byl zapiety jako czesciowy; null jesli pelny"
+          },
+          "history": {
+            "type": "array",
+            "description": "append-only log zmian statusu (dojrzewanie)",
+            "items": {
+              "type": "object",
+              "required": ["date", "action"],
+              "properties": {
+                "date": { "type": "string", "format": "date" },
+                "action": {
+                  "type": "string",
+                  "enum": ["sealed-stable", "sealed-wip", "promoted", "rewritten", "dropped-case"],
+                  "description": "sealed-* = pierwsze zapiecie; promoted = WIP->stable; rewritten = przepisany pod nowe zachowanie"
+                },
+                "note": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

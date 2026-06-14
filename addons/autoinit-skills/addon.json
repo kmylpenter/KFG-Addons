@@ -1,8 +1,8 @@
 {
   "name": "autoinit-skills",
   "displayName": "AutoInit Skills",
-  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla, /petla-noc",
-  "version": "2.1.0",
+  "description": "Session Architect dla Claude Code - przygotowanie wielogodzinnych sesji autonomicznych z pelna orkiestracja Tasks. Skills: /session-init, /implement_plan, /petla, /petla-noc, /domknij",
+  "version": "2.2.0",
   "platform": "any",
   "author": "KFG",
   "dependencies": {},
@@ -12,9 +12,10 @@
     "files/.claude/skills/petla/": "~/.claude/skills/petla/",
     "files/.claude/lib/browser-smoke/": "~/.claude/lib/browser-smoke/",
     "files/.claude/rules/never-ask-continue.md": "~/.claude/rules/",
-    "files/.claude/skills/petla-noc/": "~/.claude/skills/petla-noc/"
+    "files/.claude/skills/petla-noc/": "~/.claude/skills/petla-noc/",
+    "files/.claude/skills/domknij/": "~/.claude/skills/domknij/"
   },
-  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /petla (v3.1) - iteracja z konsensusem via SUBAGENTS ONLY, Termux-safe, zero tmux panes (audit/verify/solve/create/smoke). NIE uzywa Agent Teams (usunieto w v3.0). /petla smoke wymaga ~/.claude/lib/browser-smoke (vendored z node_modules).",
+  "notes": "Skills: /session-init (v4.5) - planowanie sesji greenfield/brownfield, /implement_plan (v2.2) - wykonywanie planow z 3 trybami, /petla (v3.1) - iteracja z konsensusem via SUBAGENTS ONLY, Termux-safe, zero tmux panes (audit/verify/solve/create/smoke). NIE uzywa Agent Teams (usunieto w v3.0). /petla smoke wymaga ~/.claude/lib/browser-smoke (vendored z node_modules). /domknij (v1.0) - INTERAKTYWNE zapinanie testow akceptacyjnych na koniec sesji (prospektywnie z akceptacji usera): w pelni/czesciowo/przerywam; stable->tests/ (canary petla-noc), WIP->tests-wip/ (poza canary); reuzywa harnessu petla-noc; WYLACZNIE interaktywny (zaden subagent go nie wola). Part 2: modules/F.md petla-noc rozpoznaje sealed-stable (odblokowanie bramki + etykieta prowenancji).",
   "scripts": {
     "postinstall": "python3 %ADDON_DIR%/merge_skill_rules.py %ADDON_DIR%/skill-rules-fragment.json"
   }
