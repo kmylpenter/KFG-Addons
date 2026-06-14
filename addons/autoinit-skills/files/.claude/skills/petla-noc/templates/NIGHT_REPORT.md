@@ -5,11 +5,18 @@ Sesja: <start>–<koniec> | Projekty: <n> | Branch: cleanup/<data> | Tryb: <norm
 
 ## 🔴 RED / CANARY
 
-<!-- Czerwone testy charakteryzujące — PIERWSZA pozycja, do porannej decyzji. -->
-| Projekt | Test | Od kiedy (last green) | Commit-winowajca | Uwagi |
-|---|---|---|---|---|
+<!-- Czerwone testy charakteryzujące — PIERWSZA pozycja, do porannej decyzji.
+     Typ: "🔴 SEALED-STABLE" = złamany kontrakt z akceptacji usera (/domknij) — NAJGŁOŚNIEJ;
+     "B" = test charakteryzujący z kodu (moduł B). Patrz modules/F.md F1 pkt 3 (prowenancja). -->
+| Projekt | Test | Typ | Od kiedy (last green) | Commit-winowajca | Uwagi |
+|---|---|---|---|---|---|
+| <projekt> | <nazwa> | 🔴 SEALED-STABLE (<feature>, accepted <data>) / B | <data> | <hash/zakres> | <co> |
 <!-- brak failów → jedno zdanie: "Wszystkie testy zielone (N testów, M projektów)." -->
 RED MODE: <nie | projekt X | GLOBALNY (powód)> — wyłączone moduły: <E, G-impl, I-impl, K, P>
+
+<!-- Sealed WIP (z tests-wip/, /domknij) — INFORMACYJNIE, NIGDY nie wywołuje RED (F1b pkt 3).
+     Czerwony WIP = feature w rozwoju, NIE regresja. -->
+Sealed WIP: <N zielonych, M czerwonych — feature w rozwoju; nie zamyka bramki | brak tests-wip/>
 
 ## ☀️ PORANEK — link nocny
 

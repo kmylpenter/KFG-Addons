@@ -249,7 +249,9 @@ projekcie/module.
   progress.json        # per plik: tests none|partial|green|red, moduły done/partial,
                        # priority_queue[], last_green_commit, session history
   map.json             # moduł A (graf wywołań + dynamiczne + entry pointy)
-  tests/               # testy charakteryzujące (*.test.js)
+  tests/               # testy charakteryzujące (*.test.js): moduł B + sealed-stable (/domknij)
+  tests-wip/           # sealed WIP (/domknij) — POZA canary; red≠regresja (F1b)
+  sealed/manifest.json # SSOT zapięć /domknij (status/data/pokrycie per feature)
   harness/             # skopiowany z templates/harness przy pierwszym B
   runtime-log.json     # opcjonalny (moduł P / ręczny eksport usera)
   reports/             # audit-<data>.yaml (format petli!), inne artefakty
@@ -379,7 +381,9 @@ Kolejność sekcji OBOWIĄZKOWA:
   projektów z testami; fail → RED + bisect od `last_green_commit` (jeśli tani:
   ≤8 commitów i testy <60s); diff-audyt kodu zmienionego od ostatniej sesji
   (świeży dług łapany w 24h). Bootstrap: zanim B zbuduje testy, część canary jest
-  pusta — działa tylko diff-audyt.
+  pusta — działa tylko diff-audyt. SEALED (F1b): testy `tests/sealed_*` (z /domknij)
+  jadą w canary jak kontrakty (red=RED, prowenancja „USER-SEALED" w raporcie) i
+  ODBLOKOWUJĄ bramkę pliku; `tests-wip/` puszczane informacyjnie, NIGDY RED.
 - **A — MAPA ZALEŻNOŚCI**: graf funkcja→funkcja + WSZYSTKIE wywołania dynamiczne
   (triggery/menu/google.script.run/handlery wg gas-rules) + entry pointy → map.json.
   Wejście dla wszystkich pozostałych. Aktualizowana co noc (re-parse zmienionych).

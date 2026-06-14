@@ -24,10 +24,46 @@ dług techniczny w ≤24h od powstania.
      na każdym commicie i bisect wskaże fałszywego winowajcę;
    - wynik (hash winowajcy) → sekcja 🔴 raportu; nietani → podaj ZAKRES commitów.
    - Po bisect: `git bisect reset` + `git worktree remove` (sprzątanie obowiązkowe).
+   - **Prowenancja (sealed):** dla każdego `failures[].file` z JSON odczytaj pole
+     `sealed.status` METODĄ JS-AWARE — pliki testów to moduły JS (klucz `status:`, NIE
+     `"status":`), więc grep w stylu JSON nic nie znajdzie. Użyj:
+     `node -e "console.log((require('<abs>/.petla-noc/tests/<plik>').sealed||{}).status||'none')"`
+     (fallback grep: `status:[[:space:]]*["'](stable|wip)["']`). `stable` → w sekcji 🔴 oznacz
+     „🔴 USER-SEALED CONTRACT broken (<feature>) — regresja zachowania POTWIERDZONEGO przez
+     usera dnia <accepted>" (głośniej niż zwykły test B, bo łamie kontrakt z akceptacji, nie
+     tylko zrzut z kodu). Brak pola `sealed` / test B → standardowy wpis. Testy z `tests-wip/`
+     NIGDY tu nie trafiają (poza canary — F1b pkt 3).
 4. exit 2 (setup error harnessu) → NIE jest RED zachowania; wpis "harness broken"
    do raportu + plikom projektu status tests=red w progress (bramka zamknięta).
 5. **Bootstrap:** projekt bez testów → canary pusty (odnotuj w raporcie:
    "canary: brak testów, moduł B w kolejce"). Działa tylko F2.
+
+## F1b. SEALED — testy z /domknij (prowenancja, odblokowanie bramki, WIP)
+
+Testy zapięte przez `/domknij` (interaktywny skill końca sesji, NIGDY nie wołany przez noc)
+żyją w dwóch miejscach: `tests/sealed_*.test.js` (STABLE — kontrakt) i
+`tests-wip/sealed_*.test.js` (WIP — zrzut). Każdy niesie pole `sealed:{status, accepted,
+feature, level, coverage}` (harness je ignoruje — czyta tylko `file:` i `tests`).
+
+1. **STABLE są JUŻ w canary.** `tests/` zawiera sealed-stable obok testów B — F1 puszcza je
+   tym samym harnessem; ich złamanie = RED jak każdy kontrakt (prowenancja: F1 pkt 3). ZERO
+   osobnego przebiegu. To jest siatka, o którą noc opiera regresję przy refaktorze/kwarantannie.
+2. **Odblokowanie bramki (sealed jako pokrycie):** po canary GREEN, dla każdego
+   `.petla-noc/tests/*.test.js` odczytaj jego deklarację `file:` przez
+   `node -e "console.log(require('<abs>').file)"` (plik testu to moduł JS — JSON-grep zawiedzie). Ustaw
+   `progress.files[<file>].tests = green`, jeśli nie jest już `green` — TAKŻE gdy pokrycie
+   pochodzi WYŁĄCZNIE z sealed (B nie ruszał tego pliku). Dzięki temu E/G/I/K mogą
+   refaktorować/kwarantannować plik oparty o siatkę z `/domknij`. Traktowanie sealed = B na
+   potrzeby bramki jest ŚWIADOME: realną ochroną i tak jest „harness green PO zmianie" (BRAMKA
+   pkt 3 w SKILL.md) — zmiana łamiąca zachowanie zapięte przez sealed cofnie się jak każda
+   regresja. Reszta ryzyka (zmiana funkcji NIEpokrytej w tym pliku) jest identyczna jak przy
+   testach B i akceptowana tak samo. NIE downgrade'uj istniejącego `green`/`partial`.
+3. **WIP — przebieg INFORMACYJNY (nigdy RED):** jeśli `.petla-noc/tests-wip/` istnieje i
+   niepusty: `node <projekt>/.petla-noc/harness/harness.js <projekt> --tests
+   .petla-noc/tests-wip --json`. Wynik → sekcja DECYZJE/POMINIĘTE raportu jako informacja
+   („sealed WIP: N zielonych, M czerwonych — feature w rozwoju, NIE regresja"). Czerwony WIP
+   **NIGDY** nie włącza RED MODE ani nie zamyka bramki — to zrzut stanu, nie kontrakt; decyzja
+   stable↔wip należy do usera w `/domknij`. Brak katalogu → pomiń bez wpisu.
 
 ## F2. DIFF SENTINEL — audyt świeżego długu
 
