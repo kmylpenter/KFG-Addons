@@ -50,11 +50,14 @@ DEFAULT_VOICE = cz.PIPER_VOICE
 DEFAULT_LENGTH = cz.PIPER_LENGTH_SCALE
 DEFAULT_SAMPLE_RATE = cz.PIPER_SAMPLE_RATE
 SERVER_IDLE_TIMEOUT_S = int(os.environ.get("PIPER_IDLE_TIMEOUT", "1800"))
-DAEMON_READ_TIMEOUT_S = float(os.environ.get("PIPER_DAEMON_TIMEOUT", "10"))  # SD1: was 30 — a hung
-# daemon stalled a synth ~30s before the cold fallback. 10s leaves comfortable margin for the
-# longest real synth (a 2000-char read-back is a few seconds on this device) while cutting the
-# hung-daemon stall to ~10s. speak_raw's socket timeout is set slightly higher so the server's
-# own kill+respawn fires first.
+DAEMON_READ_TIMEOUT_S = float(os.environ.get("PIPER_DAEMON_TIMEOUT", "40"))  # 2026-06-15: was 10.
+# SD1 set 10 assuming "a 2000-char read-back is a few seconds" — MEASURED WRONG on this device:
+# 147 chars synth in ~2s, so a full ~2000-char read-back is ~27s, which the 10s cap KILLED
+# mid-synth → cold fallback (~48s) AND the killed daemon left the next read cold too. 40s lets a
+# full read-back finish on the WARM daemon (~27s) without dying. A genuinely hung daemon now stalls
+# 40s, but server_alive()'s PING already catches a DEAD daemon before synth, so the only exposure
+# is a mid-synth hang (rare). speak_raw's socket timeout stays above this so the server's own
+# kill+respond fires first.
 _daemon_err_count = 0  # FD4: consecutive synth-failure counter; recycle the daemon after 2 (below)
 
 
@@ -428,7 +431,7 @@ def run_server() -> None:
         shutdown()
 
 
-def speak_raw(text: str, raw_out: Path, timeout_s: float = 12.0) -> int | None:  # SD1: was 30.0
+def speak_raw(text: str, raw_out: Path, timeout_s: float = 45.0) -> int | None:  # 2026-06-15: was 12; must exceed DAEMON_READ_TIMEOUT_S so the server kills+responds first
     """Synthesize text into raw float32 PCM at raw_out via the daemon.
     Returns the sample rate on success, None on failure."""
     if not ensure_running():
@@ -467,7 +470,7 @@ def speak_raw(text: str, raw_out: Path, timeout_s: float = 12.0) -> int | None: 
             pass
 
 
-def speak(text: str, wav_out: Path, timeout_s: float = 12.0) -> bool:  # SD1: was 30.0
+def speak(text: str, wav_out: Path, timeout_s: float = 45.0) -> bool:  # 2026-06-15: was 12
     return speak_raw(text, wav_out, timeout_s) is not None
 
 

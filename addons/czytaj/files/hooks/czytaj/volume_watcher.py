@@ -39,6 +39,38 @@ from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
+# Keep the shared Piper synth daemon WARM for the always-on read-back remote (audit 2026-06-15).
+# Without this, an on-demand VolumeUp read-back with auto-read OFF falls to a ~18-48s COLD synth —
+# the daemon only auto-spawns while a reading flag exists. A sentinel flag (NOT a project sha1, so
+# _speak.is_active() stays False → NO auto-read) keeps piper_server._flags_present() true so the
+# daemon stays warm; `piper_server.py start` spawns it (in a fresh process — never os.fork() this
+# multi-threaded watcher) so the FIRST read-back is already warm. Idle daemon = ~0% CPU / ~111MB
+# RAM (audit: battery-free). Re-checked periodically so a died daemon self-heals.
+_KEEPWARM_SENTINEL = os.path.join(FLAG_DIR, ".keepwarm-readback")
+_KEEPWARM_INTERVAL_S = 60.0
+_last_keepwarm = 0.0
+
+
+def _keep_daemon_warm(force: bool = False) -> None:
+    global _last_keepwarm
+    now = time.monotonic()
+    if not force and now - _last_keepwarm < _KEEPWARM_INTERVAL_S:
+        return
+    _last_keepwarm = now
+    try:
+        open(_KEEPWARM_SENTINEL, "a").close()
+    except OSError:
+        pass
+    try:
+        subprocess.Popen(
+            [sys.executable or "python3",
+             os.path.join(os.path.dirname(os.path.abspath(__file__)), "piper_server.py"), "start"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except (OSError, ValueError) as e:
+        _log("VOLKEY", "keepwarm-fail", repr(e))
+
 # INSTANT path: the Voice Typer accessibility service writes this flag the moment a
 # volume key is pressed (see thoughts/shared/petla/czytaj-volume-keys-CONTRACT.md),
 # bypassing the ~3s Shizuku/adb key-DELIVERY floor that the evdev reader below is
@@ -535,6 +567,7 @@ def main() -> int:
         return 0  # another watcher already owns the lock
     signal.signal(signal.SIGTERM, _on_sigterm)
     _log("VOLKEY", "watcher start pid=", os.getpid())
+    _keep_daemon_warm(force=True)   # warm the synth daemon now so the FIRST read-back is fast
     # PRIMARY path: poll the accessibility trigger flag in a daemon thread. The Voice Typer
     # service delivers presses here at ~0ms (verified screen-on AND screen-off), so this is
     # the sole key path by default. Daemon so teardown (SIGTERM/lock release) isn't blocked.
@@ -557,6 +590,7 @@ def main() -> int:
                 _wake_lock()
             else:
                 _wake_unlock()
+            _keep_daemon_warm()   # re-ensure the daemon stays warm (throttled 60s; self-heals a death)
             if not EVDEV_FALLBACK:
                 # accessibility poller (daemon thread) handles keys; the main loop just
                 # keeps the wakelock fresh so the device can't doze and freeze the poller.
