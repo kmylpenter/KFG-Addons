@@ -267,29 +267,27 @@ if used is not None and resets:
     else:
         spillover = float(used) >= 100.0  # przekroczony limit planu -> spill-over na kredyty
         hours_to_reset = (resets - now) / 3600.0
-        # --- Re-base guard (rollout Anthropica) ---------------------------------
-        # Licznik 7d bywa prze-bazowany do ~0 W TRAKCIE okna (np. migracja per-model
-        # limitow), przy NIEZMIENIONYM resets_at. Bez tego elapsed liczy sie od
-        # poczatku okna i projekcja pokazuje FALSZYWE LOW (+ powiadomienie) przez
-        # caly tydzien. Kotwiczymy elapsed do chwili ostatniego SPADKU licznika.
+        # --- Re-base guard (rollout Anthropica) — wersja HWM (high-water-mark) ---
+        # API bywa prze-bazowuje licznik 7d w DOL w trakcie okna (glitch rolloutu,
+        # NIEZMIENIONY resets_at). W oknie o stalym resecie uzycie tylko ROSNIE az do
+        # resetu — kazdy spadek to glitch API, NIE realny spadek tempa. Dlatego:
+        #   * USED chronimy high-water-markiem (max w oknie) — glitch nie zbija projekcji,
+        #   * ELAPSED liczymy ZAWSZE od realnego startu okna (resets - 7d).
+        # Stara wersja kotwiczyla elapsed do chwili glitcha (rebase_epoch=teraz) -> elapsed
+        # bywal ~0 -> projekcja absurd (28%/8% = 333%) i resetowala sie przy kazdym glitchu.
         window_start = resets - WINDOW_S
         wkey = round(resets / 3600.0)              # klucz okna zaokr. do godziny (API jitteruje resets sub-sek.)
         hwm = cache.get("seven_day_hwm") or {}
-        same_win = hwm.get("reset_key") == wkey
-        prev_used = hwm.get("used") if same_win else None
-        rebase_epoch = hwm.get("rebase_epoch") if same_win else None
-        if rebase_epoch is None:
-            rebase_epoch = window_start            # nowe okno: kotwica = jego poczatek
-        if prev_used is not None and float(used) < float(prev_used) - 2.0:
-            rebase_epoch = now                     # licznik spadl o >2 pkt -> prze-bazowano TERAZ
-        cache["seven_day_hwm"] = {"reset_key": wkey, "used": float(used), "rebase_epoch": rebase_epoch}
-        elapsed_h = max(0.0, min(168.0, (now - rebase_epoch) / 3600.0))
+        prev_hwm = hwm.get("used_hwm") if hwm.get("reset_key") == wkey else None
+        used_hwm = max(float(used), float(prev_hwm)) if prev_hwm is not None else float(used)
+        cache["seven_day_hwm"] = {"reset_key": wkey, "used_hwm": used_hwm}
+        elapsed_h = max(0.0, min(168.0, (now - window_start) / 3600.0))  # ZAWSZE realny elapsed okna
         elapsed_pct = elapsed_h / 168.0 * 100.0
-        remaining = 100.0 - float(used)
-        proj = (float(used) / elapsed_pct * 100.0) if elapsed_pct > 0.1 else None
+        remaining = 100.0 - used_hwm
+        proj = (used_hwm / elapsed_pct * 100.0) if elapsed_pct > 0.1 else None
         if elapsed_h < GRACE_H:
             status = "GRACE"
-            reason = "swieze okno (%.0f h od startu/prze-bazowania) — za malo danych" % elapsed_h
+            reason = "swieze okno (%.0f h od startu) — za malo danych" % elapsed_h
         elif hours_to_reset <= ENDGAME_H:
             if remaining > ENDGAME_REMAIN:
                 status = "LOW"

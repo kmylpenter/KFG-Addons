@@ -151,6 +151,17 @@ if [ "$ROWS" = "1" ]; then echo "PASS historia-dedup (1 wiersz)"; PASS=$((PASS+1
 else echo "FAIL historia ($ROWS wierszy, oczekiwano 1)"; FAIL=$((FAIL+1)); fi
 echo "--- przyklad CSV ---"; cat "$T/h-hist.csv"
 
+# --- glitch API 7d: licznik spada w trakcie okna -> HWM trzyma projekcje (nie false LOW, nie absurd 333%) ---
+GL="$T/c-glitch.json"; mkcache "$GL" 28 82 10   # used 28, reset za 82h -> elapsed realny ~51%
+CLAUDE_USAGE_CACHE_FILE="$GL" CLAUDE_USAGE_HISTORY_FILE="$T/h-glitch.csv" bash "$PACE" --compute-only
+python3 -c "import json; d=json.load(open('$GL')); d['seven_day']['used_pct']=3.0; json.dump(d,open('$GL','w'))"  # API prze-bazowuje used->3
+CLAUDE_USAGE_CACHE_FILE="$GL" CLAUDE_USAGE_HISTORY_FILE="$T/h-glitch.csv" bash "$PACE" --compute-only
+GLP=$(python3 -c "import json;print(round((json.load(open('$GL')).get('pace') or {}).get('projection_pct') or 0))")
+GLE=$(python3 -c "import json;print(round((json.load(open('$GL')).get('pace') or {}).get('elapsed_pct') or 0))")
+if [ "$GLP" -ge 50 ] && [ "$GLP" -le 62 ] && [ "$GLE" -ge 48 ] && [ "$GLE" -le 54 ]; then
+  echo "PASS glitch-api-hwm (proj=$GLP trzyma ~55 mimo used->3; elapsed=$GLE realny)"; PASS=$((PASS+1));
+else echo "FAIL glitch-api (proj=$GLP oczek 50-62; elapsed=$GLE oczek 48-54)"; FAIL=$((FAIL+1)); fi
+
 echo "=============================="
 echo "WYNIK: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" = "0" ]
