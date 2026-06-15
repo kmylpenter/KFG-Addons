@@ -10,6 +10,7 @@
 # inside the Shizuku app (Settings → Service is running).
 
 set -e
+source "$(dirname "$0")/czytaj-env.sh"   # SSOT (audit 2026-06-15): czytaj-shizuku.flag path
 
 PKG=moe.shizuku.privileged.api
 RISH_HOME="$HOME/.shizuku"
@@ -24,7 +25,7 @@ else
   mkdir -p "$HOME/.local/bin"
   RISH_BIN="$HOME/.local/bin/rish"
 fi
-FLAG="$HOME/.claude/czytaj-shizuku.flag"
+FLAG="$CZYTAJ_SHIZUKU_FLAG"
 
 echo ""
 echo "==> czytaj — Shizuku setup"

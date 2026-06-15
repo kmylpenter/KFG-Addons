@@ -19,6 +19,7 @@ CZYTAJ_FLAG_DIR="$CZYTAJ_DIR/czytaj-flags"
 CZYTAJ_LOG="$CZYTAJ_DIR/czytaj.log"
 CZYTAJ_PAUSE_FLAG="$CZYTAJ_DIR/czytaj-pause.flag"
 CZYTAJ_KEYPAUSE_STATE="$CZYTAJ_DIR/czytaj-keypause.state"
+CZYTAJ_SHIZUKU_FLAG="$CZYTAJ_DIR/czytaj-shizuku.flag"   # written by setup-shizuku.sh, read by _speak.py/volume_watcher.py
 # Daemon socket dir — FIXED absolute path (was env-derived → daemon-split → cold synth).
 CZYTAJ_RUN_DIR="$HOME/.cache/czytaj/piper-server"
 

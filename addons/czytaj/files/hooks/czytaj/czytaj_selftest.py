@@ -74,6 +74,28 @@ if os.path.isfile(env_sh):
                         capture_output=True, text=True).stdout.strip()
     check("shell==python RUN_DIR", rd == cz.RUN_DIR, f"shell={rd} py={cz.RUN_DIR}")
     check("shell==python FLAG_DIR", fd == cz.FLAG_DIR, f"shell={fd} py={cz.FLAG_DIR}")
+    sk = subprocess.run(["bash", "-c", f'source "{env_sh}"; printf %s "$CZYTAJ_SHIZUKU_FLAG"'],
+                        capture_output=True, text=True).stdout.strip()
+    check("shell==python SHIZUKU_FLAG", sk == cz.SHIZUKU_FLAG, f"shell={sk} py={cz.SHIZUKU_FLAG}")
+    # ENV-RESOLUTION parity (S3's ACTUAL divergence vector, not just the sha1 algorithm):
+    # exercise the full caller path — shell ${CLAUDE_PROJECT_DIR:-$PWD}+czytaj_project_key vs
+    # python project_key() (project_dir() = CLAUDE_PROJECT_DIR or cwd or getcwd()) — under
+    # unset / empty-string / set, so a future regression in EITHER resolution goes RED here.
+    tcwd = "/root/projekty/KFG-Addons" if os.path.isdir("/root/projekty/KFG-Addons") else home
+    tother = "/root" if tcwd != "/root" else "/tmp"   # a dir != cwd, so 'set' truly exercises resolution
+    base = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    base["PWD"] = tcwd
+    base["PYTHONPATH"] = HOOK_DIR + os.pathsep + base.get("PYTHONPATH", "")  # import czytaj_paths from a foreign cwd
+    for label, cpd in (("unset", None), ("empty", ""), ("set-distinct", tother)):
+        e = dict(base) if cpd is None else {**base, "CLAUDE_PROJECT_DIR": cpd}
+        shk = subprocess.run(
+            ["bash", "-c", f'source "{env_sh}"; czytaj_project_key "${{CLAUDE_PROJECT_DIR:-$PWD}}"'],
+            capture_output=True, text=True, env=e, cwd=tcwd).stdout.strip()
+        pyk = subprocess.run(
+            [sys.executable or "python3", "-c", "import czytaj_paths as c; print(c.project_key(''))"],
+            capture_output=True, text=True, env=e, cwd=tcwd).stdout.strip()
+        check(f"env-resolution key parity [CLAUDE_PROJECT_DIR {label}]",
+              shk == pyk and len(shk) == 40, f"shell={shk} py={pyk}")
 else:
     check("czytaj-env.sh present", False, env_sh)
 

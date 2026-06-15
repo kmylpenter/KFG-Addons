@@ -55,10 +55,19 @@ progress:
   total_issues: 6
   proposed: 0
   applied: 0
-  verified: 4          # S1-5 python, S2-3 shell, S6 ping, SELFTEST — all empirically green
+  verified: 5          # S1-5 python, S2-3 shell, S6 ping, S7 live-sync, SELFTEST — all empirically green
   rejected: 0
   blocked: 0
   needs_human_review: 1   # S8 (in-process play — net-negative, recommended against)
   skipped_low_confidence: 0
   wontfix: 0
-  pending_live_sync: 1    # S7
+  pending_live_sync: 0    # S7 done
+
+final_sweep:
+  reviewers: 2   # correctness/regression + ssot-completeness (fresh subagents, session model)
+  correctness_regression: no_issues   # independently re-proved 33-constant parity, str/Path, orphans, ping counterfactual
+  ssot_completeness: 2_minors_found_then_closed
+  residuals_closed:
+    - "S1 residual: setup-shizuku.sh was the last SHIZUKU_FLAG writer as a literal — now sources czytaj-env.sh + uses CZYTAJ_SHIZUKU_FLAG; canary asserts SHIZUKU parity"
+    - "canary strength: env-resolution parity added (S3's actual vector, not just the sha1 algorithm) — counterfactually proven RED when python project_dir ignores CLAUDE_PROJECT_DIR"
+  verdict: clean   # after residual fixes, both lenses satisfied; live selftest green; repo==runtime
