@@ -13,16 +13,19 @@ def main() -> int:
         data = json.load(sys.stdin)
     except Exception:
         return 0
-    # F2: gate on the per-project flag keyed by the hook's project dir (data['cwd']
-    # / CLAUDE_PROJECT_DIR), not os.getcwd() — read data BEFORE the is_active check.
-    if not is_active(data.get("cwd", "")) or is_recording() or is_in_call():
-        return 0
     transcript = data.get("transcript_path", "")
-    rc = speak_new_text(transcript, kill_previous=True, cwd=data.get("cwd", ""))
-    # Background pre-synth of the latest turn → read-back cache (instant re-read).
-    # Only here, where reading is confirmed on for this window. Fire-and-forget.
+    cwd = data.get("cwd", "")
+    # On-demand VolumeUp read-back is INDEPENDENT of reading mode (the intended design): keep the
+    # last N turns PRE-RENDERED in the read-back cache REGARDLESS of /czytaj on/off, so a press is
+    # always an instant cache HIT, never a cold synth. This runs even with auto-read OFF because the
+    # watcher's keepwarm sentinel keeps FLAG_DIR non-empty (so stop.sh still reaches us) and keeps the
+    # daemon warm. Fire-and-forget; precache_turn skips already-cached turns, so it only synths the new one.
     _precache_latest(transcript)
-    return rc
+    # F2: AUTO-READ (speaking the new text aloud) stays gated on the per-project flag + recording/call.
+    # Gate keyed by the hook's project dir (data['cwd'] / CLAUDE_PROJECT_DIR), not os.getcwd().
+    if not is_active(cwd) or is_recording() or is_in_call():
+        return 0
+    return speak_new_text(transcript, kill_previous=True, cwd=cwd)
 
 
 def _precache_latest(transcript_path: str) -> None:
