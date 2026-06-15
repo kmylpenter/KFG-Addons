@@ -21,46 +21,20 @@ import time
 import wave
 from pathlib import Path
 
-def _resolve_piper_home() -> Path:
-    """Locate the piper-tts install. Order: $PIPER_HOME, then ~/piper-tts,
-    then the old Termux home (piper may have been built under
-    /data/data/com.termux/files/home before a native/PRoot switch moved HOME
-    to /root). First layout that actually contains the binary wins."""
-    env = os.environ.get("PIPER_HOME")
-    if env:
-        return Path(env)
-    for home in (Path.home() / "piper-tts",
-                 Path("/data/data/com.termux/files/home/piper-tts")):
-        if (home / "piper1-gpl" / "libpiper" / "piper").exists():
-            return home
-    return Path.home() / "piper-tts"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import czytaj_paths as cz  # noqa: E402  — SSOT for paths/config (audit 2026-06-15)
 
-
-PIPER_HOME = _resolve_piper_home()
-PIPER_BIN = PIPER_HOME / "piper1-gpl" / "libpiper" / "piper"
-PIPER_LIB = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "lib"
-PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-data"
-PIPER_VOICES = PIPER_HOME / "voices"
-PIPER_VOICE = os.environ.get("PIPER_VOICE", "pl_PL-gosia-medium")
-try:
-    PIPER_SAMPLE_RATE = int(os.environ.get("PIPER_SAMPLE_RATE", "22050"))
-except ValueError:
-    PIPER_SAMPLE_RATE = 22050
-def _resolve_voice_typer_flag() -> str:
-    """First home whose Termux-flags dir exists. On native PRoot ~/storage is
-    absent (HOME=/root), so the flag lives under the Termux home — otherwise
-    dictation can't interrupt playback."""
-    rel = "storage/downloads/Termux-flags/voice-typer-recording.flag"
-    for home in (os.path.expanduser("~"),
-                 "/data/data/com.termux/files/home"):
-        cand = os.path.join(home, rel)
-        if os.path.isdir(os.path.dirname(cand)):
-            return cand
-    return os.path.expanduser("~/" + rel)
-
-
-VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
-VOICE_TYPER_STALE_S = 3.0  # keyboard heartbeats ≤1s (F10/F27 — mirror of _speak.py)
+# Piper install layout + synth defaults from czytaj_paths (S4/S5: were copy-pasted from
+# piper_server.py). Wrapped in Path() where this module uses the Path API.
+PIPER_HOME = Path(cz.PIPER_HOME)
+PIPER_BIN = Path(cz.PIPER_BIN)
+PIPER_LIB = Path(cz.PIPER_LIB)
+PIPER_ESPEAK = Path(cz.PIPER_ESPEAK)
+PIPER_VOICES = Path(cz.PIPER_VOICES)
+PIPER_VOICE = cz.PIPER_VOICE
+PIPER_SAMPLE_RATE = cz.PIPER_SAMPLE_RATE
+VOICE_TYPER_FLAG = cz.VOICE_TYPER_FLAG
+VOICE_TYPER_STALE_S = cz.VOICE_TYPER_STALE_S  # keyboard heartbeats ≤1s (now SSOT, was a mirror)
 
 
 def _vt_recording() -> bool:
@@ -94,7 +68,7 @@ def _ensure_voice_length_scale() -> None:
         return
     _LENGTH_ENSURED = True
     try:
-        target = float(os.environ.get("PIPER_LENGTH_SCALE", "0.6"))
+        target = float(cz.PIPER_LENGTH_SCALE)
         cfg = PIPER_VOICES / f"{PIPER_VOICE}.onnx.json"
         with open(cfg) as fh:
             d = json.load(fh)
@@ -114,19 +88,19 @@ PREHEAT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "preheat.wav"
 SILENT_WAV = Path(os.path.dirname(os.path.abspath(__file__))) / "silent.wav"
 
 
-PREHEAT_MARKER = Path(os.path.expanduser("~/.claude/czytaj-preheat.ts"))
+PREHEAT_MARKER = Path(cz.PREHEAT_MARKER)
 PREHEAT_VALID_S = 60
 # FD2: the volume_watcher writes this on a VolumeDown pause (see volume_watcher.py
 # KEYPAUSE_STATE). Checked every play cycle as a FAST local pause signal so we freeze the
 # play-budget instantly instead of waiting for the ~3s `termux-media-player info` round-trip.
 # MUST match volume_watcher.py KEYPAUSE_STATE.
-KEYPAUSE_STATE = Path(os.path.expanduser("~/.claude/czytaj-keypause.state"))
+KEYPAUSE_STATE = Path(cz.KEYPAUSE_STATE)
 # Heartbeat marker: touched at AUDIO-START and on every play-loop cycle while czytaj audio
 # is actually playing, removed at AUDIO-END. volume_watcher reads its mtime to gate the
 # lock-screen behaviour (volume keys drive czytaj on a LOCKED screen only while something is
 # playing). A SIGKILL'd play stops heartbeating, so the marker goes stale within a few
 # seconds. MUST match volume_watcher.py PLAYING_MARKER.
-PLAYING_MARKER = Path(os.path.expanduser("~/.claude/czytaj-playing.flag"))
+PLAYING_MARKER = Path(cz.PLAYING_MARKER)
 
 
 def _audio_scratch_dir() -> Path | None:
@@ -244,7 +218,7 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
     env["LD_LIBRARY_PATH"] = f"{PIPER_LIB}:{env.get('LD_LIBRARY_PATH', '')}"
     env["ESPEAK_DATA_PATH"] = str(PIPER_ESPEAK)
     env["PIPER_VOICE_PATH"] = str(PIPER_VOICES)
-    env["PIPER_LENGTH_SCALE"] = os.environ.get("PIPER_LENGTH_SCALE", "0.6")
+    env["PIPER_LENGTH_SCALE"] = cz.PIPER_LENGTH_SCALE
     raw_path = out_wav.with_suffix(".raw")
     try:
         _ensure_voice_length_scale()  # F9: tempo lives in the voice .onnx.json
@@ -493,7 +467,7 @@ def play_blocking(audio: Path, raw_rate: int | None = None) -> None:
 
 def _log(*parts: object) -> None:
     try:
-        with open(os.path.expanduser("~/.claude/czytaj.log"), "a") as f:
+        with open(cz.LOG_FILE, "a") as f:
             ts = time.strftime("%H:%M:%S") + f".{int((time.time() % 1) * 1000):03d}"
             f.write(f"{ts} pid={os.getpid()} STREAM {' '.join(str(p) for p in parts)}\n")
     except OSError:
@@ -506,7 +480,7 @@ def _log(*parts: object) -> None:
 # (NOT a held lock — see audit RR-3) lets the active pane have priority and a
 # background pane yield while the channel is busy. FAIL-OPEN: any uncertainty
 # resolves to "play", so the worst case is the old behaviour, never silence.
-CHANNEL_FILE = os.path.expanduser("~/.claude/czytaj-channel")
+CHANNEL_FILE = cz.CHANNEL_FILE
 CHANNEL_STALE_S = 30.0  # a claim older than this is ignored (crashed/killed owner)
 
 

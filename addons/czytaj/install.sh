@@ -6,6 +6,8 @@
 set -e
 
 ADDON_DIR="$(cd "$(dirname "$0")" && pwd)"
+# SSOT (audit 2026-06-15): RUN_DIR / FLAG_DIR come from czytaj-env.sh (the addon source copy).
+source "$ADDON_DIR/files/hooks/czytaj/czytaj-env.sh"
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
 PIPER_HOME="${PIPER_HOME:-$HOME/piper-tts}"
@@ -112,14 +114,14 @@ rm -rf "$CLAUDE_DIR/skills/czytaj"
 # reinstall never silently turns a project off. F49: pause flag also preserved.
 # Only the transient daemon + state.json are reset below.
 rm -f "$HOME/.claude/czytaj-state.json"
-PIPER_RUN="$HOME/.cache/czytaj/piper-server"   # FIXED path, SSOT with piper_server.py + toggle.sh
+PIPER_RUN="$CZYTAJ_RUN_DIR"   # SSOT: one definition in czytaj-env.sh (was hardcoded here + toggle.sh + piper_server.py)
 [ -d "$PIPER_RUN" ] && rm -rf "$PIPER_RUN"
 pkill -9 -f 'python.*piper_server\.py' >/dev/null 2>&1 || true   # F21: anchored (final-sweep)
 pkill -9 -f piper-daemon >/dev/null 2>&1 || true
 # Drop any legacy global flag (pre per-project); per-project flags survive above.
 rm -f "$HOME/.claude/czytaj.flag"
-if [ -d "$HOME/.claude/czytaj-flags" ] && [ -n "$(ls -A "$HOME/.claude/czytaj-flags" 2>/dev/null)" ]; then
-  echo "  [--] zachowano per-project flagi czytania ($(ls -1 "$HOME/.claude/czytaj-flags" | wc -l) projekt(ow))"
+if [ -d "$CZYTAJ_FLAG_DIR" ] && [ -n "$(ls -A "$CZYTAJ_FLAG_DIR" 2>/dev/null)" ]; then
+  echo "  [--] zachowano per-project flagi czytania ($(ls -1 "$CZYTAJ_FLAG_DIR" | wc -l) projekt(ow))"
 fi
 
 # --- settings.json patch (atomic, with backup) ---

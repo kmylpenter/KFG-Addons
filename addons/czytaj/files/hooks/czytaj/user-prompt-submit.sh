@@ -3,7 +3,8 @@
 # + flush any leftover audio from the previous turn
 # + claim "active session" so Stop hooks of OTHER Claude panes stay silent.
 
-LOG="$HOME/.claude/czytaj.log"
+source "$HOME/.claude/hooks/czytaj/czytaj-env.sh" 2>/dev/null   # SSOT (audit 2026-06-15)
+LOG="$CZYTAJ_LOG"
 echo "$(date +%H:%M:%S) pid=$$ UPS-FIRED" >> "$LOG" 2>/dev/null
 
 # GLOBAL-KEYS: ensure the volume-key watcher is running REGARDLESS of czytaj on/off
@@ -23,10 +24,10 @@ fi
 # output downstream.
 HOOK_INPUT=$(cat)
 
-# F1/F18: per-project gate — compute the SAME sha1 key as toggle.sh / _speak.py.
+# F1/F18: per-project gate — ONE key derivation (czytaj_project_key in czytaj-env.sh).
 _CZYTAJ_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
-_CZYTAJ_KEY=$(printf '%s' "$(realpath "$_CZYTAJ_DIR" 2>/dev/null || echo "$_CZYTAJ_DIR")" | sha1sum | cut -d' ' -f1)
-if [ ! -f "$HOME/.claude/czytaj-flags/$_CZYTAJ_KEY.flag" ]; then
+_CZYTAJ_KEY=$(czytaj_project_key "$_CZYTAJ_DIR")
+if [ ! -f "$CZYTAJ_FLAG_DIR/$_CZYTAJ_KEY.flag" ]; then
   echo "$(date +%H:%M:%S) pid=$$ UPS-EXIT mode-off" >> "$LOG" 2>/dev/null
   exit 0
 fi
@@ -36,7 +37,7 @@ fi
 termux-media-player stop >/dev/null 2>&1
 # FS3: a new turn restarts audio → clear the VolumeDown pause-state marker so the watcher's
 # stale in-memory _paused re-syncs and the next VolumeDown PAUSES (not resumes nothing).
-rm -f "$HOME/.claude/czytaj-keypause.state" >/dev/null 2>&1
+rm -f "$CZYTAJ_KEYPAUSE_STATE" >/dev/null 2>&1
 echo "$(date +%H:%M:%S) pid=$$ UPS-MEDIA-STOPPED" >> "$LOG" 2>/dev/null
 
 # Mark THIS session as active + reset spoken-text state. Done via _speak

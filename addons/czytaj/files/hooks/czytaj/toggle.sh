@@ -2,14 +2,14 @@
 # Toggle voice reading mode flag + (re)spawn Piper daemon.
 # Prints exactly "ON" or "OFF" so the skill can branch on a single read.
 
-RUN_DIR="$HOME/.cache/czytaj/piper-server"   # FIXED path, SSOT with piper_server.py (was env-derived → daemon-split → cold synth)
-FLAG_DIR="$HOME/.claude/czytaj-flags"
+source "$HOME/.claude/hooks/czytaj/czytaj-env.sh" || { echo "ERR: czytaj-env.sh missing — reinstall czytaj addon" >&2; exit 1; }
+RUN_DIR="$CZYTAJ_RUN_DIR"   # SSOT (audit 2026-06-15): one definition in czytaj-env.sh
+FLAG_DIR="$CZYTAJ_FLAG_DIR"
 
-# Per-project key — MUST match _speak.py _project_dir/_project_flag and
-# user-prompt-submit.sh EXACTLY. printf '%s' (NOT echo) so no trailing newline
-# changes the sha1; $CLAUDE_PROJECT_DIR is stable across `cd` into a subdir.
+# Per-project key — ONE derivation now (czytaj_project_key in czytaj-env.sh), shared with
+# user-prompt-submit.sh and mirrored by czytaj_paths.project_key (pinned by czytaj_selftest.py).
 DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
-KEY=$(printf '%s' "$(realpath "$DIR" 2>/dev/null || echo "$DIR")" | sha1sum | cut -d' ' -f1)
+KEY=$(czytaj_project_key "$DIR")
 FLAG="$FLAG_DIR/$KEY.flag"
 
 if [ -f "$FLAG" ]; then
@@ -29,7 +29,7 @@ if [ -f "$FLAG" ]; then
       pkill -9 -f "$pat" >/dev/null 2>&1
     done
     rm -rf "$RUN_DIR"
-    rm -f "$HOME/.claude/czytaj-pause.flag"   # F40: clear a stale global pause
+    rm -f "$CZYTAJ_PAUSE_FLAG"   # F40: clear a stale global pause
   fi
 else
   mkdir -p "$FLAG_DIR"

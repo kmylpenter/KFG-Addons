@@ -15,22 +15,20 @@ import subprocess
 import sys
 import time
 
-FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")   # per-project flags: <sha1(realpath)>.flag
-# F15: legacy global ~/.claude/czytaj.flag removed — reading mode is per-project only.
-STATE_FILE = os.path.expanduser("~/.claude/czytaj-state.json")
-SPEAK_LOCK = os.path.expanduser("~/.claude/czytaj-speak.lock")
-LOG_FILE = os.path.expanduser("~/.claude/czytaj.log")
-PAUSE_FLAG = os.path.expanduser("~/.claude/czytaj-pause.flag")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from czytaj_paths import (  # noqa: E402  — SSOT for paths/config/key (audit 2026-06-15)
+    FLAG_DIR, STATE_FILE, SPEAK_LOCK, LOG_FILE, PAUSE_FLAG, ADB_FLAG, SHIZUKU_FLAG,
+    SCREEN_CACHE, ACTIVE_SESSION_FILE, SPOKEN_LEDGER, LAST_FOLDER_FILE,
+    MIC_CACHE, MEDIA_CACHE, VOL_CACHE, PIPER_BIN, VOICE_TYPER_FLAG, VOICE_TYPER_STALE_S,
+    project_dir as _project_dir, project_flag as _project_flag,
+)
+# FLAG_DIR holds per-project flags: <sha1(realpath)>.flag (F15: legacy global flag removed).
 PAUSE_DEFAULT_S = 60.0
-ADB_FLAG = os.path.expanduser("~/.claude/czytaj-adb.flag")
-SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
-SCREEN_CACHE = os.path.expanduser("~/.claude/czytaj-screen.cache")
 SCREEN_CACHE_TTL_S = 5.0
 PROBE_CACHE_TTL_S = 5.0  # mic + media probes
-# Multi-pane coordination: UPS hook writes the active session's transcript
-# ID here; Stop hook reads it and SKIPS if its own transcript doesn't match.
-# Prevents the X4 bug where 4 panes all read aloud when user prompts in one.
-ACTIVE_SESSION_FILE = os.path.expanduser("~/.claude/czytaj-active-session.txt")
+# Multi-pane coordination: UPS hook writes the active session's transcript ID to
+# ACTIVE_SESSION_FILE (from czytaj_paths); Stop hook reads it and SKIPS if its own
+# transcript doesn't match. Prevents the X4 bug (4 panes all read aloud at once).
 ACTIVE_SESSION_TTL_S = 300.0
 
 # Focused-window flag written by the Voice Typer switch key (see the keyboard
@@ -47,9 +45,7 @@ ACTIVE_WINDOW_FLAG = os.environ.get(
 # same reply, N times). A content-hash ledger guarantees a message is spoken at
 # most ONCE across all panes; a shared last-folder file drives the spoken
 # project-name announcement ("Utility. <tekst>") so the user knows which window.
-SPOKEN_LEDGER = os.path.expanduser("~/.claude/czytaj-spoken-ledger.json")
 SPOKEN_LEDGER_TTL_S = 45.0      # sliding window; refreshed on every repeat attempt
-LAST_FOLDER_FILE = os.path.expanduser("~/.claude/czytaj-last-folder.txt")
 FOLDER_REANNOUNCE_S = 30.0      # re-say the folder name after this much channel idle
 
 
@@ -63,44 +59,7 @@ def _log(*parts: object) -> None:
         pass
 SILENT_WAV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "silent.wav")
 PIPER_STREAM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "piper_stream.py")
-def _resolve_piper_bin() -> str:
-    """Locate the piper binary across install layouts. Order: $PIPER_HOME,
-    then ~/piper-tts, then the old Termux home. Piper is often built under
-    /data/data/com.termux/files/home before a native/PRoot switch moves HOME
-    to /root — without this, the hook logs 'missing-piper' and stays silent
-    even though the binary exists. First existing wins; else best-effort ~."""
-    rel = "piper1-gpl/libpiper/piper"
-    env = os.environ.get("PIPER_HOME")
-    if env:
-        return os.path.join(env, rel)
-    for home in (os.path.expanduser("~/piper-tts"),
-                 "/data/data/com.termux/files/home/piper-tts"):
-        cand = os.path.join(home, rel)
-        if os.path.isfile(cand):
-            return cand
-    return os.path.expanduser("~/piper-tts/" + rel)
-
-
-PIPER_BIN = _resolve_piper_bin()
-
-
-def _resolve_voice_typer_flag() -> str:
-    """Voice Typer writes its recording flag under the Termux shared-storage
-    Termux-flags dir. On native PRoot, HOME is /root and ~/storage does NOT
-    exist, so the old ~/storage/... path never matched and is_recording()
-    always returned False — dictation could never interrupt TTS. Resolve to
-    the first home whose Termux-flags dir actually exists."""
-    rel = "storage/downloads/Termux-flags/voice-typer-recording.flag"
-    for home in (os.path.expanduser("~"),
-                 "/data/data/com.termux/files/home"):
-        cand = os.path.join(home, rel)
-        if os.path.isdir(os.path.dirname(cand)):
-            return cand
-    return os.path.expanduser("~/" + rel)
-
-
-VOICE_TYPER_FLAG = _resolve_voice_typer_flag()
-VOICE_TYPER_STALE_S = 3.0  # keyboard heartbeats ≤1s; ignore a flag older than this (crashed)
+# PIPER_BIN, VOICE_TYPER_FLAG, VOICE_TYPER_STALE_S come from czytaj_paths (imported above).
 MAX_SPOKEN_TEXT_BYTES = 16384
 
 
@@ -111,25 +70,8 @@ def preheat_audio() -> None:
     return
 
 
-def _project_dir(cwd: str = "") -> str:
-    """The ONE canonical project dir for the per-project key (F1/F5).
-    Order: $CLAUDE_PROJECT_DIR (stable even after `cd` into a subdir) → the
-    hook's data['cwd'] → os.getcwd(). toggle.sh / user-prompt-submit.sh resolve
-    the SAME source (${CLAUDE_PROJECT_DIR:-$PWD}) so their sha1 keys line up."""
-    return os.environ.get("CLAUDE_PROJECT_DIR") or cwd or os.getcwd()
-
-
-def _project_flag(cwd: str = "") -> str:
-    """Per-project reading-mode flag path, keyed by sha1 of the project dir's
-    realpath. MUST match toggle.sh / user-prompt-submit.sh EXACTLY:
-        printf '%s' "$(realpath "${CLAUDE_PROJECT_DIR:-$PWD}")" | sha1sum
-    (printf '%s' — NOT echo, whose trailing newline would change the hash) so
-    enabling /czytaj in one project does NOT enable it in every open window."""
-    d = os.path.realpath(_project_dir(cwd))
-    key = hashlib.sha1(d.encode("utf-8")).hexdigest()
-    return os.path.join(FLAG_DIR, key + ".flag")
-
-
+# _project_dir / _project_flag come from czytaj_paths (imported above as aliases) — the
+# per-project sha1 key now has ONE canonical derivation shared with czytaj-env.sh (S3).
 def is_active(cwd: str = "") -> bool:
     """Reading mode is PER-PROJECT (was global, which made one /czytaj read in
     every open window). No legacy global fallback — that would re-introduce the
@@ -429,7 +371,7 @@ def is_mic_recording_global() -> bool:
     ADB. Fails open. Cached for PROBE_CACHE_TTL_S (5s)."""
     if _shell_cmd_prefix() is None:
         return False
-    cache = os.path.expanduser("~/.claude/czytaj-mic.cache")
+    cache = MIC_CACHE
     try:
         if time.time() - os.stat(cache).st_mtime < PROBE_CACHE_TTL_S:
             return open(cache).read().strip() == "1"
@@ -475,7 +417,7 @@ def is_external_media_playing() -> bool:
     Requires Shizuku or Wireless ADB. Fails open. Cached for PROBE_CACHE_TTL_S (5s)."""
     if _shell_cmd_prefix() is None:
         return False
-    cache = os.path.expanduser("~/.claude/czytaj-media.cache")
+    cache = MEDIA_CACHE
     try:
         if time.time() - os.stat(cache).st_mtime < PROBE_CACHE_TTL_S:
             return open(cache).read().strip() == "1"
@@ -970,7 +912,7 @@ try:
     MIN_AUDIBLE_VOL = int(os.environ.get("CZYTAJ_MIN_AUDIBLE_VOL", "3") or "3")
 except ValueError:
     MIN_AUDIBLE_VOL = 3
-_VOL_CACHE = os.path.expanduser("~/.claude/czytaj-vol.cache")
+_VOL_CACHE = VOL_CACHE
 _VOL_CACHE_TTL_S = 5.0
 
 

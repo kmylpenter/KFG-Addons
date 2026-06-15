@@ -34,10 +34,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _speak import _log, read_message_back, is_readback_playing  # noqa: E402
-
-FLAG_DIR = os.path.expanduser("~/.claude/czytaj-flags")
-SHIZUKU_FLAG = os.path.expanduser("~/.claude/czytaj-shizuku.flag")
-LOCK_FILE = os.path.expanduser("~/.claude/czytaj-volume-watcher.lock")
+from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
+    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, WATCHER_LOCK as LOCK_FILE,
+)
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
 # INSTANT path: the Voice Typer accessibility service writes this flag the moment a
@@ -99,14 +98,12 @@ _paused = False
 # FS3: filesystem mirror of _paused. The UPS hook removes this on every new prompt, so the
 # watcher's in-memory _paused (which goes stale when a new turn stops+restarts the player)
 # is re-synced across processes — the first VolumeDown after a new turn then PAUSES the
-# fresh audio instead of sending a resume to nothing.
-KEYPAUSE_STATE = os.path.expanduser("~/.claude/czytaj-keypause.state")
+# fresh audio instead of sending a resume to nothing. KEYPAUSE_STATE comes from czytaj_paths.
 # Lock-screen gate: piper_stream heartbeats this marker while czytaj audio is actually
 # playing (see piper_stream.py PLAYING_MARKER). A volume key on a LOCKED screen drives czytaj
 # only while this is fresh (so pause/scrub work on what's playing) — otherwise the press was
-# meant only to change the volume and we must NOT fire a spurious read-back. MUST match
-# piper_stream.py PLAYING_MARKER.
-PLAYING_MARKER = os.path.expanduser("~/.claude/czytaj-playing.flag")
+# meant only to change the volume and we must NOT fire a spurious read-back. PLAYING_MARKER
+# now comes from czytaj_paths (was a "MUST match piper_stream.py" copy — now genuinely SSOT).
 PLAYING_MARKER_FRESH_S = 6.0   # > the longest play-loop cycle (the 5s `info` timeout + 0.3s sleep)
                                # so genuinely-playing audio never reads stale mid-playback
 

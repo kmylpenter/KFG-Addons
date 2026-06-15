@@ -27,43 +27,28 @@ import time
 import wave
 from pathlib import Path
 
-def _resolve_piper_home() -> Path:
-    """Locate the piper-tts install. Order: $PIPER_HOME, then ~/piper-tts,
-    then the old Termux home (piper may have been built under
-    /data/data/com.termux/files/home before a native/PRoot switch moved HOME
-    to /root). First layout that actually contains the binary wins."""
-    env = os.environ.get("PIPER_HOME")
-    if env:
-        return Path(env)
-    for home in (Path.home() / "piper-tts",
-                 Path("/data/data/com.termux/files/home/piper-tts")):
-        if (home / "piper1-gpl" / "libpiper" / "piper").exists():
-            return home
-    return Path.home() / "piper-tts"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import czytaj_paths as cz  # noqa: E402  — SSOT for paths/config (audit 2026-06-15)
 
-
-PIPER_HOME = _resolve_piper_home()
-PIPER_DAEMON = PIPER_HOME / "piper1-gpl" / "libpiper" / "piper-daemon"
-PIPER_LIB = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "lib"
-PIPER_ESPEAK = PIPER_HOME / "piper1-gpl" / "libpiper" / "install" / "espeak-ng-data"
-PIPER_VOICES = PIPER_HOME / "voices"
-FLAG_DIR = Path.home() / ".claude" / "czytaj-flags"   # F1: per-project (was global czytaj.flag)
-
-# FIXED path (was XDG_RUNTIME_DIR/TMPDIR/-derived): those env vars DIFFER across czytaj
-# processes — Claude-Code-spawned hooks get TMPDIR=/tmp/claude-*, others get none → each
-# computed a DIFFERENT RUN_DIR → separate daemons that never shared the socket → synth was
-# ALWAYS cold (~3-7s) and zombies piled up. A stable HOME path makes every process (watcher,
-# Stop hook, precache, piper_stream) share ONE warm, persistent daemon. MUST match toggle.sh.
-RUN_DIR = Path.home() / ".cache" / "czytaj" / "piper-server"
-SOCKET_PATH = RUN_DIR / "server.sock"
-PID_FILE = RUN_DIR / "server.pid"
-LOCK_FILE = RUN_DIR / "server.lock"
-DEFAULT_VOICE = os.environ.get("PIPER_VOICE", "pl_PL-gosia-medium")
-DEFAULT_LENGTH = os.environ.get("PIPER_LENGTH_SCALE", "0.6")
-try:
-    DEFAULT_SAMPLE_RATE = int(os.environ.get("PIPER_SAMPLE_RATE", "22050"))
-except ValueError:
-    DEFAULT_SAMPLE_RATE = 22050
+# Piper install layout + daemon RUN_DIR + synth defaults now come from czytaj_paths.
+# S2/S4/S5: RUN_DIR used to be hardcoded HERE and in toggle.sh and install.sh (kept aligned
+# by a "MUST match" comment) — its earlier divergence split the daemon across processes so the
+# socket was never shared and synth was ALWAYS cold (~3-7s); the piper-home resolver was
+# copy-pasted across 3 files. Wrapped in Path() because this module uses the Path API.
+# RUN_DIR MUST equal czytaj-env.sh's CZYTAJ_RUN_DIR — pinned by czytaj_selftest.py.
+PIPER_HOME = Path(cz.PIPER_HOME)
+PIPER_DAEMON = Path(cz.PIPER_DAEMON)
+PIPER_LIB = Path(cz.PIPER_LIB)
+PIPER_ESPEAK = Path(cz.PIPER_ESPEAK)
+PIPER_VOICES = Path(cz.PIPER_VOICES)
+FLAG_DIR = Path(cz.FLAG_DIR)   # F1: per-project flags dir
+RUN_DIR = Path(cz.RUN_DIR)
+SOCKET_PATH = Path(cz.SOCKET_PATH)
+PID_FILE = Path(cz.PID_FILE)
+LOCK_FILE = Path(cz.SERVER_LOCK)
+DEFAULT_VOICE = cz.PIPER_VOICE
+DEFAULT_LENGTH = cz.PIPER_LENGTH_SCALE
+DEFAULT_SAMPLE_RATE = cz.PIPER_SAMPLE_RATE
 SERVER_IDLE_TIMEOUT_S = int(os.environ.get("PIPER_IDLE_TIMEOUT", "1800"))
 DAEMON_READ_TIMEOUT_S = float(os.environ.get("PIPER_DAEMON_TIMEOUT", "10"))  # SD1: was 30 — a hung
 # daemon stalled a synth ~30s before the cold fallback. 10s leaves comfortable margin for the
@@ -81,15 +66,27 @@ def _is_alive(pid: int) -> bool:
     return True
 
 
-def _can_connect(timeout: float = 0.2) -> bool:
+def _ping(timeout: float = 0.3) -> bool:
+    """Connect AND round-trip a {"ping":1} → {"ok":true}. A bare socket connect (the old
+    _can_connect) passed even for a daemon that was bound but WEDGED, so server_alive would
+    green-light a dead daemon and every synth silently took the ~3-7s cold path (audit S6).
+    A real pong proves the accept loop is actually servicing requests."""
     if not SOCKET_PATH.exists():
         return False
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
         s.connect(str(SOCKET_PATH))
-        return True
-    except OSError:
+        s.sendall(b'{"ping":1}\n\n')
+        data = b""
+        while b"\n" not in data:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            data += chunk
+        resp = json.loads(data.decode("utf-8", "ignore").strip() or "{}")
+        return bool(resp.get("ok"))
+    except (OSError, json.JSONDecodeError):
         return False
     finally:
         try:
@@ -112,10 +109,11 @@ def server_alive() -> bool:
             except OSError:
                 pass
         return False
-    if not _can_connect():
-        # F19: PID alive but socket unreachable (killed -9 mid-bind, or a RUN_DIR
-        # mismatch left a stale socket). Remove the stale socket so the next
-        # ensure_running rebinds cleanly instead of a client stalling on a dead path.
+    if not _ping():
+        # F19/S6: PID alive but the daemon doesn't pong — socket unreachable (killed -9
+        # mid-bind / stale socket) OR bound-but-wedged. Remove the stale socket so the next
+        # ensure_running rebinds cleanly (recycling a wedged daemon) instead of a client
+        # stalling on a dead path or silently falling back to a ~3-7s cold synth every call.
         try:
             SOCKET_PATH.unlink()
         except OSError:
@@ -192,7 +190,7 @@ def _spawn_daemon() -> subprocess.Popen | None:
         # F13: route the long-lived daemon's stderr to czytaj.log instead of
         # /dev/null so synth failures are diagnosable. The child keeps its own
         # dup of the fd, so closing our handle after spawn is fine.
-        with open(os.path.expanduser("~/.claude/czytaj.log"), "a") as _errlog:
+        with open(cz.LOG_FILE, "a") as _errlog:
             d = subprocess.Popen(
                 [str(PIPER_DAEMON), "-m", DEFAULT_VOICE],
                 stdin=subprocess.PIPE,
@@ -371,6 +369,9 @@ def run_server() -> None:
                     req = json.loads(req_text)
                 except json.JSONDecodeError:
                     conn.sendall(b'{"ok":false,"error":"bad-json"}\n')
+                    return
+                if req.get("ping"):   # S6: liveness probe — answer without synth
+                    conn.sendall(b'{"ok":true}\n')
                     return
                 text = req.get("text", "")
                 wav_out = req.get("wav_out", "")
