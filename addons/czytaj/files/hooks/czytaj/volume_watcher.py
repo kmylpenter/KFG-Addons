@@ -151,7 +151,10 @@ def _termux_foreground() -> bool:
     try:
         out = subprocess.run(
             ["rish", "-c", "dumpsys window 2>/dev/null | grep -m1 mCurrentFocus"],
-            capture_output=True, text=True, timeout=4,
+            capture_output=True, text=True, timeout=8,   # was 4 — rish runs ~4s under PRoot's
+            # Android-14 writable-dex check, so a 4s timeout fired ~2/3 of the time → _termux_foreground
+            # falsely returned False → read-back was skipped ("locked/other-app") even in Termux. 8s
+            # gives rish margin; the first press of a 30s burst pays it once, then FG_CACHE makes it instant.
         ).stdout
         val = TERMUX_PKG in out
     except (subprocess.SubprocessError, FileNotFoundError, OSError):
