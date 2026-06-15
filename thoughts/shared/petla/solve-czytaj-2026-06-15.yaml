@@ -1,0 +1,64 @@
+meta:
+  mode: solve
+  target: addons/czytaj/files/hooks/czytaj
+  audit_file: thoughts/shared/petla/czytaj-ssot-findings-2026-06-15.yaml
+  branch: fix/czytaj-ssot-2026-06-15
+  scope_decision: "Wszystko + sync na żywo (user, 2026-06-15)"
+  started: "2026-06-15"
+  status: in_progress
+  verification: "empirical smoke (czytaj_selftest.py) primary; targeted subagent review on big diffs; NO browser (not a web app)"
+  no_test_net_baseline: "modules import OK pre-change (verified); no existing czytaj tests"
+
+fixes:
+  - issue_id: S1+S2+S3+S4+S5
+    issue: "No shared SoT — paths/RUN_DIR/project-key/piper-resolver/config defaults duplicated"
+    proposal:
+      action: create+edit
+      target: "czytaj_paths.py (new) + rewire _speak.py, piper_server.py, piper_stream.py, volume_watcher.py"
+      rationale: "Single module owns every value (as str); Path-based files wrap locally. Dissolves S1/S2/S4/S5 + Python half of S3."
+    status: proposed
+  - issue_id: S2+S3-shell
+    issue: "RUN_DIR/FLAG_DIR/sha1-key duplicated across 5 shell scripts"
+    proposal:
+      action: create+edit
+      target: "czytaj-env.sh (new) + rewire toggle.sh, user-prompt-submit.sh, install.sh, stop.sh, pre-tool-use.sh"
+      rationale: "Shell internally single-source; cross-language boundary pinned by canary test (not runtime python — latency)."
+    status: proposed
+  - issue_id: S6
+    issue: "server_alive() trusts socket-connect, no app-level PING -> silent cold fallback"
+    proposal: {action: edit, target: "piper_server.py", rationale: "Add ping/ok round-trip in liveness check"}
+    status: proposed
+  - issue_id: S8
+    issue: "Cache-HIT read-back forks a fresh python3 per press (~250-300ms)"
+    proposal: {action: edit, target: "volume_watcher.py + _speak.py", rationale: "Play cached wav in-process from the watcher"}
+    status: needs_human_review
+    decision: >
+      NOT IMPLEMENTED — recommended AGAINST. The current scrub interrupt is process-kill
+      (_stop_previous_readback -> os.killpg), which is INSTANT and clean. In-process play
+      would need cooperative cancellation inside _play_via_termux_blocking's poll loop, where
+      cancellation latency is 0.3-5s (the loop blocks in `termux-media-player info`, timeout 5s),
+      plus concurrency risk (multiple play loops fighting the single Android player — exactly the
+      bug the process model prevents). Net-NEGATIVE for reliability (degrades the scrub interrupt
+      the audit cares about) to save ~250ms on the already-fast cache-HIT path. The fork model is
+      intentionally well-suited here. If pursued later, it needs its own scrub-interrupt test
+      (cancellation latency must stay sub-300ms) — a separate, carefully-tested change, not this pass.
+  - issue_id: S7
+    issue: "repo<->runtime drift (setup-shizuku.sh) + sync the whole refactor live"
+    proposal: {action: edit, target: "re-run install.sh -> ~/.claude/hooks/czytaj + live smoke", rationale: "User chose live sync"}
+    status: proposed
+  - issue_id: SELFTEST
+    issue: "No verification net for a test-less refactor"
+    proposal: {action: create, target: "czytaj_selftest.py (new)", rationale: "Empirical canary: imports + shell/python key agreement + hook exec"}
+    status: proposed
+
+progress:
+  total_issues: 6
+  proposed: 0
+  applied: 0
+  verified: 4          # S1-5 python, S2-3 shell, S6 ping, SELFTEST — all empirically green
+  rejected: 0
+  blocked: 0
+  needs_human_review: 1   # S8 (in-process play — net-negative, recommended against)
+  skipped_low_confidence: 0
+  wontfix: 0
+  pending_live_sync: 1    # S7

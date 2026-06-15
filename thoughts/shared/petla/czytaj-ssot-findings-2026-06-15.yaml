@@ -1,0 +1,142 @@
+# czytaj SSOT/DRY findings — 2026-06-15 — PURE AUDIT (no fixes applied)
+# Solve-ready: feed to `/petla solve thoughts/shared/petla/czytaj-ssot-findings-2026-06-15.yaml`
+# (preferably in a fresh window). Every finding VERIFIED against the file:line cited.
+audit:
+  target: addons/czytaj/files/hooks/czytaj
+  lens: ssot-dry (speed + reliability)
+  mode: pure-audit
+  date: 2026-06-15
+  method: targeted manual read (not generic /audytssot sweep)
+  summary: >
+    czytaj has no single source of truth for runtime paths or synth config. The 3 core
+    executables + 4th watcher + 5 shell scripts re-declare the same facts as literals in two
+    languages, kept aligned by 8 hand-maintained "MUST match" comments. This class already
+    produced the worst latency bug (RUN_DIR daemon-split -> always-cold synth). Top fix: one
+    shared paths/config module + a sourced shell env, dissolving S1/S2/S4/S5 and the Python
+    half of S3.
+
+# confirmed in current code — do NOT re-chase
+resolved_since_2026_06_03:
+  - tmux active-window probe now cached (TTL 2.5s) — _speak.py:1367-1384
+  - auto-read wav saved into read-back cache (instant re-read) — _speak.py:1626-1652,1187,1741
+  - cache key unified on basename(transcript) across save+read — _speak.py:1187,1725,1741
+  - daemon idle-off while any flag exists — piper_server.py:417
+  - auto-read guard probes parallelized — commit 99a262f
+
+findings:
+  - id: S1
+    severity: high
+    dimension: reliability
+    type: scattered-source-of-truth
+    title: No shared paths module; state-file paths re-declared across 8 files, 2 languages
+    status: latent   # currently aligned, one edit from breaking
+    evidence:
+      FLAG_DIR: [_speak.py:18, piper_server.py:50, volume_watcher.py:38, toggle.sh:6, user-prompt-submit.sh:29, pre-tool-use.sh:7, stop.sh:7]
+      czytaj_log: [_speak.py:22, piper_stream.py:496, piper_server.py:195, user-prompt-submit.sh:6]
+      KEYPAUSE_STATE: [piper_stream.py:123, volume_watcher.py:103, user-prompt-submit.sh:39]
+      SHIZUKU_FLAG: [_speak.py:26, volume_watcher.py:39, setup-shizuku.sh:27]
+      PLAYING_MARKER: [piper_stream.py:129, volume_watcher.py:109]
+    impact: >
+      Writer and reader of the same file can silently disagree after any rename; FLAG_DIR is the
+      activation gate, so blast radius is the whole skill. precache.py/stop.py/pre-tool-use.py are
+      CLEAN (they import from _speak) — debt is concentrated in the 3 core files + shell.
+    recommendation: Introduce czytaj_paths.py owning every ~/.claude/czytaj-* path; import it.
+
+  - id: S2
+    severity: high
+    dimension: reliability+speed
+    type: duplicated-constant-sync-by-comment
+    title: RUN_DIR (daemon socket dir) hardcoded in 3 places
+    status: latent
+    evidence: [piper_server.py:57, toggle.sh:5, install.sh:115]
+    impact: >
+      This exact value's earlier divergence split the daemon -> socket never shared -> synth ALWAYS
+      cold (~3-7s), the headline latency complaint. Three hand-aligned copies; editing one (e.g. to
+      XDG_RUNTIME_DIR) re-splits it and synth silently goes cold again.
+    recommendation: One shared definition (module for Python, sourced czytaj-env.sh for shell).
+    priority: 1
+
+  - id: S3
+    severity: high
+    dimension: reliability
+    type: duplicated-logic-cross-language
+    title: Per-project key (sha1 of realpath) derived in 3 places, MUST match EXACTLY
+    status: latent
+    evidence: [_speak.py:128-129, toggle.sh:12, user-prompt-submit.sh:28]
+    impact: >
+      This key gates whether reading is on. Drift -> /czytaj writes a flag under a key the hooks
+      compute differently -> reading silently never activates (skill looks dead, no error). Live
+      drift vectors: Python "CLAUDE_PROJECT_DIR or cwd or getcwd()" vs shell "${CLAUDE_PROJECT_DIR:-$PWD}"
+      differ on empty-vs-unset; os.path.realpath vs coreutils realpath symlink semantics.
+    recommendation: One canonical key function exported; shell sources it or calls python for it.
+    priority: 2
+
+  - id: S4
+    severity: medium
+    dimension: maintainability
+    type: duplicated-helper
+    title: Piper install-location resolver duplicated 3x; PIPER_* paths 2x
+    status: latent
+    evidence: [piper_server.py:30-49, piper_stream.py:24-43, _speak.py:66-84]
+    impact: >
+      Next HOME/install-layout migration must be fixed in 3 functions; miss one and that entry
+      point logs missing-piper and stays silent. (Device already migrated Termux->PRoot once.)
+    recommendation: Single resolver + PIPER_* in the shared module.
+
+  - id: S5
+    severity: medium
+    dimension: reliability
+    type: duplicated-config-default
+    title: Synth config defaults duplicated across server and stream
+    status: latent
+    evidence:
+      PIPER_VOICE: [piper_server.py:61, piper_stream.py:44]
+      sample_rate_22050: [piper_server.py:64, piper_server.py:66, piper_stream.py:46, piper_stream.py:48]
+      length_scale_0_6: [piper_server.py:62, piper_stream.py:97, piper_stream.py:247]
+      VOICE_TYPER_STALE_S: [piper_stream.py:63, _speak.py:103]
+    impact: Daemon synthesizes with one set, stream assumes another on drift -> garbled/wrong-rate audio.
+    recommendation: Defaults live once in the shared module.
+
+  - id: S6
+    severity: medium
+    dimension: speed
+    type: incomplete-liveness-check
+    title: server_alive() trusts socket-connect, not an app-level PING (STILL OPEN from 2026-06-03)
+    status: open
+    evidence: [piper_server.py:101-124, piper_server.py:84-98]
+    impact: >
+      A bound-but-wedged daemon passes the check; client proceeds and synth silently takes the cold
+      path (~3-7s) vs warm (~1s). Liveness SoT is a proxy (socket reachable), not the real signal
+      (daemon responds). Only OPEN performance-regression class remaining.
+    recommendation: Add ping/ok round-trip with ~0.3s timeout in server_alive(); removes cold-fallback class.
+    priority: 3
+
+  - id: S7
+    severity: low
+    dimension: reliability-drift
+    type: repo-runtime-drift
+    title: setup-shizuku.sh runtime copy stale vs repo (missing M51 anchor-verify guard)
+    status: active   # runtime != repo right now
+    evidence:
+      repo_has: [setup-shizuku.sh:57, setup-shizuku.sh:83-89]
+      runtime_missing: ~/.claude/hooks/czytaj/setup-shizuku.sh
+      note: all other .py/.sh files byte-identical repo-vs-runtime (verified)
+    impact: Live setup would symlink an unverified privileged rish relay (what M51 prevents). Setup path, not hot path.
+    recommendation: Re-run install.sh; treat repo as the only source, stop hand-editing runtime.
+
+  - id: S8
+    severity: low
+    dimension: speed
+    type: avoidable-process-spawn
+    title: Cache-HIT read-back still forks a fresh python3 per press
+    status: open
+    evidence: [_speak.py:1663, _speak.py:1676-1680]
+    impact: ~250-300ms interpreter spawn per scrub press even on a HIT. volume_watcher already imports _speak in-process (:36).
+    recommendation: Play the cached wav in-process from volume_watcher instead of forking piper_stream. Not SSOT.
+
+# by leverage; S2/S3/S1 are the reliability core
+remediation_order: [S2, S3, S1, S4, S5, S6, S7, S8]
+out_of_scope:
+  - install.sh Termux-only shebang/guard (intentional; cross-platform handled at install-addons.sh)
+  - termux-media-player playback floor ~1.6-1.9s (structural, no PulseAudio)
+  - multi-window-same-project-dir transcript ambiguity (inherent resolve-by-dir, not a duplicate source)
