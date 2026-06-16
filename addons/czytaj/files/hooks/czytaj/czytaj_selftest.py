@@ -77,6 +77,14 @@ if os.path.isfile(env_sh):
     sk = subprocess.run(["bash", "-c", f'source "{env_sh}"; printf %s "$CZYTAJ_SHIZUKU_FLAG"'],
                         capture_output=True, text=True).stdout.strip()
     check("shell==python SHIZUKU_FLAG", sk == cz.SHIZUKU_FLAG, f"shell={sk} py={cz.SHIZUKU_FLAG}")
+    # M7: pin the other cross-language SSOT values too (written by bash AND read/written by
+    # python, consumed cross-process) so a one-sided rename of any of them drifts RED here.
+    for var, pyval, label in (("CZYTAJ_LOG", cz.LOG_FILE, "LOG_FILE"),
+                              ("CZYTAJ_PAUSE_FLAG", cz.PAUSE_FLAG, "PAUSE_FLAG"),
+                              ("CZYTAJ_KEYPAUSE_STATE", cz.KEYPAUSE_STATE, "KEYPAUSE_STATE")):
+        sv = subprocess.run(["bash", "-c", f'source "{env_sh}"; printf %s "${var}"'],
+                            capture_output=True, text=True).stdout.strip()
+        check(f"shell==python {label}", sv == pyval, f"shell={sv} py={pyval}")
     # ENV-RESOLUTION parity (S3's ACTUAL divergence vector, not just the sha1 algorithm):
     # exercise the full caller path — shell ${CLAUDE_PROJECT_DIR:-$PWD}+czytaj_project_key vs
     # python project_key() (project_dir() = CLAUDE_PROJECT_DIR or cwd or getcwd()) — under
