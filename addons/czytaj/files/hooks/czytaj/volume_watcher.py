@@ -33,7 +33,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import _log, read_message_back, is_readback_playing  # noqa: E402
+from _speak import _log, read_message_back, is_readback_playing, _run_shell  # noqa: E402
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
     FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER,
     TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE,
@@ -199,18 +199,13 @@ def _termux_foreground() -> bool:
     ttl = FG_CACHE_TTL_S if _fg_cache["v"] else FG_FALSE_TTL_S
     if now - _fg_cache["t"] < ttl:
         return _fg_cache["v"]
-    val = False
-    try:
-        out = subprocess.run(
-            ["rish", "-c", "dumpsys window 2>/dev/null | grep -m1 mCurrentFocus"],
-            capture_output=True, text=True, timeout=8,   # was 4 — rish runs ~4s under PRoot's
-            # Android-14 writable-dex check, so a 4s timeout fired ~2/3 of the time → _termux_foreground
-            # falsely returned False → read-back was skipped ("locked/other-app") even in Termux. 8s
-            # gives rish margin; the first press of a 30s burst pays it once, then FG_CACHE makes it instant.
-        ).stdout
-        val = TERMUX_PKG in out
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        val = False
+    # M14 (audit 2026-06-15): route the privileged probe through _speak._run_shell (Shizuku-
+    # preferred, ADB fallback, one privileged-shell path for the whole addon) instead of a bare
+    # rish call. timeout_s=8: rish runs ~4s under PRoot's Android-14 writable-dex check, so a 4s
+    # timeout fired ~2/3 of the time → false "not foreground" → read-back wrongly skipped. _run_shell
+    # returns "" on ANY failure, so TERMUX_PKG-not-in-"" fails CLOSED exactly as the old try did.
+    _ok, out = _run_shell("dumpsys window 2>/dev/null | grep -m1 mCurrentFocus", timeout_s=8.0)
+    val = TERMUX_PKG in out
     _fg_cache["t"] = now
     _fg_cache["v"] = val
     return val
@@ -646,17 +641,14 @@ def _car_connected() -> bool:
     if now - _bt_cache["t"] < BT_DETECT_TTL_S:
         return _bt_cache["v"]
     val = False
-    try:
-        out = subprocess.run(
-            ["rish", "-c", "dumpsys bluetooth_manager 2>/dev/null | grep -i 'active:'"],
-            capture_output=True, text=True, timeout=8,
-        ).stdout
-        for line in out.splitlines():
-            if BT_DEVICE_PAT in line.lower():   # name on an Active: line ⟹ connected+active
-                val = True
-                break
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        val = False
+    # M14: privileged probe via _speak._run_shell (Shizuku-preferred + ADB fallback, one path).
+    # grep exits non-zero (→ _run_shell out="") when no Active: line exists (disconnected), so the
+    # loop sees nothing and val stays False — same fail-closed behaviour as the old bare rish call.
+    _ok, out = _run_shell("dumpsys bluetooth_manager 2>/dev/null | grep -i 'active:'", timeout_s=8.0)
+    for line in out.splitlines():
+        if BT_DEVICE_PAT in line.lower():   # name on an Active: line ⟹ connected+active
+            val = True
+            break
     _bt_cache["t"] = now
     _bt_cache["v"] = val
     return val
