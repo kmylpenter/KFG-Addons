@@ -1,0 +1,19 @@
+# czytaj wontfix ledger — user-curated. Entries here are SKIPPED in future /petla audits
+# (not itemized) and auto-marked wontfix on /petla solve intake. Only the user adds entries.
+- key: "addons/czytaj/files/hooks/czytaj/precache.py:25 | m8 precache n=1 double-synth vs auto-read"
+  reason: >
+    Audit's suggested fixes (skip precache n=1 when auto-read on / 0-byte placeholder) would REGRESS
+    read-back: auto-read only fills the n=1 cache when its RG1 gate passes (no folder prefix AND spoken
+    text == full last turn), so skipping precache n=1 leaves the last message COLD under a prefix/partial
+    read; a 0-byte placeholder risks a corrupt-wav HIT. Actual harm of NOT fixing = one redundant ~0.8s
+    warm synth, serialized by daemon_lock (idempotent). Verdict 2026-06-16 (Kamil): not worth it.
+  scope: "czytaj"
+  date: "2026-06-16"
+- key: "addons/czytaj/files/hooks/czytaj/precache.py:25 | m9 precache eager depth 5 serial"
+  reason: >
+    Audit's suggested fix (reduce eager precache depth 5->2) would make read-back of the 3rd-5th-back
+    messages COLD on first access — a regression of the instant read-back Kamil tuned for. Daemon
+    contention is already bounded (per-turn daemon_lock release) and M5 made the precache loop parse the
+    transcript once. Verdict 2026-06-16 (Kamil): keep depth 5. Revisit only if the read-back design changes.
+  scope: "czytaj"
+  date: "2026-06-16"

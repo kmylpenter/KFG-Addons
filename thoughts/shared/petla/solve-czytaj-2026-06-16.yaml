@@ -1,0 +1,71 @@
+meta:
+  mode: solve
+  target: "addons/czytaj/files/hooks/czytaj"
+  audit_file: "thoughts/shared/petla/audit-czytaj-2026-06-15.yaml"
+  branch: "fix/czytaj-audit-2026-06-16"
+  started: "2026-06-16T06:00:00"
+  updated: "2026-06-16T08:00:00"
+  status: completed
+  final_sweep: "2 fresh read-only subagents (correctness + regression) over git diff 9ae9a6e..HEAD —
+    BOTH PASSED, selftest green (24 checks). 2 minors found + FIXED in commit 6c0ced9 (M10+M13 backgrounded-
+    stop race; czytaj_paths 'ups.sh' comment). Other findings non-issues (SHIZUKU_FLAG present; evdev raw rish intentional)."
+  autonomy: "full autonomous (user-chosen 2026-06-16, overrides audit 'review each fix' note)"
+  test_net: "none for czytaj (Python/bash hooks; smoke harness is browser-only -> smoke=never).
+             Each fix verified deterministically (czytaj_selftest + before/after snapshots + py_compile);
+             the volume_watcher concurrency cluster (M1/M2/M3/M4) additionally got a 3-lens read-only
+             subagent fan-out (correctness+regression PASSED; completeness done by orchestrator after the
+             3rd agent stalled on infra). M14 verified live against the connected->disconnected car."
+  spike_checkpoint: "9ae9a6e — BT keep-alive (approach B) committed before solve (was uncommitted WIP)"
+  car_catch: "thoughts/shared/petla/car-catch.sh — caught the A2DP connect at 06:23:58 (mActiveDevice ->
+              myPeugeout MAC). KEY FINDING: original _car_connected() WORKS (the 'Active: <mac>: myPeugeout'
+              bond line matches its grep) — my initial 'detection broken' claim was WRONG (made vs the
+              disconnected baseline). No _car_connected change needed."
+  deploy: "DONE 2026-06-16 ~09:31 (user greenlit, out of car). All 10 files atomic-cp'd to ~/.claude/hooks/czytaj
+           (deploy-czytaj-fixes.sh), runtime selftest green, watcher restarted (PID 25031, new code, logged
+           'watcher start'), daemon warm. NOT merged to main / not pushed (branch only). User tests on return drive.
+           NOTE: deploy attempt 1 self-aborted via a pkill -f self-match footgun (cmdline contained the pattern);
+           fixed by killing by PID. Lesson: pkill -f patterns match the issuing shell's own cmdline."
+fixes:
+  - {issue_id: C1,  severity: critical, status: verified, commit: a4bbb18, note: "skip wake-tone on cache-HIT; AT-HOME LISTEN CAVEAT (if first word clips on cold link, revert this 1 commit)"}
+  - {issue_id: M1,  severity: major, status: verified, commit: fbb84c0, note: "reap keepalive/keepwarm Popen via poll() in idle loop; subagents PASSED"}
+  - {issue_id: M2,  severity: major, status: verified, commit: fbb84c0, note: "_action_lock around read-back-state RMW (slow I/O outside lock); subagents PASSED no deadlock"}
+  - {issue_id: M3,  severity: major, status: verified, commit: fbb84c0, note: "snapshot _last_read_ts under _action_lock"}
+  - {issue_id: M4,  severity: major, status: verified, commit: fbb84c0, note: "prewarm FG cache in idle loop (gated reading-on + already-hot). GAP: reading-OFF first press after a gap still pays the probe once"}
+  - {issue_id: M5,  severity: major, status: verified, commit: 2cac52e, note: "memoize _turn_texts (path,mtime,size) 2.5s TTL; 5x faster cached, identical result"}
+  - {issue_id: M6,  severity: major, status: verified, commit: c111f10, note: "AUDIO_SCRATCH_DIRS/READBACK_CACHE_DIRS + first_writable_dir in czytaj_paths; resolvers identical before/after"}
+  - {issue_id: M7,  severity: major, status: verified, commit: e3e6126, note: "selftest parity LOG/PAUSE_FLAG/KEYPAUSE_STATE — green"}
+  - {issue_id: M8,  severity: major, status: wontfix,  # user 2026-06-16: audit fix would regress read-back; in wontfix-ledger
+     user_question: "Precache double-synths n=1 ONLY when auto-read's RG1 gate passes (no folder prefix AND
+       spoken text == full last turn). The audit's fixes are UNSAFE: 'skip precache n=1 when auto-read' would
+       leave n=1 COLD when a folder prefix is announced or a partial suffix is read (auto-read doesn't cache
+       n=1 then); a '0-byte placeholder' risks a corrupt-wav HIT. Actual harm = one redundant ~0.8s warm synth,
+       serialized by daemon_lock (idempotent result). A safe dedup needs predicting RG1, which lives inside
+       _speak_inner (stop.py can't). Recommend: ACCEPT the redundant synth, or add cross-process in-flight
+       coordination if it ever proves costly. Decision yours."}
+  - {issue_id: M9,  severity: major, status: wontfix,  # user 2026-06-16: audit fix would regress read-back; in wontfix-ledger
+     user_question: "precache n=1..5 serial holds daemon_lock per-turn. Contention is already BOUNDED (lock
+       releases between turns, so a concurrent read-back MISS waits at most one turn-synth), and M5 now makes
+       the n=1..5 loop parse the transcript ONCE instead of 5x. The audit's 'reduce eager depth (5->2)' would
+       cut contention but make read-back of the 3rd-5th-back messages COLD on first access — a regression of
+       the instant-read-back you tuned for. Kept depth=5. Reduce it only if you scrub back <=2 messages in
+       practice and prefer less daemon load. Decision yours."}
+  - {issue_id: M10, severity: major, status: verified, commit: 95c84a5, note: "background UPS media-player stop. DEFERRED: _speak ~120-240ms cold-import (needs save_state extraction / DRY break — not safe w/o test net). pgrep above flag gate intentional (always-on keys)"}
+  - {issue_id: M11, severity: major, status: verified, commit: 861dbb1, note: "toggle.sh teardown gate *.flag only (dotfile no longer makes it dead code); keeps warm daemon alive (drops daemon kill + rm RUN_DIR)"}
+  - {issue_id: M12, severity: major, status: verified, commit: 861dbb1, note: "pre-tool-use.sh gate *.flag only. stop.sh DELIBERATELY unchanged — must reach stop.py for keepwarm precache (re-gating it was the 2026-06-15 regression)"}
+  - {issue_id: M13, severity: major, status: verified, commit: fe37f07, note: "single CZYTAJ_AUDIO_CLIENT_PATS/AUDIO_CLIENT_PATS + selftest canary; behavior-preserving"}
+  - {issue_id: M14, severity: major, status: verified, commit: 912f559, note: "volume_watcher dumpsys probes via _speak._run_shell; verified live (_run_shell reaches dumpsys; _car_connected matches raw probe)"}
+  - {issue_id: M15, severity: major, status: verified, commit: 01d90b8, note: "stop.py str(READBACK_CACHE_MAX)"}
+  - {issue_id: M16, severity: major, status: verified, commit: c111f10, note: "TERMUX_HOME/PREFIX + first_writable_dir; snapshots identical"}
+  - {issue_id: M17, severity: major, status: verified, commit: c111f10, note: "TERMUX_FLAGS_DIR single base; VOICE_TYPER_FLAG realpath-equal (same file)"}
+progress:
+  total_issues: 18
+  verified: 16
+  needs_human_review: 2
+  blocked: 0
+  skipped_low_confidence: 0
+governance_violations: []
+notes: >
+  16/18 fixed+committed on branch fix/czytaj-audit-2026-06-16 (one issue per commit/family).
+  M8/M9 -> needs_human_review (the audit's suggested fixes would regress read-back; both are bounded
+  perf wastes, decisions documented above). Pending: FINAL SWEEP (cross-fix regression check) then
+  DEPLOY (user greenlight; volume_watcher watcher-restart deferred to post-drive for hands-free safety).

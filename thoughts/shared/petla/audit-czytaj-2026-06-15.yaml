@@ -1,0 +1,250 @@
+meta:
+  mode: audit
+  target: "addons/czytaj/files/hooks/czytaj"
+  started: "2026-06-15T23:30:00"
+  updated: "2026-06-16T01:00:00"
+  status: completed
+  iterations: 2
+  exit: "unbounded / not-converged — MEDIUM confidence (deliberate 2-iteration token-economy stop; not exhaustive)"
+  lenses: [bugs, duplicates, security, performance, style]
+  profile: standard
+  severity_floor: major
+  note: "Substitute for /petla-noc (GAS-only) on a Python/bash project — pure audit, report only."
+  target_files:
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/_speak.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/czytaj-env.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/czytaj_paths.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/czytaj_selftest.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/piper_server.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/piper_stream.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/pre-tool-use.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/pre-tool-use.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/precache.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/setup-adb-pairing.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/setup-shizuku.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/stop.py"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/stop.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/toggle.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/user-prompt-submit.sh"
+    - "/root/projekty/KFG-Addons/addons/czytaj/files/hooks/czytaj/volume_watcher.py"
+  tree_guard_baseline: "git:HEAD (pure audit — no mutations expected)"
+lens_inconclusive_streak: {}
+governance_violations: []
+issues:
+  - id: "M1"
+    severity: major
+    lens: bugs
+    item: "Long-lived volume_watcher Popen children never reaped -> accumulating <defunct> zombies. _keep_daemon_warm (every 60s) and _bt_keepalive (every ~50s in-car) Popen with start_new_session=True but the watcher stays PARENT (setsid != reparent); no SIGCHLD=SIG_IGN, no wait(). _stream's dd child IS reaped (line 553) proving author intent; these two periodic spawns missed. ~72 zombies/hr in-car from _bt_keepalive alone."
+    location: "volume_watcher.py:661 (+ :66)"
+    evidence: "subprocess.Popen([\"termux-media-player\",\"play\",wav], ... start_new_session=True)"
+    suggestion: "signal.signal(SIGCHLD, SIG_IGN) once in main() (watcher never waits on these children — polls markers), or poll()/reap kept handles in the idle loop."
+    found_in_iteration: 1
+    status: open
+  - id: "M2"
+    severity: major
+    lens: bugs
+    item: "Compound read-modify-write on module global _readback_n across CONCURRENT dispatch threads (GIL doesn't protect RMW). Debounce is PER-CODE, so VolumeDown then VolumeUp each start their own _gated_action thread; _toggle_pause sets _readback_n=0 while _read_back runs _readback_n = _readback_n+1 if scrub else 1 -> lost-update -> scrubs to wrong message. _paused likewise dual-written. Author fixed the analogous poller-vs-evdev case via filesystem but left down+up concurrent actions unguarded."
+    location: "volume_watcher.py:323 (+ :285)"
+    evidence: "_readback_n = _readback_n + 1 if scrub else 1"
+    suggestion: "Serialize the action body under a _dispatch_lock around _readback_n/_paused mutations, OR share one debounce timestamp across both key codes so a down+up pair can't run actions concurrently."
+    found_in_iteration: 1
+    status: open
+  - id: "M3"
+    severity: major
+    lens: bugs
+    item: "_bt_keepalive (MAIN loop thread) reads _last_read_ts written by _read_back (dispatch thread) unsynchronized; gate mixes _last_read_ts (dispatch thread) with _ka_started (main thread) without a barrier. A stale read can pulse silence into the car the instant a real read-back starts (briefly yanking the A2DP source) or fail to refresh coverage. Lower impact (float assign ~atomic in CPython) but the gate decision is cross-thread."
+    location: "volume_watcher.py:655 (+ :645)"
+    evidence: "if not ((not _ka_playing) or (now - _ka_started > KA_REISSUE_S) or (_last_read_ts > _ka_started)):"
+    suggestion: "Snapshot _last_read_ts once under _dispatch_lock at the top of _bt_keepalive (and guard its write in _read_back); confirm _ka_playing can't disagree with reality after a concurrent _read_back replaced the silence."
+    found_in_iteration: 1
+    status: open
+  - id: "C1"
+    severity: critical
+    lens: performance
+    item: "Cache-HIT path pays an unconditional audible wake-tone prelude (~0.7s + a competing tone + a SECOND termux-media-player play fork) whenever PREHEAT_MARKER is stale (>60s) — i.e. the common cold-session first-press at home/on speaker, exactly the slow press. unlock_audio_routing runs SYNCHRONOUSLY before play_blocking on the HIT path: stop(timeout=0.4) + Popen tone + time.sleep(0.3). The real wav's own play already wakes BT/MediaSession routing, so the tone is pure pre-audio latency. Skipped only when the marker is fresh (which _bt_keepalive refreshes ONLY in-car) -> at home every cold HIT eats the full prelude."
+    location: "piper_stream.py:568 (_play_cached_wav -> unlock_audio_routing); :166-184 (stop+tone+sleep)"
+    evidence: "unlock_audio_routing() at line 568 runs before play_blocking(p) at 569; stale marker -> subprocess.run(['termux-media-player','stop'],timeout=0.4) + Popen(['termux-media-player','play',tone]) + time.sleep(0.3)"
+    suggestion: "On the CACHE-HIT path skip unlock_audio_routing (the real wav play wakes routing); if a BT wake is truly needed, fire the REAL wav first and let it be the wake. Removes ~0.7s + a duplicate play fork from the slow (stale-marker) HIT. Composes with the resident-player plan."
+    found_in_iteration: 1
+    status: open
+  - id: "M4"
+    severity: major
+    lens: performance
+    item: "First press after each 30s gap re-pays the ~3.7-8s rish foreground probe synchronously before read_message_back when nothing is already playing. FG_CACHE caches True 30s but False only 4s, and a fresh session has an empty cache -> the full rish dumpsys runs in-line in the dispatch thread before audio. (This is floor (a); the NEW point is it RECURS every >=30s gap, not just once.)"
+    location: "volume_watcher.py:382 (_gated_action) -> :185-191 (rish dumpsys timeout=8)"
+    evidence: "if not (_czytaj_audio_playing() or _termux_foreground()): ... _termux_foreground runs subprocess.run(['rish','-c','dumpsys window ... mCurrentFocus'], timeout=8)"
+    suggestion: "Pre-warm the FG cache from the idle loop while reading is ON (call _termux_foreground opportunistically so it's hot before the press); and/or trust the accessibility service's own foreground gate (trusted_fg=True path) for the audio decision, avoiding the in-line re-check."
+    found_in_iteration: 1
+    status: open
+  - id: "M5"
+    severity: major
+    lens: performance
+    item: "Every VolumeUp re-reads and JSON-parses the ENTIRE transcript jsonl on the hot path (readlines() + json.loads per line) before the cached wav plays, with no memoization. Transcripts grow unboundedly over a session (thousands of lines); _resolve_active_transcript (tmux) is cached 2.5s but the expensive _turn_texts parse is not -> pure pre-AUDIO CPU on every HIT/scrub."
+    location: "_speak.py:1657-1661 (read_message_back -> _turn_texts) ; :1418-1453 (_turn_texts readlines+json.loads per line)"
+    evidence: "_turn_texts: f.readlines() then json.loads(line) for every line; called on every read_message_back press"
+    suggestion: "Memoize _turn_texts by (path, mtime/size) for a short TTL (~2.5s, matching tmux cache), or read only the tail (last N KB) since read-back needs only the last ~5 turns."
+    found_in_iteration: 1
+    status: open
+  - id: "M6"
+    severity: major
+    lens: duplicates
+    item: "The Termux-shared audio cache base dir (/data/data/com.termux/files/home/.cache/czytaj) is a hardcoded literal duplicated across two files and is NOT in either SSOT — the one shared-storage root every audio path hangs off escaped the 2026-06-15 centralization. czytaj_paths centralized RUN_DIR (~/.cache/czytaj/piper-server, same tree) yet left this Termux-absolute sibling as literals."
+    location: "_speak.py:1475-1476 (_readback_cache_base) and piper_stream.py:114-115 (_audio_scratch_dir)"
+    evidence: "both iterate hardcoded ('/data/data/com.termux/files/home/.cache/czytaj...', '/data/data/com.termux/files/usr/tmp...') candidate dirs; '/usr/tmp' variant also in user-prompt-submit.sh:45"
+    suggestion: "Add AUDIO_SCRATCH_DIRS / READBACK_CACHE_DIRS candidate lists to czytaj_paths.py and import in both resolvers (these are PRoot-invisible Termux paths, can't use ~ expansion -> need one named def)."
+    found_in_iteration: 1
+    status: open
+  - id: "M7"
+    severity: major
+    lens: duplicates
+    item: "Three Python<->bash SSOT values (CZYTAJ_LOG/LOG_FILE, CZYTAJ_PAUSE_FLAG/PAUSE_FLAG, CZYTAJ_KEYPAUSE_STATE/KEYPAUSE_STATE) are shared cross-language and consumed cross-process, but NOT pinned by czytaj_selftest (which pins only RUN_DIR/FLAG_DIR/SHIZUKU_FLAG/key). They agree TODAY (verified by reading both sides), but a one-sided rename drifts SILENTLY — exactly the failure class the SSOT refactor + canary were built to prevent. E.g. renaming czytaj-keypause.state on one side breaks the FS3 pause re-sync with zero test signal."
+    location: "czytaj-env.sh:19-21 vs czytaj_paths.py:41,42,57 ; gap in czytaj_selftest.py:71-79"
+    evidence: "selftest asserts shell==python only for key/RUN_DIR/FLAG_DIR/SHIZUKU_FLAG; LOG/PAUSE_FLAG/KEYPAUSE_STATE have no parity check though all three are written by bash AND read/written by python"
+    suggestion: "Extend the parity loop in czytaj_selftest.py (~6 lines) to also assert CZYTAJ_LOG==LOG_FILE, CZYTAJ_PAUSE_FLAG==PAUSE_FLAG, CZYTAJ_KEYPAUSE_STATE==KEYPAUSE_STATE. Closes the unguarded drift surface."
+    found_in_iteration: 1
+    status: open
+  - id: "M8"
+    severity: major
+    lens: performance
+    item: "Auto-read cache populate and background precache n=1 BOTH synthesize the SAME last turn in parallel on the single warm daemon. On every Stop with auto-read ON, _speak_inner synths n=1 (CZYTAJ_SAVE_WAV) while stop.py spawns precache.py 5 (n=1..5); precache_turn's dedup (_readback_cache_get) can't see the in-flight auto-read wav (not written yet) -> n=1 synthesized twice, doubling daemon load right when the first read-back might land."
+    location: "stop.py:23 -> precache.py:25 ; _speak.py:1128-1132 (CZYTAJ_SAVE_WAV) ; precache_turn dedup _speak.py:1568"
+    evidence: "precache_turn:1568 'if _readback_cache_get(session, text): return' but the auto-read hardlink (piper_stream.py:702 os.link/os.replace) hasn't landed when precache starts"
+    suggestion: "When auto-read is ON, precache only n=2..N (auto-read owns n=1), or write a 0-byte placeholder at the n=1 cache path before spawning precache so its dedup short-circuits."
+    found_in_iteration: 2
+    status: open
+  - id: "M9"
+    severity: major
+    lens: performance
+    item: "precache.py synthesizes n=1..5 SERIALLY in one process holding the single daemon lock per turn. On a fresh transcript with nothing cached, filling 5 turns is ~5 sequential daemon synths that monopolize the daemon for seconds — competing with a concurrent real read-back MISS that needs the daemon now, and delaying n=1 behind any concurrent auto-read synth."
+    location: "precache.py:25 (for n in range(1, maxn+1): precache_turn) ; daemon_lock piper_server.py:387"
+    evidence: "single-process serial loop; each precache_turn -> synthesize_warm -> speak_raw holds daemon_lock for the whole per-turn synth"
+    suggestion: "Precache n=1..2 eagerly and the rest lazily/on-miss, or cap default depth (5 full synths/Stop is heavy warm-daemon time). Ensure n=1 flushes before n=2..5 start."
+    found_in_iteration: 2
+    status: open
+  - id: "M10"
+    severity: major
+    lens: performance
+    item: "user-prompt-submit.sh runs a SYNCHRONOUS `termux-media-player stop` (Termux:API->Android round-trip, ~hundreds of ms) + 4x pkill -9 -f + a cold `python3 -c` importing the 1690-line _speak module on EVERY prompt while reading is on — serial work between the user hitting enter and Claude starting. The watcher-respawn pgrep block sits ABOVE the flag gate so it forks pgrep on every prompt in every pane regardless of reading state."
+    location: "user-prompt-submit.sh:37 (sync stop), :47-60 (python3 heredoc cold-imports _speak), :68-70 (pkill loop), :16-19 (pgrep above the flag gate)"
+    evidence: "'termux-media-player stop >/dev/null 2>&1' has no & (synchronous); the python3 heredoc cold-imports _speak to mark_active_session/reset_state"
+    suggestion: "Background the media-player stop (&); move active-session marking into a tiny helper (don't import all of _speak); gate the pgrep/watcher-spawn cost where the always-on-keys requirement allows."
+    found_in_iteration: 2
+    status: open
+  - id: "M11"
+    severity: major
+    lens: bugs+performance
+    item: "The keepwarm sentinel is a DOTFILE (.keepwarm-readback) in FLAG_DIR, and toggle.sh's OFF-teardown gate tests emptiness with `ls -A` (which LISTS dotfiles). So after the very first ON (which spawns the watcher that creates the sentinel), the gate is NEVER empty -> the whole OFF teardown block is permanently DEAD CODE: termux-media-player stop, the audio-chain pkill loop, rm -rf RUN_DIR, and the stale-pause-flag clear NEVER run on /czytaj OFF. NOTE: the daemon NOT being killed is actually the keepwarm INTENT (so that part is benign — this CORRECTS the earlier 'daemon might die / next read cold' guess, which was the opposite of reality); the real harm is the silently-skipped stale-pause-flag clear + audio-chain stop, and structurally-unreachable teardown."
+    location: "toggle.sh:20 (gate `[ -z \"$(ls -A FLAG_DIR)\" ]`) vs volume_watcher.py:50,62 (sentinel .keepwarm-readback created, never removed)"
+    evidence: "toggle.sh:20 `if [ -z \"$(ls -A \"$FLAG_DIR\" 2>/dev/null)\" ]` guards lines 21-32; volume_watcher.py:62 open(_KEEPWARM_SENTINEL,'a').close() into FLAG_DIR (line 50), no unlink anywhere -> `ls -A` always non-empty -> teardown skipped"
+    suggestion: "Gate teardown on REAL flags only: test `compgen -G \"$FLAG_DIR\"/*.flag` or `ls \"$FLAG_DIR\"/*.flag` (no -A) so the keepwarm dotfile doesn't count. Keep the daemon's own _flags_present() sentinel behaviour (that's intended) — only the SHELL gate must ignore the dotfile."
+    found_in_iteration: 2
+    status: open
+  - id: "M12"
+    severity: major
+    lens: bugs+performance
+    item: "Same dotfile defeats the cheap fast-exit gate in stop.sh AND pre-tool-use.sh: `[ -n \"$(ls -A FLAG_DIR)\" ] || exit 0` is now ALWAYS true (sentinel present), so EVERY Stop and PreToolUse on EVERY project always shells into python (exec python3 stop.py / pre-tool-use.py) even when no project is reading. Correctness is preserved (python re-gates with the precise is_active check), but the intended cheap shell skip is DEAD -> a per-hook latency regression on the exact hot path the 2026-06-15 SSOT refactor tried to keep cheap."
+    location: "stop.sh:8 and pre-tool-use.sh:8 ([ -n \"$(ls -A CZYTAJ_FLAG_DIR)\" ] || exit 0)"
+    evidence: "with .keepwarm-readback always in FLAG_DIR, `ls -A` never empty -> the `|| exit 0` short-circuit never fires -> exec python3 runs every hook"
+    suggestion: "Same fix: count only `*.flag` in the gate. Precache-independent-of-mode still works (stop.py runs precache before the is_active gate) but only needs to run when a transcript exists, not on every never-reading project."
+    found_in_iteration: 2
+    status: open
+  - id: "M13"
+    severity: major
+    lens: duplicates
+    item: "Audio-process pkill kill-pattern lists are TRIPLICATED across 2 languages with no canary (shotgun surgery). The 2 in-turn lists (user-prompt-submit.sh:68, _speak.py:759) are SET-equal (order-only diff, benign) but hand-maintained; toggle.sh:28 teardown set adds piper_server/piper-daemon yet OMITS termux-media-player (handled via a separate `stop` at :21). Adding/removing an audio client requires editing 3 lists; nothing pins membership."
+    location: "toggle.sh:28 ; user-prompt-submit.sh:68 ; _speak.py:759"
+    evidence: "toggle.sh:28 patterns {piper_server, piper-daemon, paplay, piper_stream, termux-tts-speak} vs ups.sh:68 {termux-tts-speak, termux-media-player, paplay, piper_stream} vs _speak.py:759 same 4 as ups (diff order)"
+    suggestion: "Define the in-turn audio-client set ONCE (czytaj-env.sh + twin in czytaj_paths.py, or one _speak tuple the UPS heredoc reuses); teardown set = clients + {piper_server,piper-daemon}. Add a czytaj_selftest canary asserting .sh list == .py list."
+    found_in_iteration: 2
+    status: open
+  - id: "M14"
+    severity: major
+    lens: duplicates
+    item: "Privileged-shell (Shizuku rish / ADB) invocation implemented TWICE. _speak.py has canonical _shell_cmd_prefix()+_run_shell() (Shizuku-preferred, ADB fallback, fail-open, timeout). volume_watcher.py bypasses it: own _shizuku_ready() + 4 raw ['rish','-c',...] calls with ad-hoc timeouts -> NO ADB fallback for its dumpsys/A2DP probes, and any change to the privileged-shell mechanism must be made in both."
+    location: "_speak.py:255-288 (_shell_cmd_prefix/_run_shell) vs volume_watcher.py:186, :229, :514, :595"
+    evidence: "volume_watcher bare ['rish','-c','dumpsys window...'] / ['rish','-c','dumpsys bluetooth_manager...'] — no _run_shell, no ADB fallback"
+    suggestion: "Have volume_watcher import _speak._run_shell/_shell_cmd_prefix for its dumpsys/A2DP probes (the dd/getevent reader can keep its raw long-lived-pipe form). Removes the 2nd privileged-shell path + gives the watcher the ADB fallback."
+    found_in_iteration: 2
+    status: open
+  - id: "M15"
+    severity: major
+    lens: duplicates
+    item: "Read-back depth is a derived value stored in two places: READBACK_CACHE_MAX (cache keeps) is a named constant in _speak.py while the precache depth (turns pre-synthesised) is a bare '5' literal passed by stop.py. precache.py's docstring says they're the SAME logical quantity. Equal today; bump one and they silently diverge (precache warms fewer than the cache holds -> older-turn re-reads go cold, or warms more -> wasted synth)."
+    location: "_speak.py:1463 (READBACK_CACHE_MAX=5) vs stop.py:40 (precache arg \"5\")"
+    evidence: "stop.py:40 [..., script, transcript_path, \"5\"] ; _speak.py:1463 READBACK_CACHE_MAX = 5"
+    suggestion: "stop.py should pass str(_speak.READBACK_CACHE_MAX) (import it) instead of literal \"5\"."
+    found_in_iteration: 2
+    status: open
+  - id: "M16"
+    severity: major
+    lens: duplicates
+    item: "(Extends M6 family.) The Termux base prefix /data/data/com.termux/files/... is a magic string repeated 6+ times across 4 files, none in the SSOT, and the two 'pick first writable Termux dir' resolvers (_readback_cache_base, _audio_scratch_dir) are near-duplicate try-each-dir loops over the same literals. M6 named only the two cache-base sites; the prefix + piper-home + voice-typer-flag fallbacks repeat it more broadly."
+    location: "_speak.py:1342, :1475-1476 ; piper_stream.py:114-115 ; czytaj_paths.py:91, :111"
+    evidence: "same /data/data/com.termux/files/home prefix + try-first-writable shape at all sites"
+    suggestion: "Add TERMUX_HOME/TERMUX_TMP (+ a first_writable_dir(candidates) helper) to czytaj_paths.py; both resolvers call it. Fold with M6."
+    found_in_iteration: 2
+    status: open
+  - id: "M17"
+    severity: major
+    lens: duplicates
+    item: "(Lower-impact major / SSOT-hygiene.) The Termux shared-storage flags dir is hardcoded in two .py files AND spelled THREE different ways: _speak.py:42 + volume_watcher.py:83 use absolute '/storage/emulated/0/Download/Termux-flags/' (capital Download); czytaj_paths.py:110 spells the same area 'storage/downloads/Termux-flags' (relative, lowercase). They point at different flag FILES (not a key-drift) but the base location has no single source and the spellings disagree."
+    location: "_speak.py:42 ; volume_watcher.py:83 ; czytaj_paths.py:110"
+    evidence: "two '/storage/emulated/0/Download/Termux-flags/...' literals vs czytaj_paths rel 'storage/downloads/Termux-flags/...'"
+    suggestion: "Put the shared-storage Termux-flags base (+ chosen spelling) in czytaj_paths.py once; derive all three flag paths from it; keep env overrides."
+    found_in_iteration: 2
+    status: open
+iterations:
+  - number: 1
+    new_issues_found: 8
+    new_cm_found: 8
+    consensus: dirty
+    verdicts:
+      - {lens: bugs, status: issues_found, files_examined_count: 16}
+      - {lens: performance, status: issues_found, files_examined_count: 9}
+      - {lens: duplicates, status: issues_found, files_examined_count: 15}
+      - {lens: security, status: issues_found, files_examined_count: 13}
+      - {lens: style, status: issues_found, files_examined_count: 14}
+    minor_families:
+      - {pattern: "_ensure_silence_wav regen guard compares getsize >= nframes but writes 2*nframes+44 bytes -> always true (corrupt silence wav never regenerated; harmless today, wrong invariant)", count: 1, example: "volume_watcher.py:627"}
+      - {pattern: "best-effort detached Popen in _speak.py also unreaped but in SHORT-LIVED hook procs (init reaps) -> no accumulation", count: 3, example: "_speak.py:1643"}
+      - {pattern: "_prune_scratch glob+stat storm runs on the cache-HIT play path before audio (nothing to prune on a HIT)", count: 1, example: "piper_stream.py:565"}
+      - {pattern: "keepalive refreshes PREHEAT_MARKER only when _car_connected (so the C1 tone prelude still fires on every cold HIT at home/speaker)", count: 1, example: "volume_watcher.py:639"}
+      - {pattern: "post-play housekeeping marker touches each 0.3s play-loop cycle (off pre-audio path)", count: 3, example: "piper_stream.py:384"}
+      - {pattern: "_log() body duplicated verbatim in _speak.py + piper_stream.py; piper_server writes raw to LOG_FILE with no framing -> 3 log styles in one file", count: 3, example: "_speak.py:52 vs piper_stream.py:468 vs piper_server.py:196"}
+      - {pattern: "sample rate 22050 hardcoded in volume_watcher despite cz.PIPER_SAMPLE_RATE SSOT (silence wav mismatches synth if PIPER_SAMPLE_RATE overridden)", count: 1, example: "volume_watcher.py:625"}
+      - {pattern: "['termux-media-player','stop'] teardown copy-pasted across 5 files; volume_watcher has _media() helper others don't use (shotgun surgery)", count: 7, example: "_speak.py:1214, piper_stream.py:167, toggle.sh:21"}
+      - {pattern: "heartbeat-stale flag-parse logic re-implemented (is_recording vs _vt_recording)", count: 2, example: "_speak.py:135 vs piper_stream.py:40"}
+      - {pattern: "SECURITY (local-only, low risk): CZYTAJ_VOLUME_DEVICE env interpolated unsanitized into rish -c 'dd if={dev}' — reachable only from the watcher's own env (user-set), not a foreign writer; validate path or shlex.quote", count: 1, example: "volume_watcher.py:514"}
+      - {pattern: "STYLE: bash shebang split (runtime hooks Termux-absolute vs setup scripts /usr/bin/env) + set -e only in setup scripts + log tag vocab divergence (UPPER_SNAKE vs hyphenated event-names)", count: 4, example: "setup-shizuku.sh:1 vs toggle.sh:1"}
+  - number: 2
+    angle: "leaf modules, error/exception paths, .sh lifecycle, piper_server threading, MISS/precache/per-hook, full SSOT line-by-line"
+    lenses_run: [bugs, performance, duplicates]
+    lenses_skipped: [security, style]   # accepted converged at iter1 (no C/M + strong self-checks); not re-run for token economy
+    new_issues_found: 10
+    new_cm_found: 10
+    consensus: dirty
+    verdicts:
+      - {lens: bugs, status: issues_found, files_examined_count: 13, new_majors: [M11, M12], note: "_readback_proc race -> minor (same family as M2/M3)"}
+      - {lens: performance, status: issues_found, files_examined_count: 9, new_majors: [M8, M9, M10], note: "_turn_texts item dedup'd to M5"}
+      - {lens: duplicates, status: issues_found, files_examined_count: 12, new_majors: [M13, M14, M15, M16, M17], note: "synth-env block -> minor (DRY only)"}
+    minor_families:
+      - {pattern: "_readback_proc cross-dispatch-thread unsynchronized global (same family as M2/M3, bounded impact)", count: 1, example: "_speak.py:1196"}
+      - {pattern: "Piper synth-env 4-line block copy-pasted 3 sites (DRY only, values agree)", count: 3, example: "piper_server.py:188 / piper_stream.py:218"}
+      - {pattern: "synthesize_one_shot/synthesize_warm duplicate raw-float32->wav conversion block", count: 2, example: "piper_stream.py:242 vs 289"}
+      - {pattern: "best-effort markers/tmp reaped lazily by NEXT run not on crash (accepted design, staleness-aware readers)", count: 4, example: "piper_stream.py:384"}
+summary:
+  total: 18
+  critical: 1
+  major: 17
+  minor: 0
+  exit_status: "unbounded / not-converged (MEDIUM confidence)"
+  notes: >
+    STOPPED at iteration 2. Each lens-ANGLE surfaced NEW real majors (iter1 HIT-path/SSOT = 8; iter2
+    MISS/precache/per-hook/shell-boundary = 10), so discovery is still active -> the audit is NOT
+    exhaustive: a 3rd angle (the .html client if any, install/setup scripts, deeper error injection,
+    piper_server edge cases) would likely find more. Deliberate token-economy stop for a REPORT-ONLY
+    overnight audit (user is Opus-cap constrained). WELL COVERED: latency hot-path (C1 + M4/M5/M8/M9/M10),
+    threading/leaks (M1/M2/M3), the dotfile-gate bug (M11/M12), SSOT/DRY debt (M6/M7/M13-M17).
+    Security: CLEAN (well-hardened — 0600, wav_out allowlist, sdcard flag validated, stdin not argv;
+    only 2 local-only minors). Style: cosmetic only. FIX: /petla solve thoughts/shared/petla/audit-czytaj-2026-06-15.yaml
+    in a FRESH window (no characterization test net for czytaj -> review each fix; do NOT autonomous-mutate).
