@@ -35,7 +35,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _speak import _log, read_message_back, is_readback_playing  # noqa: E402
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
-    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, WATCHER_LOCK as LOCK_FILE,
+    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER,
+    WATCHER_LOCK as LOCK_FILE,
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
@@ -554,6 +555,126 @@ def _stream(device: str) -> None:
             pass
 
 
+# ── Bluetooth keep-alive (latency plan 2026-06-15, approach B) ──────────────────
+# `termux-media-player play` on a car's Bluetooth A2DP pays ~1-2s to RE-ESTABLISH the
+# audio stream when it has gone idle — every read-back. Keeping the stream warm (a
+# resident silence) removes that wake. Gated HARD on two things together:
+#   1. the car is the ACTIVE A2DP sink right now (CZYTAJ_BT_DEVICE, default 'peugeo'), and
+#   2. the user is actively using the tablet to read — Termux foreground OR a recent
+#      read-back — so a silent pulse can NEVER yank the car off its own radio while the
+#      tablet sits idle (the source-switch problem). Off-car / at home → never runs.
+# Reuses the single shared termux-media-player (a real read-back just REPLACES the
+# silence, latest-wins) and refreshes PREHEAT_MARKER so the per-read audible wake tone
+# (unlock_audio_routing) is skipped while the stream is already warm. Disable with
+# CZYTAJ_BT_KEEPALIVE=0. This is a SPIKE: the real BT win must be measured in the car.
+BT_KEEPALIVE = os.environ.get("CZYTAJ_BT_KEEPALIVE", "1") != "0"
+BT_DEVICE_PAT = os.environ.get("CZYTAJ_BT_DEVICE", "peugeo").lower()
+BT_DETECT_TTL_S = 30.0      # cache the ~5s rish A2DP probe — a car link is stable per drive
+BT_RECENT_READ_S = 90.0     # treat the user as "actively reading" for this long after a press
+KA_SILENCE_S = 60           # length of the staged silent wav (gapless A2DP coverage)
+KA_REISSUE_S = 50.0         # re-issue the silence before it ends so coverage never lapses
+_bt_cache = {"t": 0.0, "v": False}
+_ka_playing = False         # do WE currently have silence on the shared player?
+_ka_started = 0.0           # monotonic ts of our last silence (re)issue
+_ka_silence_wav = None      # staged Android-readable silence path (generated once)
+
+
+def _car_connected() -> bool:
+    """True iff the configured Bluetooth car is the ACTIVE A2DP sink right now (audio
+    routes to the car). Matches the device name on an `Active:` line of
+    `dumpsys bluetooth_manager` — a merely BONDED-but-disconnected car still appears in
+    the bond table, but only a CONNECTED+active device shows on an `Active: <MAC>:` line,
+    so this distinguishes the two. Cached BT_DETECT_TTL_S (the rish probe is ~5s). Fails
+    CLOSED so a broken probe never pulses silence into the car."""
+    now = time.monotonic()
+    if now - _bt_cache["t"] < BT_DETECT_TTL_S:
+        return _bt_cache["v"]
+    val = False
+    try:
+        out = subprocess.run(
+            ["rish", "-c", "dumpsys bluetooth_manager 2>/dev/null | grep -i 'active:'"],
+            capture_output=True, text=True, timeout=8,
+        ).stdout
+        for line in out.splitlines():
+            if BT_DEVICE_PAT in line.lower():   # name on an Active: line ⟹ connected+active
+                val = True
+                break
+    except (subprocess.SubprocessError, FileNotFoundError, OSError):
+        val = False
+    _bt_cache["t"] = now
+    _bt_cache["v"] = val
+    return val
+
+
+def _ensure_silence_wav() -> "str | None":
+    """Path to a staged, Android-readable silent wav of KA_SILENCE_S seconds (generated
+    once). termux-media-player runs OUTSIDE PRoot and can't read PRoot paths, so stage it
+    under the Termux-shared cache like the rest of czytaj's audio."""
+    global _ka_silence_wav
+    if _ka_silence_wav and os.path.isfile(_ka_silence_wav):
+        return _ka_silence_wav
+    try:
+        from piper_stream import _audio_scratch_dir   # reuse the verified shared-readable dir
+        d = _audio_scratch_dir()
+    except Exception:
+        d = None
+    if d is None:
+        return None
+    import wave
+    path = os.path.join(str(d), "czytaj-keepalive-silence.wav")
+    rate, nframes = 22050, 22050 * KA_SILENCE_S
+    try:
+        if not (os.path.isfile(path) and os.path.getsize(path) >= nframes):
+            with wave.open(path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate)
+                w.writeframes(b"\x00\x00" * nframes)
+        _ka_silence_wav = path
+        return path
+    except (OSError, wave.Error):
+        return None
+
+
+def _bt_keepalive() -> None:
+    """One keep-alive tick — called from the watcher's idle loop. See the block comment."""
+    global _ka_playing, _ka_started
+    if not BT_KEEPALIVE:
+        return
+    now = time.monotonic()
+    interacting = _termux_foreground() or (now - _last_read_ts) < BT_RECENT_READ_S
+    if not interacting or not _car_connected():
+        # idle / at home / on the car radio → release our silence so the car keeps its audio
+        if _ka_playing and not _czytaj_audio_playing():
+            _media("stop")
+            _ka_playing = False
+        return
+    if _czytaj_audio_playing():
+        return   # a real read-back/auto-read owns the player now (it replaced our silence)
+    # re-issue if we have none, the current clip is about to end, or a read-back interrupted it
+    if not ((not _ka_playing) or (now - _ka_started > KA_REISSUE_S) or (_last_read_ts > _ka_started)):
+        return
+    wav = _ensure_silence_wav()
+    if not wav:
+        return
+    try:
+        subprocess.Popen(
+            ["termux-media-player", "play", wav],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+        )
+        _ka_playing = True
+        _ka_started = now
+        try:    # BT is warm now → unlock_audio_routing() skips the audible per-read wake tone
+            open(PREHEAT_MARKER, "a").close()
+            os.utime(PREHEAT_MARKER, None)
+        except OSError:
+            pass
+        _log("VOLKEY", "bt-keepalive pulse")
+    except (FileNotFoundError, OSError) as e:
+        _log("VOLKEY", "bt-keepalive-fail", repr(e))
+
+
 def _on_sigterm(signum, frame):
     # Turn a SIGTERM (toggle.sh teardown) into a clean exit so the finally blocks run:
     # _stream's finally kills the reader, main()'s finally releases the wakelock — else a
@@ -591,6 +712,7 @@ def main() -> int:
             else:
                 _wake_unlock()
             _keep_daemon_warm()   # re-ensure the daemon stays warm (throttled 60s; self-heals a death)
+            _bt_keepalive()       # keep the car's BT A2DP warm while reading in the car (approach B)
             if not EVDEV_FALLBACK:
                 # accessibility poller (daemon thread) handles keys; the main loop just
                 # keeps the wakelock fresh so the device can't doze and freeze the poller.

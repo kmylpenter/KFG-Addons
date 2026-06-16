@@ -1,6 +1,11 @@
 # Plan: warm/resident media-player for czytaj read-back (2026-06-15)
 
-**Status:** planned (not started). **Owner:** Kamil + Claude. **Branch when started:** `feat/czytaj-warm-player`.
+**Status:** approach **B implemented (car-gated), deployed & live — awaiting on-car measurement** (2026-06-15).
+**Owner:** Kamil + Claude. **Branch when started:** `feat/czytaj-warm-player`.
+
+> See **## Implementation status & how to measure (2026-06-15)** at the bottom for what was
+> built, why the gate is "car-connected" instead of the literal "Termux-foreground", and the
+> exact in-car measurement + counterfactual that decides whether to ship B or escalate to A+C.
 
 ## Why
 On-demand VolumeUp read-back is now back to its old ~7-10s on a cache HIT (see memory
@@ -78,3 +83,69 @@ the n=1 (latest) wav in advance, so a VolumeUp `start` is instant. Composes with
   `_play_cached_wav`; the keepwarm pattern to mirror: `volume_watcher.py` `_keep_daemon_warm`.
 - Related memory: `czytaj-readback-design-2026-06-15`, `czytaj-playback-floor-structural`,
   `czytaj-native-audio`. Latency audit: `thoughts/shared/petla/czytaj-latency-audit-2026-06-03.md`.
+
+## Implementation status & how to measure (2026-06-15)
+
+**Built: approach B, car-gated.** Added to `volume_watcher.py` (the always-on remote, single
+source of the play path's BT context) — deployed to `~/.claude/hooks/czytaj/` and the watcher
+restarted (live now, pid changed):
+- `_car_connected()` — cached (30s) `rish dumpsys bluetooth_manager | grep -i active:` that
+  matches the car name (`CZYTAJ_BT_DEVICE`, default `peugeo`) on a LIVE `Active: <MAC>:` line.
+  Verified on-device to discriminate **connected** (matches) from **paired-but-disconnected**
+  (no match — the stale `mActiveDevice` field and the bond table are deliberately NOT matched).
+  Fails CLOSED → a broken probe never pulses silence into the car.
+- `_ensure_silence_wav()` — stages a 60s silent wav under the Termux-shared cache (Android-
+  readable; PRoot paths are invisible to `termux-media-player`).
+- `_bt_keepalive()` — one tick in the watcher idle loop. Pulses the silence (re-issued every
+  ~50s, gapless) to keep the car's A2DP stream warm, and refreshes `PREHEAT_MARKER` so the
+  per-read audible wake tone is skipped while warm. Stops the silence when the gate goes false.
+
+**Why car-gated, not the literal "while Termux foreground" (deviation from §Recommended path 1):**
+Kamil only uses read-back **in the car**, and gating on foreground alone would (a) on a kiosk
+tablet ≈ run continuously, and (b) **yank the car from its own radio to BT-silence** whenever the
+tablet sat idle but connected (the A2DP source-switch problem). So the gate is
+`car-connected AND (Termux-foreground OR read-back within 90s)` — warm the BT only when actually
+in the car AND actively using the tablet to read. Off-car / at home → never runs. This keeps the
+interference footprint ≤ today's (the per-read wake tone already pulses the BT) while still
+measuring the core hypothesis. Env knobs: `CZYTAJ_BT_KEEPALIVE=0` (off), `CZYTAJ_BT_DEVICE=<name>`.
+
+**Measure in the car (this decides ship-B vs escalate-to-A+C):**
+1. Connect the tablet to the Peugeot BT. Focus Termux (so the keep-alive arms + FG cache warms).
+   Wait ~10s for the first silence pulse (`grep bt-keepalive ~/.claude/czytaj.log`).
+2. Press VolumeUp. Then read the ms-stamped markers:
+   `grep -E "keytrigger|read_back|PLAYWAV|AUDIO-START" ~/.claude/czytaj.log | tail`.
+   **press→audio = the `AUDIO-START` ts minus the `VOLKEY keytrigger` ts** (both have .mmm).
+   Confirm it's a HIT (`ACTION read_back … CACHE-HIT`). Target **< 1.5s** (was ~3.5s).
+3. Counterfactual (proves the gain is real): disable it where the respawn will see it — add
+   `export CZYTAJ_BT_KEEPALIVE=0` to `~/.claude/hooks/czytaj/czytaj-env.sh` (the env SSOT the
+   prompt-hook spawn sources), then restart (`pkill -TERM -f '[v]olume_watcher\.py'`; next prompt
+   respawns it). Repeat the press — expect the time to return to ~3.5s. Remove the line to re-enable.
+4. Watch for the open risks while measuring: does our silence **interrupt the car radio / your
+   music** (audio-focus steal)? battery while connected? If B alone reaches ~1.5s and doesn't
+   fight other audio → **ship B, stop.** If not → build **A + C** (resident `app_process`
+   MediaPlayer daemon), whose core feasibility is still the unproven spike in §Risks.
+
+**Not measurable off-car (why this is handed back):** audio routes to the car BT; at the tablet
+it's silent unless the car is disconnected, so the press→AUDIO-START-on-BT number can only be
+read in the car. All off-car checks (compile, detection discrimination, wav staging, single-
+instance watcher restart, no key-path regression) pass.
+
+## A+C spike status (2026-06-15 night) — mechanism PROVEN, only BT-routing gate left
+
+Kamil measured B in-car (~2.9–5.4s, down from ~7-10s) and chose to **escalate to A+C**. Spike done on-device
+(details + recipe in memory `czytaj-warm-player-spike-2026-06-15`):
+- ✅ **on-device dex build** (`javac`+`d8` from PRoot) + **`app_process` runs our code as shell with the live framework**.
+- ❌ **`MediaPlayer` is OFF the table** — appops rejects shell uid ("calling package android ≠ uid 2000"), even after
+  `AttributionSource`/`ContextImpl` patching. Native player identity stays "android".
+- ✅ **`AudioTrack` as shell WORKS** and is the better primitive (raw PCM, no extractor/codec).
+- ✅ **A1 daemon PROVEN on the phone speaker:** resident app_process holding a warm AudioTrack, TCP-controlled on
+  `127.0.0.1:28771`; from PRoot: ping 2ms, pre-`load` PCM, **`play`→audio in ~5ms** (vs termux-media-player ~2500ms).
+  The latency win is real. (`CzytajPlayer.java` in the spike dir; design = `pause()+flush()+play()+write(preloaded PCM)`.)
+- ❓ **ONLY remaining gate (car-gated): does the shell `AudioTrack` reach the car A2DP, or only the phone speaker?**
+  Couldn't test — the Peugeot BT flapped/disconnected all evening (`A2DP Connected:0`). The plan's core worry.
+
+**Resume path (one command, when connected to MyPeugeot):**
+`bash /data/data/com.termux/files/home/.cache/czytaj/spike/route-test.sh` →
+`VERDICT: ROUTED type=8` (car ✓ → build A1–A4 as product: daemon + wire `_play_cached_wav` to the socket with
+termux-media-player fallback + car-gated keepwarm) **or** `type=2` (speaker ✗ → A is off, **B is the ceiling**).
+NOT wired into the live read-back yet (would route to speaker today → would regress the in-car read-back). Approach B stays live.
