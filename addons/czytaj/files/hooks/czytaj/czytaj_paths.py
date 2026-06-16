@@ -32,6 +32,46 @@ def _claude(name: str) -> str:
     return os.path.join(CLAUDE_DIR, name)
 
 
+# ── Termux / Android shared-storage layout (M6/M16/M17, audit 2026-06-15) ───────
+# These absolute paths are used by termux-media-player and the keyboard app, both OUTSIDE
+# PRoot; PRoot's ~ does NOT map to them, so they can't be ~-expanded and were duplicated as
+# literals across 4 files. One source here ends that drift.
+TERMUX_HOME = "/data/data/com.termux/files/home"
+TERMUX_PREFIX = "/data/data/com.termux/files/usr"
+# Shared-storage flags dir the keyboard app (a separate Android uid) and czytaj (PRoot) both
+# reach. ~/storage/downloads/Termux-flags symlinks here — same physical dir (verified).
+TERMUX_FLAGS_DIR = os.environ.get(
+    "CZYTAJ_TERMUX_FLAGS_DIR", "/storage/emulated/0/Download/Termux-flags")
+
+
+def first_writable_dir(candidates, probe: bool = False) -> str:
+    """First dir in `candidates` that can be created (and, with probe=True, actually written
+    to). Returns "" if none succeeds. Callers staging audio for termux-media-player MUST treat
+    "" as 'no Android-readable dir' and NOT fall back to a PRoot tempdir — the player can't see
+    PRoot paths (ENOENT -> silent TTS, the F11 bug)."""
+    for d in candidates:
+        try:
+            os.makedirs(d, exist_ok=True)
+            if probe:
+                wt = os.path.join(d, ".wtest")
+                with open(wt, "w") as fh:
+                    fh.write("x")
+                os.remove(wt)
+            return d
+        except OSError:
+            continue
+    return ""
+
+
+# Candidate dirs (first writable wins) for the two Termux-readable audio scratch areas that
+# were near-duplicate try-each-dir loops in piper_stream (_audio_scratch_dir, write-probed)
+# and _speak (_readback_cache_base). Keep the order in sync with those resolvers.
+AUDIO_SCRATCH_DIRS = (os.path.join(TERMUX_HOME, ".cache", "czytaj"),
+                      os.path.join(TERMUX_PREFIX, "tmp"))
+READBACK_CACHE_DIRS = (os.path.join(TERMUX_HOME, ".cache", "czytaj", "readback"),
+                       os.path.join(TERMUX_PREFIX, "tmp", "czytaj-readback"))
+
+
 # ── Per-project reading-mode flags (F1/F15: per-project, was a global flag) ──
 FLAG_DIR = _claude("czytaj-flags")            # dir of <sha1(realpath)>.flag
 
@@ -88,7 +128,7 @@ def resolve_piper_home() -> str:
     if env:
         return env
     for home in (os.path.expanduser("~/piper-tts"),
-                 "/data/data/com.termux/files/home/piper-tts"):
+                 os.path.join(TERMUX_HOME, "piper-tts")):
         if os.path.isfile(os.path.join(home, "piper1-gpl", "libpiper", "piper")):
             return home
     return os.path.expanduser("~/piper-tts")
@@ -103,13 +143,18 @@ PIPER_VOICES = os.path.join(PIPER_HOME, "voices")
 
 
 def resolve_voice_typer_flag() -> str:
-    """Voice Typer writes its recording flag under the Termux shared-storage Termux-flags
-    dir. On native PRoot, HOME is /root and ~/storage does NOT exist, so the old ~/storage
-    path never matched and is_recording() always returned False — dictation could never
-    interrupt TTS. Resolve to the first home whose Termux-flags dir actually exists."""
-    rel = "storage/downloads/Termux-flags/voice-typer-recording.flag"
-    for home in (os.path.expanduser("~"), "/data/data/com.termux/files/home"):
-        cand = os.path.join(home, rel)
+    """Voice Typer (a separate Android uid) writes its recording flag under the shared
+    Termux-flags dir. Prefer the canonical absolute base (TERMUX_FLAGS_DIR — the path the
+    writer uses); on native PRoot HOME is /root and ~/storage does NOT exist, so also try the
+    home-relative twins (same physical dir via the storage symlink, verified). First whose
+    parent dir exists wins. Without this, is_recording() returned False on native PRoot and
+    dictation could never interrupt TTS."""
+    name = "voice-typer-recording.flag"
+    rel = "storage/downloads/Termux-flags/" + name
+    candidates = (os.path.join(TERMUX_FLAGS_DIR, name),
+                  os.path.join(os.path.expanduser("~"), rel),
+                  os.path.join(TERMUX_HOME, rel))
+    for cand in candidates:
         if os.path.isdir(os.path.dirname(cand)):
             return cand
     return os.path.expanduser("~/" + rel)

@@ -108,23 +108,12 @@ def _audio_scratch_dir() -> Path | None:
     running OUTSIDE PRoot) can actually open. PRoot paths like /tmp and /root
     are INVISIBLE to it — that was the silent-TTS bug on the native install:
     piper wrote into a PRoot tempdir and the player got ENOENT. Stage audio
-    under the Termux-shared tree instead. Falls back to the system temp only
-    as a last resort (fine when paplay, which lives inside PRoot, is the
-    backend)."""
-    for d in (Path("/data/data/com.termux/files/home/.cache/czytaj"),
-              Path("/data/data/com.termux/files/usr/tmp")):
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            probe = d / ".wtest"
-            probe.write_text("x")
-            probe.unlink()
-            return d
-        except OSError:
-            continue
+    under the Termux-shared tree (cz.AUDIO_SCRATCH_DIRS) instead."""
     # F11: NO gettempdir fallback — both callers (native mkstemp + _staged_tone)
     # feed termux-media-player, which can't read a PRoot tempdir (ENOENT → silent
-    # TTS). Return None so callers fail loudly instead of staging unplayably.
-    return None
+    # TTS). "" → None so callers fail loudly instead of staging unplayably.
+    d = cz.first_writable_dir(cz.AUDIO_SCRATCH_DIRS, probe=True)
+    return Path(d) if d else None
 
 
 def _staged_tone() -> Path | None:

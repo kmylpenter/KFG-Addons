@@ -20,6 +20,7 @@ from czytaj_paths import (  # noqa: E402  — SSOT for paths/config/key (audit 2
     FLAG_DIR, STATE_FILE, SPEAK_LOCK, LOG_FILE, PAUSE_FLAG, ADB_FLAG, SHIZUKU_FLAG,
     SCREEN_CACHE, ACTIVE_SESSION_FILE, SPOKEN_LEDGER, LAST_FOLDER_FILE,
     MIC_CACHE, MEDIA_CACHE, VOL_CACHE, PIPER_BIN, VOICE_TYPER_FLAG, VOICE_TYPER_STALE_S,
+    TERMUX_HOME, TERMUX_PREFIX, TERMUX_FLAGS_DIR, READBACK_CACHE_DIRS, first_writable_dir,
     project_dir as _project_dir, project_flag as _project_flag,
 )
 # FLAG_DIR holds per-project flags: <sha1(realpath)>.flag (F15: legacy global flag removed).
@@ -39,7 +40,7 @@ ACTIVE_SESSION_TTL_S = 300.0
 # cleanly to the old behaviour while the keyboard side isn't deployed (flag absent).
 ACTIVE_WINDOW_FLAG = os.environ.get(
     "CZYTAJ_ACTIVE_WINDOW_FLAG",
-    "/storage/emulated/0/Download/Termux-flags/czytaj-active-window.flag",
+    os.path.join(TERMUX_FLAGS_DIR, "czytaj-active-window.flag"),
 )
 # Cross-window TTS arbitration (the "X4" bug: N open Claude windows each read the
 # same reply, N times). A content-hash ledger guarantees a message is spoken at
@@ -1338,8 +1339,8 @@ def _tmux_active_transcript_raw() -> str:
     sidesteps that race entirely. Best-effort: no tmux / no socket / any error →
     '' so the caller falls back to the keyboard flag and markers."""
     import glob
-    prefix = "/data/data/com.termux/files/usr"
-    home = "/data/data/com.termux/files/home"
+    prefix = TERMUX_PREFIX
+    home = TERMUX_HOME
     tmux_bin = os.path.join(prefix, "bin", "tmux")
     if not os.path.isfile(tmux_bin):
         return ""
@@ -1472,14 +1473,7 @@ def _safe_mtime(p: str) -> float:
 
 
 def _readback_cache_base() -> str:
-    for d in ("/data/data/com.termux/files/home/.cache/czytaj/readback",
-              "/data/data/com.termux/files/usr/tmp/czytaj-readback"):
-        try:
-            os.makedirs(d, exist_ok=True)
-            return d
-        except OSError:
-            continue
-    return ""
+    return first_writable_dir(READBACK_CACHE_DIRS)
 
 
 def _readback_session_dir(session: str) -> str:

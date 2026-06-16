@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _speak import _log, read_message_back, is_readback_playing  # noqa: E402
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
     FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER,
-    WATCHER_LOCK as LOCK_FILE,
+    TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE,
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
@@ -80,7 +80,7 @@ def _keep_daemon_warm(force: bool = False) -> None:
 # onKeyEvent fires even with the SCREEN OFF, so this path covers all cases.
 KEYTRIGGER_FLAG = os.environ.get(
     "CZYTAJ_KEYTRIGGER_FLAG",
-    "/storage/emulated/0/Download/Termux-flags/czytaj-keytrigger.flag",
+    os.path.join(TERMUX_FLAGS_DIR, "czytaj-keytrigger.flag"),
 )
 KEYTRIGGER_POLL_S = 0.08      # how often to poll the trigger flag (~instant, negligible cost)
 FLAG_ECHO_WINDOW_S = 20.0     # (evdev fallback only) suppression window for the echo of an
