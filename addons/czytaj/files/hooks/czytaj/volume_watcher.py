@@ -51,6 +51,24 @@ _KEEPWARM_SENTINEL = os.path.join(FLAG_DIR, ".keepwarm-readback")
 _KEEPWARM_INTERVAL_S = 60.0
 _last_keepwarm = 0.0
 
+# M1 (audit 2026-06-15): the watcher stays PARENT of the periodic Popen children it spawns
+# (keepwarm's `piper_server start`, keepalive's silence `play`) — start_new_session does NOT
+# reparent them and nothing wait()s, so they accrue as <defunct> zombies (~72/hr in-car from
+# the keepalive alone). Track each handle and poll() it from the idle loop to reap. (The dd
+# reader in _stream is already reaped via proc.wait in its finally; the short-lived _speak
+# hook Popens are reaped by their own process exit.)
+_pending_children: "list[subprocess.Popen]" = []
+
+
+def _track_child(proc: "subprocess.Popen") -> None:
+    _pending_children.append(proc)
+
+
+def _reap_children() -> None:
+    for p in _pending_children[:]:
+        if p.poll() is not None:   # poll() reaps an exited child (non-blocking waitpid)
+            _pending_children.remove(p)
+
 
 def _keep_daemon_warm(force: bool = False) -> None:
     global _last_keepwarm
@@ -63,12 +81,13 @@ def _keep_daemon_warm(force: bool = False) -> None:
     except OSError:
         pass
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable or "python3",
              os.path.join(os.path.dirname(os.path.abspath(__file__)), "piper_server.py"), "start"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+        _track_child(proc)   # M1: reap in the idle loop (this 'start' child exits fast)
     except (OSError, ValueError) as e:
         _log("VOLKEY", "keepwarm-fail", repr(e))
 
@@ -197,6 +216,31 @@ def _termux_foreground() -> bool:
     return val
 
 
+# M4 (audit 2026-06-15): refresh the foreground cache from the idle loop (OFF the press path)
+# so the first VolumeUp after a >30s gap doesn't pay the ~4-8s rish dumpsys probe INLINE before
+# audio. Throttled below FG_CACHE_TTL_S so the True cache stays continuously warm while reading.
+_last_fg_prewarm = 0.0
+FG_PREWARM_S = 25.0
+
+
+def _prewarm_fg() -> None:
+    global _last_fg_prewarm
+    # Only KEEP an already-hot foreground cache warm; do NOT burn an idle ~8s rish probe just to
+    # re-confirm "not foreground" (when Termux isn't focused presses are volume-only anyway, and
+    # the next real in-Termux press refreshes the cache). Avoids a wasted probe every FG_PREWARM_S
+    # while a reading-on session sits in another app / on the lock screen.
+    if not _fg_cache["v"]:
+        return
+    now = time.monotonic()
+    if now - _last_fg_prewarm < FG_PREWARM_S:
+        return
+    _last_fg_prewarm = now
+    try:
+        _termux_foreground()   # refresh the cache off the press path; the return value is ignored
+    except Exception:
+        pass
+
+
 def _single_instance() -> "int | None":
     """Hold an exclusive lock so only one watcher runs. Returns the held fd (keep
     it open for the process lifetime) or None if another instance owns it."""
@@ -282,29 +326,31 @@ def _toggle_pause() -> None:
     media-player style. Uses a local state flag (no slow status query) for snappy
     response, sending termux-media-player pause/play accordingly."""
     global _paused, _readback_n
-    _readback_n = 0  # VolumeDown breaks any VolumeUp read-back scrubbing sequence
-    # FS3: if we believe we're paused but the cross-process marker is gone, a new turn
-    # restarted the player since our pause → treat as NOT paused so this press PAUSES the
-    # fresh audio. (Contract: VolumeDown pauses the CURRENT clip only; it does NOT mute
-    # future turns — use /pauza for a timed mute. FS6: intentional, documented here.)
-    if _paused and not os.path.exists(KEYPAUSE_STATE):
-        _paused = False
-    if _paused:
-        _media("play")
-        _paused = False
-        try:
-            os.unlink(KEYPAUSE_STATE)
-        except OSError:
-            pass
-        _log("VOLKEY", "resume")
-    else:
-        _media("pause")
-        _paused = True
-        try:
-            open(KEYPAUSE_STATE, "w").close()
-        except OSError:
-            pass
-        _log("VOLKEY", "pause")
+    # M2: mutate the shared state atomically; run the slow _media() subprocess OUTSIDE the lock.
+    with _action_lock:
+        _readback_n = 0  # VolumeDown breaks any VolumeUp read-back scrubbing sequence
+        # FS3: if we believe we're paused but the cross-process marker is gone, a new turn
+        # restarted the player since our pause → treat as NOT paused so this press PAUSES the
+        # fresh audio. (Contract: VolumeDown pauses the CURRENT clip only; it does NOT mute
+        # future turns — use /pauza for a timed mute. FS6: intentional, documented here.)
+        if _paused and not os.path.exists(KEYPAUSE_STATE):
+            _paused = False
+        if _paused:
+            _paused = False
+            try:
+                os.unlink(KEYPAUSE_STATE)
+            except OSError:
+                pass
+            action = "play"
+        else:
+            _paused = True
+            try:
+                open(KEYPAUSE_STATE, "w").close()
+            except OSError:
+                pass
+            action = "pause"
+    _media(action)
+    _log("VOLKEY", "resume" if action == "play" else "pause")
 
 
 def _read_back() -> None:
@@ -313,18 +359,21 @@ def _read_back() -> None:
     OR this press follows the last within READBACK_WINDOW_S (rapid taps). Otherwise reset
     to the last message. is_readback_playing() polls our own child (no slow media query)."""
     global _paused, _readback_n, _last_read_ts
-    _paused = False
-    try:
-        os.unlink(KEYPAUSE_STATE)   # FS3: reading clears the pause-state marker (no longer paused)
-    except OSError:
-        pass
     now = time.monotonic()
-    scrub = is_readback_playing() or (now - _last_read_ts) < READBACK_WINDOW_S
-    _readback_n = _readback_n + 1 if scrub else 1
-    _last_read_ts = now
-    _log("VOLKEY", "VolumeUp -> read-back", _readback_n, "scrub" if scrub else "fresh")
+    # M2: compute scrub + mutate the shared state atomically; capture n for the slow read.
+    with _action_lock:
+        _paused = False
+        try:
+            os.unlink(KEYPAUSE_STATE)   # FS3: reading clears the pause-state marker (no longer paused)
+        except OSError:
+            pass
+        scrub = is_readback_playing() or (now - _last_read_ts) < READBACK_WINDOW_S
+        _readback_n = _readback_n + 1 if scrub else 1
+        _last_read_ts = now
+        n = _readback_n
+    _log("VOLKEY", "VolumeUp -> read-back", n, "scrub" if scrub else "fresh")
     try:
-        read_message_back(_readback_n)
+        read_message_back(n)   # slow (synth/playback) — runs with the captured n, outside the lock
     except Exception as e:  # never let one bad action kill the watcher
         _log("VOLKEY", "read-back-error", repr(e))
 
@@ -338,6 +387,13 @@ def _read_back() -> None:
 # this runtime (while `_paused` was), so the filesystem is the reliable shared channel.
 _dispatch_lock = threading.Lock()
 _last_fire: "dict[int, float]" = {}
+# M2/M3 (audit 2026-06-15): serialize the compound read-modify-write on the read-back state
+# globals (_readback_n / _paused / _last_read_ts). VolumeDown and VolumeUp debounce PER-CODE,
+# so a near-simultaneous down+up each spawn their OWN _gated_action thread and would race the
+# RMW (the GIL does NOT make `x = x + 1` atomic). _bt_keepalive (main thread) also snapshots
+# _last_read_ts under this lock. Held ONLY around the in-memory state mutation — never across
+# the slow read_message_back()/_media() I/O — so pause/scrub stay responsive.
+_action_lock = threading.Lock()
 
 
 def _flag_recent() -> bool:
@@ -642,7 +698,10 @@ def _bt_keepalive() -> None:
     if not BT_KEEPALIVE:
         return
     now = time.monotonic()
-    interacting = _termux_foreground() or (now - _last_read_ts) < BT_RECENT_READ_S
+    with _action_lock:
+        last_read = _last_read_ts   # M3: snapshot the cross-thread value once (written by the
+                                    # read-back dispatch thread); lock held only around the read.
+    interacting = _termux_foreground() or (now - last_read) < BT_RECENT_READ_S
     if not interacting or not _car_connected():
         # idle / at home / on the car radio → release our silence so the car keeps its audio
         if _ka_playing and not _czytaj_audio_playing():
@@ -652,17 +711,18 @@ def _bt_keepalive() -> None:
     if _czytaj_audio_playing():
         return   # a real read-back/auto-read owns the player now (it replaced our silence)
     # re-issue if we have none, the current clip is about to end, or a read-back interrupted it
-    if not ((not _ka_playing) or (now - _ka_started > KA_REISSUE_S) or (_last_read_ts > _ka_started)):
+    if not ((not _ka_playing) or (now - _ka_started > KA_REISSUE_S) or (last_read > _ka_started)):
         return
     wav = _ensure_silence_wav()
     if not wav:
         return
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             ["termux-media-player", "play", wav],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, start_new_session=True,
         )
+        _track_child(proc)   # M1: reap in the idle loop so the play child doesn't <defunct>
         _ka_playing = True
         _ka_started = now
         try:    # BT is warm now → unlock_audio_routing() skips the audible per-read wake tone
@@ -709,10 +769,12 @@ def main() -> int:
             # each loop so it follows a czytaj on→off toggle within a cycle.
             if _reading_on():
                 _wake_lock()
+                _prewarm_fg()     # M4: keep the FG cache warm so the next read-back press is instant
             else:
                 _wake_unlock()
             _keep_daemon_warm()   # re-ensure the daemon stays warm (throttled 60s; self-heals a death)
             _bt_keepalive()       # keep the car's BT A2DP warm while reading in the car (approach B)
+            _reap_children()      # M1: reap the periodic Popen children so they don't pile up <defunct>
             if not EVDEV_FALLBACK:
                 # accessibility poller (daemon thread) handles keys; the main loop just
                 # keeps the wakelock fresh so the device can't doze and freeze the poller.
