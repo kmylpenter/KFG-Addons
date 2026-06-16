@@ -15,20 +15,22 @@ FLAG="$FLAG_DIR/$KEY.flag"
 if [ -f "$FLAG" ]; then
   rm -f "$FLAG"
   echo OFF
-  # F4/F40: tear down the SHARED audio ONLY when NO project is reading anymore,
+  # F4/F40: tear down the SHARED auto-read audio ONLY when NO project is reading anymore,
   # so /czytaj OFF here can't cut off another window that is still on.
-  if [ -z "$(ls -A "$FLAG_DIR" 2>/dev/null)" ]; then
+  # M11 (audit 2026-06-15): gate on REAL *.flag files only. The watcher's .keepwarm-readback
+  # DOTFILE lives in FLAG_DIR, so the old `ls -A` (which lists dotfiles) was NEVER empty and
+  # this whole block was DEAD CODE — leftover playback + a stale pause flag were never cleared
+  # on OFF.
+  if ! compgen -G "$FLAG_DIR/*.flag" >/dev/null 2>&1; then
     termux-media-player stop >/dev/null 2>&1
-    # F21: anchor the python scripts so the pattern can't match an editor/grep
-    # whose argv contains these names; bare binaries (daemon/paplay/tts) stay.
-    # GLOBAL-KEYS: the volume_watcher + its dd/getevent readers are DELIBERATELY
-    # NOT killed here. The keys are an always-on remote (read-back/pause) decoupled
-    # from czytaj on/off, so turning reading OFF tears down only the AUTO-read audio
-    # chain — never the key watcher. (The watcher is respawned by the prompt hook.)
-    for pat in 'python.*piper_server\.py' piper-daemon paplay 'python.*piper_stream\.py' termux-tts-speak; do
+    # F21: anchor the python scripts so the pattern can't match an editor/grep whose argv
+    # contains these names. M11+keepwarm: kill ONLY the in-turn auto-read CLIENTS — NOT
+    # piper_server/piper-daemon and NOT `rm -rf RUN_DIR`: the warm daemon is kept alive on
+    # purpose for always-on VolumeUp read-back (keepwarm intent, audit 2026-06-15). GLOBAL-KEYS:
+    # the volume_watcher + its readers are likewise DELIBERATELY left running (always-on remote).
+    for pat in paplay 'python.*piper_stream\.py' termux-tts-speak; do
       pkill -9 -f "$pat" >/dev/null 2>&1
     done
-    rm -rf "$RUN_DIR"
     rm -f "$CZYTAJ_PAUSE_FLAG"   # F40: clear a stale global pause
   fi
 else
