@@ -554,7 +554,13 @@ def _play_cached_wav(path: str) -> int:
     _prune_scratch()
     if not _pulse_available():
         _reserve_channel(p)   # cross-window QUEUE on the shared player (same as synth path)
-    unlock_audio_routing()
+    # C1 (audit 2026-06-15): do NOT play the audible wake-tone prelude on the cache-HIT path.
+    # unlock_audio_routing() costs ~0.7s (stop + tone + sleep + a duplicate play fork) whenever
+    # PREHEAT_MARKER is stale (>60s) — exactly the common cold first-press at home/on a speaker —
+    # and play_blocking(p) below already wakes BT/MediaSession routing (it is the SAME
+    # termux-media-player play call as the tone). So the tone was pure pre-audio latency on a HIT.
+    # In-car the keepalive keeps PREHEAT_MARKER fresh, so unlock_audio_routing was already a no-op
+    # there; this only removes the stale-marker tone on the cold at-home HIT.
     play_blocking(p)
     return 0
 
