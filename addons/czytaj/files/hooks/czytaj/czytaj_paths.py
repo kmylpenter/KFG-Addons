@@ -98,6 +98,12 @@ KEYPAUSE_STATE = _claude("czytaj-keypause.state")
 PLAYING_MARKER = _claude("czytaj-playing.flag")
 CHANNEL_FILE = _claude("czytaj-channel")
 
+# ── In-turn audio-client kill patterns (M13 — was triplicated across toggle.sh/ups.sh/_speak.py) ─
+# The short-lived playback clients pkill'd on a new turn / teardown. NEVER piper_server/piper-daemon
+# (the warm daemon must survive — keepwarm). Mirrored by czytaj-env.sh's CZYTAJ_AUDIO_CLIENT_PATS
+# bash array; czytaj_selftest pins shell == python. F21: piper_stream anchored to its python invocation.
+AUDIO_CLIENT_PATS = ("termux-tts-speak", "termux-media-player", "paplay", r"python.*piper_stream\.py")
+
 # ── Piper daemon run dir (S2 — the daemon-split landmine; ONE definition now) ─
 # FIXED path (was XDG_RUNTIME_DIR/TMPDIR-derived): those env vars DIFFER across czytaj
 # processes, so each computed a DIFFERENT dir → separate daemons that never shared the

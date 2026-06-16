@@ -67,7 +67,7 @@ rm -f "$HOOK_TMP"
 # (the bug that made every reply slow). The synth queue flushes itself
 # because paplay is killed and the daemon-to-FIFO write fails fast.
 # F21: anchor piper_stream to its python invocation (don't match editor/grep argv).
-for pat in termux-tts-speak termux-media-player paplay 'python.*piper_stream\.py'; do
+for pat in "${CZYTAJ_AUDIO_CLIENT_PATS[@]}"; do   # M13: SSOT — defined in czytaj-env.sh
   pkill -9 -f "$pat" 2>/dev/null
 done
 echo "$(date +%H:%M:%S) pid=$$ UPS-KILLED-CLIENTS" >> "$LOG" 2>/dev/null

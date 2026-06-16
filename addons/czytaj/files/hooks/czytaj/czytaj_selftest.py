@@ -85,6 +85,13 @@ if os.path.isfile(env_sh):
         sv = subprocess.run(["bash", "-c", f'source "{env_sh}"; printf %s "${var}"'],
                             capture_output=True, text=True).stdout.strip()
         check(f"shell==python {label}", sv == pyval, f"shell={sv} py={pyval}")
+    # M13: pin the in-turn audio-client kill set (shell array == python tuple), so adding/removing
+    # an audio client can't silently diverge the two languages (the shotgun-surgery the audit flagged).
+    acp = subprocess.run(
+        ["bash", "-c", f'source "{env_sh}"; printf "%s\\n" "${{CZYTAJ_AUDIO_CLIENT_PATS[@]}}"'],
+        capture_output=True, text=True).stdout.strip().splitlines()
+    check("shell==python AUDIO_CLIENT_PATS", acp == list(cz.AUDIO_CLIENT_PATS),
+          f"shell={acp} py={list(cz.AUDIO_CLIENT_PATS)}")
     # ENV-RESOLUTION parity (S3's ACTUAL divergence vector, not just the sha1 algorithm):
     # exercise the full caller path — shell ${CLAUDE_PROJECT_DIR:-$PWD}+czytaj_project_key vs
     # python project_key() (project_dir() = CLAUDE_PROJECT_DIR or cwd or getcwd()) — under

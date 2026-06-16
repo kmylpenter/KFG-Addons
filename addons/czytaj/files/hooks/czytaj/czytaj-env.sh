@@ -23,6 +23,12 @@ CZYTAJ_SHIZUKU_FLAG="$CZYTAJ_DIR/czytaj-shizuku.flag"   # written by setup-shizu
 # Daemon socket dir — FIXED absolute path (was env-derived → daemon-split → cold synth).
 CZYTAJ_RUN_DIR="$HOME/.cache/czytaj/piper-server"
 
+# M13 (audit 2026-06-15): the in-turn audio-client pkill patterns — ONE definition, mirrored by
+# czytaj_paths.AUDIO_CLIENT_PATS and pinned by czytaj_selftest. Short-lived playback clients killed
+# on a new turn / teardown; NEVER piper_server/piper-daemon (the warm daemon must survive — keepwarm).
+# F21: piper_stream anchored to its python invocation so the pattern can't match an editor/grep argv.
+CZYTAJ_AUDIO_CLIENT_PATS=("termux-tts-speak" "termux-media-player" "paplay" 'python.*piper_stream\.py')
+
 # czytaj_project_key DIR  ->  sha1 of realpath(DIR), lowercase hex, no trailing newline.
 # MUST equal czytaj_paths.project_key(). printf '%s' (NOT echo) so the trailing newline
 # echo would add can't change the hash; realpath falls back to the literal dir if it fails.

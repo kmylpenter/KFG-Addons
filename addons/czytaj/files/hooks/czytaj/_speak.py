@@ -21,6 +21,7 @@ from czytaj_paths import (  # noqa: E402  — SSOT for paths/config/key (audit 2
     SCREEN_CACHE, ACTIVE_SESSION_FILE, SPOKEN_LEDGER, LAST_FOLDER_FILE,
     MIC_CACHE, MEDIA_CACHE, VOL_CACHE, PIPER_BIN, VOICE_TYPER_FLAG, VOICE_TYPER_STALE_S,
     TERMUX_HOME, TERMUX_PREFIX, TERMUX_FLAGS_DIR, READBACK_CACHE_DIRS, first_writable_dir,
+    AUDIO_CLIENT_PATS,
     project_dir as _project_dir, project_flag as _project_flag,
 )
 # FLAG_DIR holds per-project flags: <sha1(realpath)>.flag (F15: legacy global flag removed).
@@ -757,7 +758,7 @@ def _kill_audio_chain() -> None:
     # F21: anchor piper_stream to its python invocation so the pattern can't also
     # match an editor/grep whose argv contains "piper_stream" (the binaries are
     # specific enough). NEVER matches piper_server — the warm daemon must survive.
-    for pat in ("termux-tts-speak", "termux-media-player", r"python.*piper_stream\.py", "paplay"):
+    for pat in AUDIO_CLIENT_PATS:   # M13: SSOT — czytaj_paths.AUDIO_CLIENT_PATS (== czytaj-env.sh)
         subprocess.run(
             ["pkill", "-9", "-f", pat],
             stdout=subprocess.DEVNULL,

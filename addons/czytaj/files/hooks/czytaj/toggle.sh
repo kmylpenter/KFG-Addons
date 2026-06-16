@@ -28,8 +28,8 @@ if [ -f "$FLAG" ]; then
     # piper_server/piper-daemon and NOT `rm -rf RUN_DIR`: the warm daemon is kept alive on
     # purpose for always-on VolumeUp read-back (keepwarm intent, audit 2026-06-15). GLOBAL-KEYS:
     # the volume_watcher + its readers are likewise DELIBERATELY left running (always-on remote).
-    for pat in paplay 'python.*piper_stream\.py' termux-tts-speak; do
-      pkill -9 -f "$pat" >/dev/null 2>&1
+    for pat in "${CZYTAJ_AUDIO_CLIENT_PATS[@]}"; do   # M13: SSOT — defined in czytaj-env.sh
+      pkill -9 -f "$pat" >/dev/null 2>&1               # (termux-media-player too — redundant with the stop above, harmless)
     done
     rm -f "$CZYTAJ_PAUSE_FLAG"   # F40: clear a stale global pause
   fi
