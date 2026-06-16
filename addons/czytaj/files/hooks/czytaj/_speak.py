@@ -1416,11 +1416,20 @@ def _resolve_active_transcript() -> str:
         return candidates[0]
 
 
+_turn_texts_cache = {"key": None, "ts": 0.0, "val": []}
+_TURN_TEXTS_TTL_S = 2.5   # match the tmux active-window cache; covers a rapid VolumeUp scrub burst
+
+
 def _turn_texts(transcript_path: str) -> list[str]:
     """Each assistant message (one transcript entry's concatenated text), oldest→
     newest — the granularity VolumeUp steps back through (n-th from the end). Each
     reply bubble is its own entry even when several are emitted in one turn around
-    tool calls, which matches how the user thinks of 'messages'."""
+    tool calls, which matches how the user thinks of 'messages'.
+
+    M5 (audit 2026-06-15): memoized by (path, mtime, size) for a short TTL so a rapid VolumeUp
+    scrub burst — and precache.py's n=1..N loop (which calls this once per turn) — don't
+    re-readlines()+json.loads the whole, ever-growing transcript on every call before the
+    cached wav plays. Invalidates the instant the transcript grows (mtime or size changes)."""
     if not transcript_path or not os.path.isfile(transcript_path):
         return []
     home_real = os.path.realpath(os.path.expanduser("~/.claude"))
@@ -1430,6 +1439,15 @@ def _turn_texts(transcript_path: str) -> list[str]:
         return []
     if not path_real.startswith(home_real + os.sep):
         return []
+    try:
+        st = os.stat(transcript_path)
+        key = (path_real, st.st_mtime, st.st_size)   # any transcript change → new key → re-parse
+    except OSError:
+        key = None
+    now = time.monotonic()
+    if (key is not None and _turn_texts_cache["key"] == key
+            and now - _turn_texts_cache["ts"] < _TURN_TEXTS_TTL_S):
+        return _turn_texts_cache["val"]
     try:
         with open(transcript_path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
@@ -1451,6 +1469,10 @@ def _turn_texts(transcript_path: str) -> list[str]:
         joined = "\n".join(parts).strip()
         if joined:
             msgs.append(joined)
+    if key is not None:
+        _turn_texts_cache["key"] = key
+        _turn_texts_cache["ts"] = now
+        _turn_texts_cache["val"] = msgs
     return msgs
 
 
