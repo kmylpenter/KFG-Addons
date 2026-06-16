@@ -32,9 +32,11 @@ if [ ! -f "$CZYTAJ_FLAG_DIR/$_CZYTAJ_KEY.flag" ]; then
   exit 0
 fi
 
-# Stop the Android MediaPlayer service first (sync) — pkill alone doesn't
-# reach the underlying playback running inside the Termux:API APK.
-termux-media-player stop >/dev/null 2>&1
+# Stop the Android MediaPlayer service (pkill alone doesn't reach playback running inside
+# the Termux:API APK). M10 (audit 2026-06-15): backgrounded — it is a ~hundreds-of-ms
+# Termux:API round-trip and the new turn's audio only starts at the Stop hook (seconds
+# later), so it must NOT block the prompt→Claude path. pkill below is the synchronous backstop.
+termux-media-player stop >/dev/null 2>&1 &
 # FS3: a new turn restarts audio → clear the VolumeDown pause-state marker so the watcher's
 # stale in-memory _paused re-syncs and the next VolumeDown PAUSES (not resumes nothing).
 rm -f "$CZYTAJ_KEYPAUSE_STATE" >/dev/null 2>&1
