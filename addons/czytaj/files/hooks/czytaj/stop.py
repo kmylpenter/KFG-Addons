@@ -5,7 +5,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import is_active, is_recording, is_in_call, speak_new_text  # noqa: E402
+from _speak import (  # noqa: E402
+    is_active, is_recording, is_in_call, speak_new_text, READBACK_CACHE_MAX,
+)
 
 
 def main() -> int:
@@ -37,7 +39,7 @@ def _precache_latest(transcript_path: str) -> None:
     try:
         import subprocess
         subprocess.Popen(
-            [sys.executable or "python3", script, transcript_path, "5"],
+            [sys.executable or "python3", script, transcript_path, str(READBACK_CACHE_MAX)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, start_new_session=True,
         )
