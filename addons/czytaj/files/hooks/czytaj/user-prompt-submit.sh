@@ -32,15 +32,9 @@ if [ ! -f "$CZYTAJ_FLAG_DIR/$_CZYTAJ_KEY.flag" ]; then
   exit 0
 fi
 
-# Stop the Android MediaPlayer service (pkill alone doesn't reach playback running inside
-# the Termux:API APK). M10 (audit 2026-06-15): backgrounded — it is a ~hundreds-of-ms
-# Termux:API round-trip and the new turn's audio only starts at the Stop hook (seconds
-# later), so it must NOT block the prompt→Claude path. pkill below is the synchronous backstop.
-termux-media-player stop >/dev/null 2>&1 &
 # FS3: a new turn restarts audio → clear the VolumeDown pause-state marker so the watcher's
 # stale in-memory _paused re-syncs and the next VolumeDown PAUSES (not resumes nothing).
 rm -f "$CZYTAJ_KEYPAUSE_STATE" >/dev/null 2>&1
-echo "$(date +%H:%M:%S) pid=$$ UPS-MEDIA-STOPPED" >> "$LOG" 2>/dev/null
 
 # Mark THIS session as active + reset spoken-text state. Done via _speak
 # helpers so single source of truth, no duplicated atomic-write code.
@@ -70,7 +64,14 @@ rm -f "$HOOK_TMP"
 for pat in "${CZYTAJ_AUDIO_CLIENT_PATS[@]}"; do   # M13: SSOT — defined in czytaj-env.sh
   pkill -9 -f "$pat" 2>/dev/null
 done
-echo "$(date +%H:%M:%S) pid=$$ UPS-KILLED-CLIENTS" >> "$LOG" 2>/dev/null
+# Gracefully stop the Android MediaPlayer service (pkill -9 above kills the client process but does
+# NOT reach the playback inside the Termux:API APK). M10: backgrounded so it never blocks the
+# prompt→Claude path. Placed AFTER the pkill loop ON PURPOSE — the M13 client set includes
+# termux-media-player, so an earlier `stop &` was killed by this very loop before its Termux:API
+# round-trip landed (final-sweep 2026-06-16). Nothing runs after it here, so it survives; new-turn
+# audio only starts seconds later at the Stop hook anyway.
+termux-media-player stop >/dev/null 2>&1 &
+echo "$(date +%H:%M:%S) pid=$$ UPS-KILLED-CLIENTS+STOP" >> "$LOG" 2>/dev/null
 true
 
 cat <<'JSON'

@@ -98,7 +98,7 @@ KEYPAUSE_STATE = _claude("czytaj-keypause.state")
 PLAYING_MARKER = _claude("czytaj-playing.flag")
 CHANNEL_FILE = _claude("czytaj-channel")
 
-# ── In-turn audio-client kill patterns (M13 — was triplicated across toggle.sh/ups.sh/_speak.py) ─
+# ── In-turn audio-client kill patterns (M13 — was triplicated: toggle.sh/user-prompt-submit.sh/_speak.py) ─
 # The short-lived playback clients pkill'd on a new turn / teardown. NEVER piper_server/piper-daemon
 # (the warm daemon must survive — keepwarm). Mirrored by czytaj-env.sh's CZYTAJ_AUDIO_CLIENT_PATS
 # bash array; czytaj_selftest pins shell == python. F21: piper_stream anchored to its python invocation.
