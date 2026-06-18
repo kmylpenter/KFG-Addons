@@ -65,6 +65,19 @@ feature, level, coverage}` (harness je ignoruje — czyta tylko `file:` i `tests
    **NIGDY** nie włącza RED MODE ani nie zamyka bramki — to zrzut stanu, nie kontrakt; decyzja
    stable↔wip należy do usera w `/domknij`. Brak katalogu → pomiń bez wpisu.
 
+## F1c. CANARY KLIENTA — testy logiki .html (informacyjny; po F1)
+
+Jeśli `.petla-noc/tests-client/` istnieje i niepusty:
+`node <projekt>/.petla-noc/harness/client-harness.js <projekt> --json`.
+- exit 0 → zapisz `files[<plik.html>].client_tests = green` dla pokrytych plików.
+- exit 1 (czerwony) → REGRESJA LOGIKI KLIENTA → sekcja 🔴 raportu („klient:
+  <plik.html> :: <test> — regresja zachowania .html"). ALE NIE włącza globalnego RED MODE
+  i NIE zamyka bramki SERWERA — noc mutuje `.gs`, nie `.html` (E/G/I/K działają na serwerze).
+  Klient-RED blokuje TYLKO ewentualną zmianę w tym `.html` (moduł C-komentarze) — wtedy
+  traktuj jak bramkę tego pliku.
+- exit 2 (setup) → „client-harness broken" do raportu, bez RED.
+Brak katalogu → pomiń bez wpisu (B-client jeszcze nie utworzył testów).
+
 ## F2. DIFF SENTINEL — audyt świeżego długu
 
 1. Zakres: `git diff --name-only <last_session_commit>..<session_base_head>

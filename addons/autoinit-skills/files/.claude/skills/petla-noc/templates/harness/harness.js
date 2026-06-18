@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// HARNESS_VERSION 1.0 — petla-noc characterization-test runner for Google Apps Script
+// HARNESS_VERSION 1.1 — petla-noc characterization-test runner for Google Apps Script
 //
 // Usage: node harness.js <projectDir> [--json] [--filter <substr>] [--tests <dir>]
 // Exit:  0 = all green | 1 = >=1 test failed (or source load error) | 2 = setup error
@@ -8,6 +8,11 @@
 // sources are loaded into the context (top-level code runs, like GAS global scope),
 // with GAS services mocked (see mocks.js). Test files: .petla-noc/tests/*.test.js
 //   module.exports = { file: "Kod.gs", tests: [{ name, fixtures, run(g, state, assert) }] }
+//
+// MUTATION HOOK (since 1.1): env PETLA_MUTATE=<json file> maps {sourcePath: mutatedCode}
+// (keys resolved to absolute). Matching sources load the mutant INSTEAD of disk content;
+// real files are NEVER modified. This lets mutate.js reuse this harness as SSOT to measure
+// whether the net DISCRIMINATES (a test that survives a mutant is tautological coverage).
 "use strict";
 
 const fs = require("fs");
@@ -40,6 +45,15 @@ if (!projectDir || !fs.existsSync(projectDir)) die(`project dir not found: ${pro
 
 const testsDir = testsDirArg || path.join(projectDir, ".petla-noc", "tests");
 if (!fs.existsSync(testsDir)) die(`tests dir not found: ${testsDir} (modul B jeszcze nie utworzyl testow)`);
+
+// mutation override (see header MUTATION HOOK): substitute source content in-memory.
+let MUT_OVERRIDE = {};
+if (process.env.PETLA_MUTATE) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(process.env.PETLA_MUTATE, "utf8"));
+    for (const [k, v] of Object.entries(raw)) MUT_OVERRIDE[path.resolve(k)] = v;
+  } catch (e) { die(`PETLA_MUTATE unreadable: ${e.message}`); }
+}
 
 // ── collect sources (*.gs incl. _deprecated.gs; skip .petla-noc, node_modules) ──
 // clasp projects keep sources as .js — accept .js too when appsscript.json exists.
@@ -88,7 +102,8 @@ function runTest(test) {
   if (typeof (test.fixtures || {}).preload === "function") test.fixtures.preload(context, state);
   const loadErrors = [];
   for (const src of sources) {
-    const code = fs.readFileSync(src, "utf8");
+    const ov = MUT_OVERRIDE[path.resolve(src)];
+    const code = ov !== undefined ? ov : fs.readFileSync(src, "utf8");
     try {
       vm.runInContext(code, context, { filename: path.relative(projectDir, src), timeout: 10000 });
     } catch (e) {
