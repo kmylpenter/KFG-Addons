@@ -74,6 +74,7 @@ oznaczył w config (`library: true` w progress.json).
 
 ## 7. WZORZEC HEADER-MAP (moduł G — cel refaktoru)
 
+> Blok poniżej = **wzorzec do EMISJI (INV6)**, nie pseudokod-LOGIC-SPEC.
 ```js
 // Zamiast: var status = row[7];  sheet.getRange("C2:C").getValues();
 const COL = (function () {
@@ -90,6 +91,7 @@ którego nie widzisz → raport kandydata bez refaktoru.
 
 ## 8. WZORZEC WRAPPERA BŁĘDÓW (moduł I — cel wdrożenia)
 
+> Blok poniżej = **wzorzec do EMISJI (INV6)**, nie pseudokod-LOGIC-SPEC.
 ```js
 function withErrorLog(fnName, fn) {
   try {
@@ -135,3 +137,66 @@ ciało to wyłącznie `Logger.log`/`console.log`; wywołania w/w API poza jakimk
   dla `m` tylko jako "method-call", nie globalna funkcja).
 - Top-level code w .gs wykonuje się przy KAŻDYM wywołaniu projektu — odnotowuj
   w map.json (`top_level: true` dla pliku) i w testach (ładowanie pliku = efekt).
+
+## 11. POLA ŹRÓDŁA ZEWNĘTRZNEGO (Zoho CRM → arkusz) — wykrywanie + cel (moduł Z)
+
+Jak pole zewnętrznego CRM-a (Zoho) pojawia się w GAS — wzorce do skanu (pole = nazwa API Zoho):
+
+| Kind | Locus / wzorzec |
+|---|---|
+| record-dot | `<obj>.<API_Name>` na obiekcie rekordu w funkcji-mapperze (odpowiedź `/Deals` lub payload webhooka `doPost`) |
+| field-list | stała z listą nazw (`ZOHO_FIELDS = [...]`) lub CSV w `fields=` URL-a `UrlFetchApp` |
+| webhook-cols | tablica kluczy JSON ciała `doPost` (np. `COLS`/`LABELS`) mapowana na kolumny arkusza |
+| store-headers | nagłówki docelowej zakładki-store (np. `MAIN_DB_COLUMNS`, nagłówki `DEALS_DATA`) |
+| write-back | przypisanie na nazwie API (zapis zwrotny do CRM) + Deluge `fieldMap` w `.java` |
+| dictionary (opcjonalny) | `docs/zoho_*_api_names.md` — wzbogaca typ/label/Gotchas dla pól JUŻ znalezionych w kodzie; NIE źródło listy pól |
+
+**Konwencja nazw API Zoho:** polskie diakrytyki (ą,ć,ę,ł,ń,ó,ś,ź,ż) → `_`; spacje → `_`;
+znaki specjalne (nawiasy, %, ?) usuwane. ⇒ **label ≠ API name** — ZAWSZE bierz API z KODU,
+NIGDY nie zgaduj z labela (patrz Gotchas w `docs/zoho_*_api_names.md`).
+
+**ŹRÓDŁO LISTY PÓL = KOD (statycznie, ZERO pobrania z Zoho):** pola, które apka wyświetla/używa,
+są w kodzie jako nazwy API (mappery Zoho→local, stałe, porównania). Słownik/schemat Zoho NIE jest
+źródłem — enumeruje bałagan setek nieużywanych pól, którego celowo NIE dotykamy. Katalog = unia
+nazw API obecnych w kodzie; nic spoza tego.
+
+**CEL = store z kodu**: zakładka-baza w workbooku apki (Terminator `Główna baza danych` /
+`MAIN_DB_COLUMNS`; TTA `DEALS_DATA`). Zapis katalogu przez noc jest **ADDYTYWNY i odwracalny** —
+pełny rewrite WYŁĄCZNIE zakładki-meta `__KATALOG_POL` (noc-owned) + doklejanie brakujących kolumn
+store; NIGDY usunięcie / rename / przestawienie / nadpisanie danych biznesowych (inwariant 3).
+Procedura, klasyfikacja użycia/potencjału i kontrakt writera: `modules/Z.md`.
+
+## 12. DUAL-SOURCE / PARALLEL-RUN (moduł R — wzorce, SSOT)
+
+Cel: apka czyta/pisze z OBU źródeł (Zoho + arkusz); jedna globalna flaga wybiera autorytet.
+`SOURCE_OF_TRUTH` w ScriptProperties APKI ∈ {`zoho`,`sheet`}, **default `zoho`**. CUTOVER = jeden
+ręczny flip na `sheet` (globalny). Wiruj na SZWIE (Terminator: hydratacja cache `deals`; TTA: writer
+`DEALS_DATA`), NIE w każdym odczycie.
+
+Bloki kodu w §12 = **wzorce do EMISJI (INV6)**, nie pseudokod-LOGIC-SPEC.
+Dual-read (akceptuj OBIE wartości; fallback gdy autorytet pusty; wykryj rozjazd):
+```js
+function __srcVal(name, dealId, zohoVal, sheetVal) {
+  var auth = PropertiesService.getScriptProperties().getProperty('SOURCE_OF_TRUTH') || 'zoho';
+  if (zohoVal != null && sheetVal != null && !__eqNorm(name, zohoVal, sheetVal))
+    __logRozjazd(name, dealId, zohoVal, sheetVal, auth, 'mismatch');
+  var primary = auth === 'sheet' ? sheetVal : zohoVal;
+  return primary != null ? primary : (auth === 'sheet' ? zohoVal : sheetVal);
+}
+```
+Zapis-cień IZOLOWANY — błąd arkusza NIGDY nie psuje ścieżki autorytatywnej:
+```js
+// PO zapisie do autorytetu (Zoho lub arkusz wg flagi):
+try { __writeShadow(dealId, name, value); }
+catch (e) { __logRozjazd(name, dealId, '(write-fail)', String(e), 'shadow', 'unpinned'); }  // NIGDY nie rzucaj
+```
+`__logRozjazd` → append do `__ROZJAZD_LOG` [timestamp, pole, dealId, zoho, sheet, autorytet, kind].
+**CAP/KILL-SWITCH (M5)**: log FIFO-trimowany (jak `CRM_WEBHOOK_LOG` ~500), dedup po (pole+kind), flaga
+`divergence_log: off`. Bez tego ryzyko spamu jak incydent TTA `DEALS_DIFF_KILL` — patrz `modules/R.md` R4.
+`__eqNorm(name,...)` → porównuj po TYPIE ze słownika (Date→`yyyy-MM-dd`, Currency/Number→liczba,
+Boolean→bool). **Typ NIEZNANY / brak w słowniku → string-trim-equality (NIE goły `===`)** — brak typu
+DEGRADUJE do bezpiecznego porównania, nie do zalewu fałszywych rozjazdów (M5).
+Dual-write TYLKO dla `access_kind=write-back` (pole, które apka FAKTYCZNIE zapisuje do Zoho); pole
+liczone w Zoho (FORMULA) / read-only / nieznane → **mirror-only**, NIGDY dual-write nawet gdy słownik go
+nie oznaczył (fail-safe C2). Pełna niezależność FORMUŁY po cutoverze wymaga reguły PRZELICZANIA w arkuszu
+(inaczej zamarznie) → DECYZJE. Detal: `modules/R.md`.

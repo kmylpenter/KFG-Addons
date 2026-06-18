@@ -22,6 +22,8 @@
     "night_deployment_last3": { "type": "string", "description": "ostatnie 3 znaki deployment ID — user tak identyfikuje linki ('deploy na DMW')" },
     "last_night_version": { "type": "integer", "description": "wersja GAS wystawiona na link nocny (rollback: clasp deploy -i -V poprzednia)" },
     "head_restored": { "type": "boolean", "default": true, "description": "false = D4 padl, HEAD chmury zostal na kodzie nocnym — D2 nastepnej nocy wykonuje zalegle przywrocenie; alarm na szczycie PORANKA" },
+    "night_start_epoch": { "type": "integer", "description": "date +%s przy KROK 0 — FAZA POKRYCIA liczy od tego budzet okna (night_window_hours)" },
+    "night_window_hours": { "type": "number", "description": "miekki budzet calej nocy (config/--window-hours); FAZA POKRYCIA konczy gdy elapsed >= to LUB brak kwalifikujacej roboty; brak/0 = loop-until-dry bez czasowego capu" },
     "priority_queue": {
       "type": "array",
       "description": "issue-id z fresh_debt/criticali — moduł E bierze NAJPIERW (severity->kolejnosc)",
@@ -31,6 +33,34 @@
       "type": "array",
       "description": "nazwy funkcji DOUBT zaakceptowane recznie przez usera w raporcie",
       "items": { "type": "string" }
+    },
+    "zoho": {
+      "type": "object",
+      "description": "modul Z: stan katalogu pol Zoho->store. Sam katalog: .petla-noc/zoho-catalog.yaml",
+      "properties": {
+        "catalog_path": { "type": "string", "default": ".petla-noc/zoho-catalog.yaml" },
+        "fields_total": { "type": "integer" },
+        "fields_active": { "type": "integer" },
+        "fields_candidate": { "type": "integer" },
+        "fields_unused": { "type": "integer", "description": "OPCJONALNY appendix: pola w slowniku/zniklym kodzie, NIE w aktywnym kodzie; nie trafia do arkusza (Z2 demotion)" },
+        "store_tab": { "type": "string", "description": "docelowa zakladka-store (np. 'Glowna baza danych' / 'DEALS_DATA')" },
+        "columns_proposed": { "type": "array", "items": { "type": "string" }, "description": "pola active/high bez kolumny w store -> DECYZJE" },
+        "endpoint_wired": { "type": "boolean", "default": false, "description": "czy doPost routuje __noc_zoho_catalog_sync (jednorazowe wpiecie usera); false => zapis D6 POMINIETY" },
+        "last_write": { "type": "string", "format": "date", "description": "data ostatniego udanego zapisu D6 do arkusza" },
+        "snapshot_ref": { "type": "string", "description": "ref snapshotu sprzed zapisu (rollback: zakladka __KATALOG_SNAPSHOT)" }
+      }
+    },
+    "dual_source": {
+      "type": "object",
+      "description": "modul R: parallel-run dual-source (Zoho+arkusz). Flaga cutoveru SOURCE_OF_TRUTH zyje w ScriptProperties APKI, nie tu",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "R uzbrojony na projekcie (config dual_source)" },
+        "source_of_truth": { "type": "string", "enum": ["zoho", "sheet"], "default": "zoho", "description": "odczytane z app ScriptProperties; 'sheet' = po globalnym cutoverze" },
+        "fields_wired": { "type": "integer", "description": "pola active z parallel-run (dual-write+dual-read)" },
+        "formula_pending": { "type": "array", "items": { "type": "string" }, "description": "pola FORMULA/read-only Zoho: mirror-only, wymagaja reguly przeliczania w arkuszu dla pelnej niezaleznosci" },
+        "divergences_last_run": { "type": "integer", "description": "liczba wierszy __ROZJAZD_LOG od ostatniej nocy" },
+        "telegram_configured": { "type": "boolean", "default": false }
+      }
     },
     "files": {
       "type": "object",
@@ -42,7 +72,19 @@
           "jsdoc": { "type": "string", "enum": ["none", "partial", "done"], "default": "none" },
           "syntax_modern": { "type": "string", "enum": ["none", "done", "stubborn"], "default": "none" },
           "error_wrapper": { "type": "string", "enum": ["none", "done", "report-only"], "default": "none" },
-          "last_visited": { "type": "string", "format": "date" }
+          "last_visited": { "type": "string", "format": "date" },
+          "client_tests": { "type": "string", "enum": ["none", "partial", "green", "n/a"], "default": "none", "description": "pokrycie logiki klienta (.html) przez client-harness (DOM-shim); n/a = plik nie-kliencki" },
+          "mutation": {
+            "type": "object",
+            "description": "wynik mutate.js dla pliku (FAZA POKRYCIA / modul M) — czy gate DYSKRYMINUJE",
+            "properties": {
+              "score": { "type": ["number", "null"], "description": "killed/(killed+survived); null = brak waznych mutantow" },
+              "killed": { "type": "integer" },
+              "survived": { "type": "integer" },
+              "proven": { "type": "boolean", "description": "score >= mutation_min_score I brak survivorow na entry-pointach -> pokrycie dyskryminujace (warunek tieru auto-merge)" },
+              "date": { "type": "string", "format": "date" }
+            }
+          }
         }
       }
     },

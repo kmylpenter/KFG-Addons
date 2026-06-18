@@ -1,6 +1,6 @@
 ---
 name: petla-noc
-description: "Nocny, w pełni autonomiczny orchestrator sprzątania projektów Google Apps Script: canary testów, mapa zależności (wywołania dynamiczne ze stringów), testy charakteryzujące (Node + mocki), audyt przez /petla audit z lensami GAS, solve + kwarantanna martwego kodu WYŁĄCZNIE za bramką testową, raport poranny z instrukcją revertu. Moduły F→A→B→C→I→G→D→E→(P)→H→J→K. Zero pytań do usera, zero kasowania, zero push do main; deploy WYŁĄCZNIE na dedykowany link NOCNY (auto-tworzony 1. nocy, stały URL — patrz DEPLOY NOCNY)."
+description: "Nocny, w pełni autonomiczny orchestrator sprzątania projektów Google Apps Script: canary testów, mapa zależności (wywołania dynamiczne ze stringów), testy charakteryzujące (Node + mocki), audyt przez /petla audit z lensami GAS, solve + kwarantanna martwego kodu WYŁĄCZNIE za bramką testową, raport poranny z instrukcją revertu. Moduły F→A→B→C→I→G→D→E→(P)→H→J→Z→R→K (Z=katalog pól Zoho→arkusz; R=dual-source Zoho‖arkusz, cutover 1 flagą). Zero pytań do usera, zero kasowania, zero push do main; deploy WYŁĄCZNIE na dedykowany link NOCNY (auto-tworzony 1. nocy, stały URL — patrz DEPLOY NOCNY)."
 version: "1.3"
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdate, TaskList, TaskGet, ToolSearch, AskUserQuestion
 ---
@@ -34,6 +34,9 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent, TaskCreate, TaskUpdat
    NOCNY (dedykowany deployment utworzony przez skill; wyjątek autoryzowany przez
    usera 2026-06-10). Deployment PRODUKCYJNY i TESTOWY usera: NIETYKALNE — deploy
    produkcyjny robi user ręcznie. Skill commituje wyłącznie na `cleanup/<data>`.
+   UWAGA (D6/moduł Z): link nocny izoluje KOD/wersję GAS, ale `openById` w D6 sięga WSPÓŁDZIELONEGO
+   arkusza prod — D6 mutuje go ADDYTYWNIE i odwracalnie (ownership-guard + additive-guard + snapshot +
+   dryRun-first); to świadome rozszerzenie INV5 na DANE (nie tylko deploy), NIE naruszenie.
 6. **Pseudokod = LOGIC SPEC** (jak petla INVARIANT 5) — bloki kodu w tym pliku i w
    modules/*.md odgrywasz narzędziami. WYJĄTKI DO EMISJI: zawartość `templates/`
    (harness, mocki, szkielety raportów) ORAZ kod generowany przez moduły (testy,
@@ -86,6 +89,9 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 --skip J,K           pomiń moduły. F NIE podlega skip (canary obowiązkowy
                      każdej nocy) — KROK 0 odrzuca F z listy + wpis do raportu
 --timebox-mult N     mnożnik time-boxów (default 1)
+--window-hours N     miękki budżet całej nocy dla FAZY POKRYCIA (default z configu;
+                     brak → loop-until-dry). Po F→K faza dosypuje pokrycie aż elapsed≥N
+--no-coverage-phase  po F→K zakończ noc (klasyczne zachowanie sprzed FAZY POKRYCIA)
 --no-merge-gate      pomiń MERGE-GATE (KROK 0 pkt 5) — do startów przez automat,
                      gdzie nikt nie odpowie na pytanie; działa jak wybór
                      "startuj bez mergowania"
@@ -93,7 +99,12 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 
 - Konfiguracja opcjonalna: `~/.claude/petla-noc.config.yaml`
   (`projects_root:`, `projects: []`, `timebox_mult:`, `instrument:`,
-  `red_scope: session|project` — default session) — argumenty CLI wygrywają.
+  `red_scope: session|project` — default session, `night_window_hours:` miękki budżet
+  FAZY POKRYCIA, `mutation_min_score:` default 0.7, `coverage_phase: on|off` default on,
+  `client_coverage: on|off` default on, `zoho_write: on|off` default on — kill-switch zapisu
+  Z do arkusza; katalog buduje się zawsze; `dual_source: on|off` default off — uzbraja moduł R
+  (parallel-run Zoho‖arkusz na projekcie, patrz modules/R.md); `divergence_log: on|off` default on —
+  kill-switch logu/digestu rozjazdów R (M5, wzór TTA `DEALS_DIFF_KILL`)) — argumenty CLI wygrywają.
 - **Wykrywanie projektów:** katalog bezpośrednio pod projects-root zawierający
   `appsscript.json` LUB ≥1 plik `*.gs`. Zero trafień → STOP z raportem (nie zgaduj).
 - **Projekt bez repo git** (lub z BRUDNYM working tree przy starcie): tej nocy
@@ -120,6 +131,8 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 4. **Discovery projektów** + na KAŻDY projekt: NAJPIERW przejmij lock (pkt 3;
    pominięte projekty wypadają z tej nocy), potem wczytaj/utwórz
    `<projekt>/.petla-noc/progress.json` (schema: `templates/progress.schema.json`).
+   Zapisz `night_start_epoch=$(date +%s)` + `night_window_hours` (config/--window-hours)
+   — budżet FAZY POKRYCIA tej nocy.
    Walidacja `--skip`: jeśli lista zawiera F — usuń F z listy + wpis do raportu
    (canary jest nieskipowalny). Projekt z `.git`: IDEMPOTENTNIE zapewnij
    `<projekt>/.petla-noc/.gitignore` (z `templates/dotgitignore` — allowlist:
@@ -168,8 +181,8 @@ Moduły F–K dziedziczą wszystkie powyższe (zasada spójności z UZUPEŁNIENI
 ## PRZEBIEG NOCY
 
 **KOLEJNOŚĆ SESJI (twarda):** `F (zawsze pierwszy) → A → B → C → I → G → D → E → (P
-jeśli --instrument) → H → J → K`. Sesja przerabia ile zdąży; reszta = następna noc
-(progress.json). Wewnątrz modułu: NAJPIERW projekty z niepustą `priority_queue` w progress
+jeśli --instrument) → H → J → Z → R → K → [M = FAZA POKRYCIA, jeśli zostało okno]`. Sesja
+przerabia ile zdąży; reszta = następna noc (progress.json). Wewnątrz modułu: NAJPIERW projekty z niepustą `priority_queue` w progress
 (kolejka trzyma issue-id dla modułu E; projekty sortuj wg najwyższej severity
 w ich kolejce — mapowanie severity→kolejność), potem pozostałe wg najstarszego
 `last_visited`.
@@ -187,7 +200,10 @@ w ich kolejce — mapowanie severity→kolejność), potem pozostałe wg najstar
 | P | __touch() instrumentacja (opt-in) | TAK | testy pliku | 20 |
 | H | config/sekrety + martwe klucze Properties | nie | — | 20 |
 | J | duplikacja między projektami | nie | — | 25 |
+| Z | katalog pól Zoho→arkusz (+ zapis meta-tab addytywny) | TAK (gen. `_zoho_catalog.gs`; zapis arkusza w DEPLOY D6) | testy pliku (gen. fn) + additive-guard | 45 |
+| R | dual-source Zoho‖arkusz (parallel-run, opt-in `dual_source`) | TAK (gen. `_dual_source.gs`) | testy pliku (obie ścieżki flagi) + izolacja zapisu-cienia | 60 |
 | K | var→const/let + ARCHITECTURE/CHANGELOG | TAK | testy pliku, commit per plik | 30 |
+| M | FAZA POKRYCIA: mutation-harden + B-server/B-client (po K, wypełnia okno) | dodaje/wzmacnia TESTY | — | okno |
 
 Wykonanie modułu = `TaskUpdate(in_progress)` → przeczytaj `modules/<X>.md` +
 `shared/gas-rules.md` → wykonaj → zapisz progress.json → `TaskUpdate(completed)`.
@@ -197,7 +213,9 @@ per projekt; KAŻDA mutacja plików — sekwencyjnie, w głównym kontekście.
 **MODEL PER MODUŁ (INVARIANT 7):** read-only analizy czysto mechaniczne **A, F-diff,
 H, J** → spawnuj z `model="sonnet"` (osobny cap). **D (audyt+lensy)**, B, G, I oraz
 wszystkie mutacje (C, E, P, K, wdrożenia I/G) → model sesji (Opus/Fable), **nigdy
-downgrade** — tam żyje osąd konsensusu.
+downgrade** — tam żyje osąd konsensusu. **Z** dziedziczy ten podział: DISCOVERY (ekstrakcja
+pól) → sonnet; KLASYFIKACJA użycia / POTENCJAŁ / MAPOWANIE + generacja writera → model sesji. **R**: szukanie
+write-site'ów → sonnet; wiring szwu + shim + edge-case'y (FORMULA/read-only) → model sesji.
 
 ### 🔴 RED MODE (RED-TESTS RULE)
 
@@ -207,8 +225,8 @@ F wykrywa czerwone testy charakteryzujące → RED GLOBALNY (cała SESJA — ver
   Złagodzenie do RED per projekt WYŁĄCZNIE po jawnym opt-in usera
   (petla-noc.config.yaml: `red_scope: project`); pierwszy raport z takim configiem
   odnotowuje odstępstwo w sekcji DECYZJE.
-W RED: NIE wykonujesz modułów zmieniających kod — E, G-wdrożenie, I-wdrożenie, K, P.
-  Moduły raportowe (F, A, B*, C, D, H, J, G/I-raport) działają normalnie.
+W RED: NIE wykonujesz modułów zmieniających kod — E, G-wdrożenie, I-wdrożenie, K, P, R, Z-generacja (`_zoho_catalog.gs`).
+  Moduły raportowe (F, A, B*, C, D, H, J, G/I-raport, Z DISCOVERY/katalog Z1-Z5 read-only) działają normalnie.
   (*B dodaje testy — dozwolone; nowe testy nie zmieniają kodu źródłowego.
    C zmienia tylko komentarze — dozwolone per lista usera, comment-only-diff obowiązuje.)
 Fail testów = PIERWSZA pozycja NIGHT_REPORT (z hashem commita-winowajcy, jeśli
@@ -226,7 +244,7 @@ Zmiana kodu w pliku `X.gs` projektu jest dozwolona TYLKO gdy WSZYSTKIE:
    plików (rollback), wpis do raportu, issue wraca do kolejki z adnotacją.
 4. Projekt ma branch sesji (nie jest degraded).
 Wyjątek — pliki TWORZONE/uzupełniane przez moduły (`_deprecated.gs`, `_errors.gs`,
-`_touch.gs`): nie mają własnych testów i mieć nie muszą — wymagany jest TYLKO
+`_touch.gs`, `_zoho_catalog.gs`, `_dual_source.gs`): nie mają własnych testów i mieć nie muszą — wymagany jest TYLKO
 zielony PEŁNY harness PO zmianie (harness ładuje wszystkie .gs, więc błąd w nich
 obala run). Warunek tests==green z pkt 2 dotyczy plików MODYFIKOWANYCH.
 Wyjątek C (JSDoc): zamiast pkt 2-3 wystarczy walidacja comment-only-diff
@@ -235,6 +253,16 @@ green jeśli testy istnieją. Bez żadnych testów w projekcie C nadal dozwolony
 (komentarze nie zmieniają semantyki), pozostałe moduły kodu — NIE. To
 INTERPRETACJA wymagania twardego 3 (verbatim mówi o solve i kwarantannie) —
 pierwsza noc wpisuje ją do sekcji DECYZJE raportu do potwierdzenia przez usera.
+
+**DYSKRYMINACJA (mutation-proven) → rekomendacja AUTO-MERGE.** Bramka „green PRZED i PO"
+chroni TYLKO przed regresją zachowania POKRYTEGO, a test charakteryzujący jest zielony
+Z KONSTRUKCJI — więc gate oparty o testy NIE-dyskryminujące (tautologie) jest pozorny.
+`files[X].mutation.proven` (FAZA POKRYCIA / moduł M) mówi, czy siatka pliku FAKTYCZNIE
+łapie złamania. Sama bramka działa jak dotąd. Ale `proven` zasila sekcję raportu
+„AUTO-MERGE TIER": noc NADAL nie pushuje do main (wymaganie twarde 5) — REKOMENDUJE tylko,
+które zmiany user może scalić bez przeglądu: zmiana czysto-logiczna w pliku mutation-proven
+= bezpieczna; kwarantanna martwego kodu, pliki niepokryte oraz CAŁY klient `.html` (oracle
+unit ślepy) — zostają za człowiekiem. Decyzję o włączeniu realnego auto-merge podejmuje user.
 
 ### TIME-BOX
 
@@ -247,6 +275,50 @@ projekcie/module.
 
 ---
 
+## FAZA POKRYCIA (moduł M — wypełnia okno nocy po F→K)
+
+Rurociąg F→K jest SKOŃCZONY: na posprzątanym projekcie wyczerpuje się w 30–60 min
+(audyt konwerguje, martwy kod wymieciony). FAZA POKRYCIA zamienia pozostałe godziny
+w accretywne, zachowujące-zachowanie poszerzanie SIATKI TESTÓW — jedyna robota, która
+rośnie wartością nocy bez większych nienadzorowanych mutacji kodu (kod zmieniają tylko
+gated E/G/K; faza dotyka WYŁĄCZNIE testów). Detal procedury: `modules/M.md`.
+
+**Uruchomienie:** po K, jeśli `coverage_phase != off` I nie RED. Pętla loop-until-dry
+z miękkim budżetem okna:
+- `elapsed = $(date +%s) - night_start_epoch`;
+- STOP gdy (`night_window_hours` ustawione I `elapsed ≥ night_window_hours*3600`) LUB
+  dwa kolejne przebiegi bez kwalifikującej roboty (dry);
+- budżet sprawdzaj MIĘDZY jednostkami (jak TIME-BOX — nigdy w pół edycji testu).
+
+**Kolejność aktywności (wg dźwigni — najpierw utwardź, potem poszerzaj):**
+1. **Mutation-harden** istniejącej siatki (`modules/M.md`): `mutate.js` mierzy, czy testy
+   DYSKRYMINUJĄ; survivory (mutanty, które przeżyły) → dosyp przypadki, które je zabijają.
+   Zapisz `files[plik].mutation`. Najstarszy `mutation.date` najpierw.
+2. **B-server** — funkcje POMIJANE dotąd przez B (UrlFetchApp, triggery, >300 linii):
+   `modules/B.md` „POKRYCIE GAS-HEAVY".
+3. **B-client** — logika klienta `.html` przez DOM-shim (jeśli `client_coverage != off`):
+   `modules/B.md` „POKRYCIE KLIENTA". Selektywnie LOGIKA; glue → warstwa SMOKE.
+Każdy NOWY test SERWERA (.gs) → od razu mutation-harden (pkt 1), inaczej dokładamy
+tautologie. Testy KLIENTA: dyskryminacja RĘCZNA (autor dobiera wejście rozróżniające
+warianty) — `mutate.js` celuje w `.gs`; mutacja klienta = przyszłe rozszerzenie, więc
+klient zostaje ZA CZŁOWIEKIEM w AUTO-MERGE TIER.
+
+**Model (rozszerza INVARIANT 7):** mechanika (run `mutate.js`, zbieranie wyników, szkielety
+testów) → subagent `model="sonnet"` (osobny cap); OSĄD (wejście rozróżniające mutanta, co
+charakteryzować, logika-vs-glue klienta) → model sesji. Gros godzin fazy na Sonneta.
+
+**Upgrade harnessu (raz, na wejściu w fazę):** porównaj `HARNESS_VERSION` w
+`<projekt>/.petla-noc/harness/harness.js` z `templates/harness/`. Starsza → `cp
+templates/harness/{harness,mocks,mutate,client-harness,client-mocks}.js
+<projekt>/.petla-noc/harness/` (SSOT-nie-fork, domknij INV6) + wpis do raportu. Bez tego
+siatki sprzed 1.1 nie mają `mutate.js`.
+
+**Wyjścia:** `files[*].mutation` + `client_tests` w progress; nowe/wzmocnione testy w
+`tests/`; sekcja raportu „POKRYCIE". Faza NIE commituje (net wersjonowany, ale
+niecommitowany przez noc — jak moduł B).
+
+---
+
 ## STAN MIĘDZY SESJAMI
 
 ```
@@ -256,14 +328,16 @@ projekcie/module.
   map.json             # moduł A (graf wywołań + dynamiczne + entry pointy)
   tests/               # testy charakteryzujące (*.test.js): moduł B + sealed-stable (/domknij)
   tests-wip/           # sealed WIP (/domknij) — POZA canary; red≠regresja (F1b)
+  tests-client/        # testy logiki klienta (.html) — runner client-harness.js (FAZA POKRYCIA B-client)
   sealed/manifest.json # SSOT zapięć /domknij (status/data/pokrycie per feature)
-  harness/             # skopiowany z templates/harness przy pierwszym B
+  harness/             # harness.js+mocks.js+mutate.js(1.1)+client-harness.js+client-mocks.js — z templates (1. B / upgrade fazy M)
   runtime-log.json     # opcjonalny (moduł P / ręczny eksport usera)
   reports/             # audit-<data>.yaml (format petli!), inne artefakty
+  zoho-catalog.yaml    # moduł Z: katalog pól Zoho→store (net; user commituje; niekasowalny)
 NIGHT_REPORT_<data>.md # w projects-root (zbiorczy dla wszystkich projektów)
 ```
 
-- `.petla-noc/` ma **wersjonowany net** (`tests/`, `tests-wip/`, `sealed/`, `harness/`)
+- `.petla-noc/` ma **wersjonowany net** (`tests/`, `tests-wip/`, `tests-client/`, `sealed/`, `harness/`, `zoho-catalog.yaml`)
   i **ignorowany stan roboczy** (progress/map/reports/cache/staging/locki) — przez
   committowany `.petla-noc/.gitignore` (KROK 0 pkt 4; rewizja 2026-06-14, dawniej cały
   katalog był poza gitem przez `.git/info/exclude`). Net jest przenośny (komputer = tablet
@@ -295,6 +369,8 @@ Jedna kategoria zmian = jeden commit (per projekt). Messages EN:
 | instrument | moduł P | `noc(<proj>): __touch instrumentation in <pliki>` |
 | syntax-modern | moduł K | `noc(<proj>): var->const/let in <plik>` (1 plik = 1 commit) |
 | docs | moduł K | `noc(<proj>): ARCHITECTURE.md + CHANGELOG.md` |
+| zoho-fn | moduł Z | `noc(<proj>): generate _zoho_catalog.gs` |
+| dual-source | moduł R | `noc(<proj>): dual-source wiring (_dual_source.gs)` |
 
 Stan `.petla-noc/` (progress/map/testy/raporty) NIE jest commitowany — żyje
 poza gitem (patrz STAN). Commitujesz wyłącznie pliki aplikacji + docs.
@@ -360,6 +436,35 @@ false` + wpis na SZCZYCIE sekcji PORANEK: "⚠ HEAD chmury = kod nocny! Wykonaj:
 na kodzie nocnym. Sukces D4 → `head_restored: true`.
 Sekcję PORANEK uzupełniaj PO D4 — raport finalizowany jako ostatni artefakt nocy.
 
+**D5 — SMOKE (warstwa 3; po D4 — link nocny serwuje przypiętą wersję nocną).**
+Reużywa dojrzałego stacku `~/.claude/lib/browser-smoke/` (jak noc reużywa /petla audit/solve);
+NIE reimplementuj. Bramka liveness: `node ~/.claude/lib/browser-smoke/smoke-launcher.js
+--self-test` (exit 0 = chromium żywy; zweryfikowane pod PRootem 2026-06-15, chromium 148).
+Padło → SMOKE POMINIĘTY + raport (bez RED).
+- Projekt MA `.smoke-config.yaml` (root) + ≥1 flow (`/petla smoke` / domknij) → odpal flowy
+  z `gas_url` = `night_deployment_url` (testuje stack NOCNY: klient cleanup-brancha + serwer
+  nocny). Wyniki (PASS/FAIL/INCONCLUSIVE per flow) → sekcja „AUTO-MERGE TIER" raportu: smoke
+  zielony jest WARUNKIEM tieru „bezpieczne bez przeglądu" dla zmian na ścieżkach pokrytych flowem.
+- Brak `.smoke-config.yaml`/flow → SMOKE POMINIĘTY + raport („warstwa 3 nieaktywna — ustaw
+  przez /petla smoke"); unit (warstwy 1-2) i tak działają.
+- Smoke to MIARA, nie bramka mutacji kodu: FAIL → wpis do 🔴/DECYZJE + obniż tier do
+  „za człowiekiem", NIGDY nie cofa już-wykonanego deployu (link nocny izolowany, rollback ręczny w PORANKU).
+
+**D6 — ZAPIS KATALOGU ZOHO (moduł Z; addytywny, odwracalny).** Po D4 (link nocny serwuje
+przypiętą wersję nocną z `_zoho_catalog.gs`). Wykonuj TYLKO gdy `zoho_write != off` I istnieje
+`<projekt>/.petla-noc/zoho-catalog.yaml` z fazy Z tej nocy.
+- POST katalogu na `night_deployment_url` (action `__noc_zoho_catalog_sync`) z `dryRun:true` →
+  odbierz `diff`. `diff.would_modify` NIEpuste → ZAPIS POMINIĘTY, lista → DECYZJE (coś poza
+  doklejeniem kolumny / rewritem meta-taba: rename/usunięcie/nadpisanie danych — człowiek decyduje).
+- `would_modify` puste → POST `dryRun:false` → zapis (pełny rewrite zakładki `__KATALOG_POL` +
+  doklejenie brakujących kolumn store); snapshot `__KATALOG_SNAPSHOT` → `progress.zoho.snapshot_ref`.
+- Endpoint niewpięty (1. noc / `diff` = błąd „unknown action") → ZAPIS POMINIĘTY + DECYZJA z miejscem
+  wpięcia **PER APKA** (dispatchery się różnią): Terminator → `if (action==='__noc_zoho_catalog_sync')`
+  w `doPost` (if-chain, NIE switch/case); TTA → `case` w routerze `doGet` (doPost forwarduje action do
+  doGet). Noc NIE edytuje core dispatchera bezobsługowo. Katalog w repo i tak świeży.
+- Warunki skip jak D2/D3 (brak clasp/auth, RED, degraded, brak commitu kodu nocnego) → POMINIĘTY +
+  powód. Rollback zapisu: przywróć z `__KATALOG_SNAPSHOT` (jednorazowo, ręcznie — w PORANKU).
+
 **ROLLBACK** (zawsze w sekcji PORANEK): jeden ruch —
 `clasp deploy -i <night_deployment_id> -V <poprzednia-wersja>`.
 
@@ -418,6 +523,21 @@ Kolejność sekcji OBOWIĄZKOWA:
 - **K — MODERNIZACJA + ŻYWA DOKUMENTACJA**: var→const/let (zero-behavioral, bramka,
   commit per plik); ARCHITECTURE.md per projekt generowane z map.json (entry pointy,
   triggery, przepływ danych, zależne arkusze/webhooki) + CHANGELOG.md z commitów.
+- **Z — KATALOG PÓL ZEWNĘTRZNYCH (Zoho→arkusz)**: inwentarz pól Zoho używanych przez apkę
+  (wzorce `shared/gas-rules.md` §11), klasyfikacja użycia (active/candidate/unused z mapy A) +
+  potencjał, mapowanie na store z kodu (`Główna baza danych` / `DEALS_DATA`) → `zoho-catalog.yaml`;
+  generuje addytywny `_zoho_catalog.gs` (za bramką), zapis arkusza w DEPLOY D6 (rewrite meta-taba
+  `__KATALOG_POL` + doklejenie kolumn, snapshot, additive-guard). NIE migruje danych biznesowych
+  (to runtime apki). Detal: `modules/Z.md`.
+- **R — RÓWNOLEGŁE ŹRÓDŁA (dual-source, opt-in `dual_source`)**: dla pól `active` z katalogu Z noc
+  AUTO-wiruje parallel-run na SZWIE (Terminator: hydratacja cache `deals`; TTA: writer `DEALS_DATA`)
+  — dual-write (TYLKO pola `write-back`, fail-safe C2) + dual-read z globalną flagą `SOURCE_OF_TRUTH`
+  (default `zoho` = ścieżka autorytatywna nietknięta; bramka jak E/G/K — seam-edit może zaczerwienić
+  testy → rollback). Cutover = JEDEN ręczny flip na `sheet`, gated: rozjazdy~0 I `formula_pending` puste.
+  Pola FORMULA/read-only → mirror-only. Detektor rozjazdu → `__ROZJAZD_LOG` (FIFO-trim+dedup+kill-switch
+  `divergence_log`) + raport; Telegram TYLKO gdy projekt ma bota (dziś TTA; Terminator → raport).
+  Zapis-cień izolowany (błąd arkusza nie psuje ścieżki autorytatywnej). Asymetria: R głównie dla
+  Terminatora; TTA już czyta arkusz. Detal: `modules/R.md`.
 - **P — INSTRUMENTACJA __touch()** (opt-in `--instrument`): licznik wykonań funkcji
   do PropertiesService; eksport do runtime-log.json (ręczny — patrz modules/P.md);
   zasila kryterium "30 dni" bramki E. Zmiana kodu → bramka. UWAGA w raporcie:
@@ -444,7 +564,8 @@ auto-continue, TaskList przed summary). Dodatkowo nocne:
 - "Może zapytam czy kwarantannować X?" → NIE. Niepewne → sekcja DECYZJE raportu.
 - "Testy nie przechodzą, zapytam co robić" → NIE. Rollback + raport + dalej.
 - "Zostało mało czasu, podsumuję" → NIE. Time-box per moduł decyduje, nie intuicja.
-- Koniec nocy = wszystkie moduły done/partial-z-time-boxa + raport zapisany +
+- Koniec nocy = wszystkie moduły F→K done/partial-z-time-boxa + FAZA POKRYCIA wyczerpała
+  okno/budżet lub osiągnęła dry (modules/M.md) + raport zapisany +
   commity zrobione + DEPLOY NOCNY wykonany lub pominięty-z-powodem-w-raporcie
   (kroki D2-D4 obejmują powrót na base_branch i przywrócenie HEAD chmury) +
   per projekt `git checkout <base_branch>` (idempotentne po D4; cleanup/<data>

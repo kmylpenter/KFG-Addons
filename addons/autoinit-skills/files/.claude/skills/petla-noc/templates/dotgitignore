@@ -4,10 +4,13 @@
 # (progress/map/reports/cache/staging/locki) nie zaśmieca historii repo aplikacji.
 *
 !.gitignore
+!zoho-catalog.yaml
 !tests/
 !tests/**
 !tests-wip/
 !tests-wip/**
+!tests-client/
+!tests-client/**
 !sealed/
 !sealed/**
 !harness/
