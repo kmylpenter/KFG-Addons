@@ -470,6 +470,15 @@ przypiętą wersję nocną z `_zoho_catalog.gs`). Wykonuj TYLKO gdy `zoho_write 
 
 ---
 
+## STRAŻNIK MEDIAN (read-only, po module K, przed raportem — WARUNKOWY)
+
+Jeśli noc obejmuje **Terminator-Umowy** LUB **TimeTrackingApp** (dzielą SSOT median TTA↔Terminator):
+odpal `bash /root/projekty/Terminator-Umowy/_straznik-median/run.sh` (read-only, ~10s, curl źródło+TTA).
+Wynik do NIGHT_REPORT: rozjazd flat (exit 1) → **sekcja 3 (DECYZJE DO AKCEPTACJI)** + JSON
+`_nocny/straznik-median.json`; spójne (exit 0) → jedna linia w **sekcji 7 (STATYSTYKI)**.
+**NIEBLOKUJĄCY** — rozjazd median = rozjazd DANYCH (nie regres kodu): NIGDY nie wstrzymuje bramki/deployu,
+NIGDY nie zmienia `DZIAL_MEDIANS` (RULE 3, finanse). Tylko uwidacznia. Endpoint down → sekcja 5 (POMINIĘTE).
+
 ## NIGHT_REPORT_<data>.md (szkielet: templates/NIGHT_REPORT.md)
 
 Kolejność sekcji OBOWIĄZKOWA:
