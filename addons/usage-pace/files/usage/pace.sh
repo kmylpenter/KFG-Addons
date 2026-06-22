@@ -256,7 +256,7 @@ used = sd.get("used_pct")
 resets = sd.get("resets_at_epoch")
 fetched = float(cache.get("fetched_at_epoch") or 0)
 status, proj, reason = "NO_DATA", None, "brak danych o limicie 7d"
-hours_to_reset = elapsed_pct = None
+hours_to_reset = elapsed_pct = used_hwm = None
 spillover = False  # True = jestes PONAD 100% limitu planu -> leci extra usage (kredyty)
 
 if used is not None and resets:
@@ -320,6 +320,7 @@ eu = cache.get("extra_usage") or {}
 cache["pace"] = {
     "computed_at_epoch": now,
     "elapsed_pct": round(elapsed_pct, 1) if elapsed_pct is not None else None,
+    "used_hwm": round(used_hwm, 1) if used_hwm is not None else None,  # wartosc CHRONIONA (max w oknie) = to wyswietlamy, spojnie z projekcja
     "projection_pct": round(proj, 1) if proj is not None else None,
     "projection_pct_5h": round(proj5, 1) if proj5 is not None else None,
     "hours_to_reset": round(hours_to_reset, 1) if hours_to_reset is not None else None,
@@ -360,7 +361,7 @@ if status == "LOW" and CAN_NOTIFY and MODE == "--scheduled" and (now - last_noti
     title = "Claude: niskie tempo zuzycia"
     body = "Projekcja: %s%% limitu 7d, reset za %.0f h (zostalo %.0f%%). Odpal sesje autonomiczna (np. petla-noc)." % (
         ("%.0f" % proj) if proj is not None else "?",
-        hours_to_reset or 0, 100.0 - float(used or 0))
+        hours_to_reset or 0, 100.0 - (used_hwm if used_hwm is not None else float(used or 0)))
     print("NOTIFY\t%s\t%s" % (title, body))
 
 try:
@@ -369,10 +370,11 @@ except Exception as e:
     print("ERR cache-write: %s" % e, file=sys.stderr)
 
 extra = (" | fetch: " + fetch_err) if fetch_err else ""
+used_disp = used_hwm if used_hwm is not None else used   # HWM = wartosc chroniona; spojna z projekcja
 print("STATUS %s proj=%s used7d=%s elapsed=%s%% reset_za=%sh %s%s" % (
     status,
     "?" if proj is None else "%.0f%%" % proj,
-    "?" if used is None else "%.0f%%" % float(used),
+    "?" if used_disp is None else "%.0f%%" % float(used_disp),
     "?" if elapsed_pct is None else "%.0f" % elapsed_pct,
     "?" if hours_to_reset is None else "%.0f" % hours_to_reset,
     reason, extra))

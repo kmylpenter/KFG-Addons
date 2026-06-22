@@ -272,7 +272,7 @@ try {
       }
 
       // 7d: wartość żółta, projekcja pogrubiona w kolorze statusu (+⚠ przy LOW)
-      const v7 = Math.round(sd);
+      const v7 = Math.round((pace.used_hwm != null) ? pace.used_hwm : sd);  // HWM = wartosc chroniona, spojna z projekcja (surowe sd bywa zglitchowane w dol)
       let s7;
       if (overLimit) s7 = `${c_gold2}7d ${bold}${overCol}${v7}%${overMark}${reset}`;  // ponad limit (⚡wydaje/⛔zatkane)
       else if (st === 'LOW' && proj != null) s7 = `${c_gold2}7d ${c_yellow}${v7}${bold}${c_red}→${Math.round(proj)}%⚠${reset}`;
