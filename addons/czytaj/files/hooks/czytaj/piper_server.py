@@ -327,11 +327,18 @@ def run_server() -> None:
                 sock.close()
             except OSError:
                 pass
-        for p in (SOCKET_PATH, PID_FILE):
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        # Only the CURRENT owner may clean up the shared paths — a superseded
+        # generation unlinking them would tear down the live server's socket.
+        try:
+            still_owner = int(PID_FILE.read_text().strip()) == os.getpid()
+        except (OSError, ValueError):
+            still_owner = True   # missing/corrupt PID file: safe to clean
+        if still_owner:
+            for p in (SOCKET_PATH, PID_FILE):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
         sys.exit(0)
 
     try:
@@ -413,6 +420,19 @@ def run_server() -> None:
             try:
                 conn, _ = sock.accept()
             except socket.timeout:
+                # Superseded-generation reap: a replacement server (ensure_running after a
+                # missed ping) unlink+rebinds SOCKET_PATH and overwrites PID_FILE, and the
+                # keepwarm sentinel keeps FLAG_DIR non-empty forever — so an orphaned
+                # generation would sit on its unreachable socket for good, pinning its
+                # ~100MB daemon (4 such orphans found 2026-07-02). PID file no longer
+                # naming us == a newer generation owns the path: reap ourselves.
+                try:
+                    owner = int(PID_FILE.read_text().strip())
+                except (OSError, ValueError):
+                    owner = None
+                if owner != os.getpid():
+                    shutdown()
+                    return
                 # Idle for SERVER_IDLE_TIMEOUT_S — but stay WARM while ANY project is
                 # reading (a flag exists), so the next read-back/auto-read isn't a ~3-7s
                 # cold start. Idle cost is ~0% CPU (sleeping). Only self-reap when reading

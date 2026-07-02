@@ -39,6 +39,15 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion
    potwierdził. Test, którego nie da się zazielenić w ≤2 iteracjach poprawek SAMEGO testu
    (nigdy kodu źródłowego), NIE jest zapinany → trafia do raportu „nie udało się
    scharakteryzować". Czerwony test = test błędny, nie regresja (kod jest świeżo potwierdzony).
+3b. **DYSKRYMINACJA (opcjonalny kontrfaktyk — domyka lukę GREEN-NOW).** GREEN-NOW gwarantuje
+   wierność zrzutu, ale test charakteryzujący jest zielony Z KONSTRUKCJI — nie dowodzi, że
+   ROZRÓŻNIA poprawny kod od zepsutego (sedno verify-before-done). Dla sealed-STABLE (kontrakt)
+   MOŻESZ domknąć to od razu: `node <projekt>/.petla-noc/harness/mutate.js <projekt> --source
+   <plik> --json` (wymaga harness ≥1.1; brak → upgrade z templates jak petla-noc B). Survivor
+   na linii pokrywającej POTWIERDZONE zachowanie → dodaj przypadek rozróżniający ZANIM zapniesz
+   (mocniejszy kontrakt). Wynik → pole `sealed.mutation` w pliku testu (harness/F ignorują
+   nieznane pola top-level). Pomijasz (interaktywnie, dla szybkości) → noc utwardzi go w FAZIE
+   POKRYCIA (petla-noc `modules/M.md`); odnotuj w raporcie „sealed nie-mutation-proven".
 4. **GENERACJA W GŁÓWNYM KONTEKŚCIE.** Wiedza „co user potwierdził" żyje w głównym agencie
    (był w sesji), nie w kodzie. Dlatego testy generuję w GŁÓWNYM kontekście — NIE deleguję
    ich pisania do subagenta (subagent ma tylko kod → cofnąłby się do trybu retrospektywnego

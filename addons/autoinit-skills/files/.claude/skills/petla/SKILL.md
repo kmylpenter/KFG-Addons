@@ -1227,8 +1227,9 @@ LENS_INSTRUCTIONS = {
     criteria). Per wymaganie: test istnieje i faktycznie pokrywa? Uruchom istniejące
     testy, jeśli runner dostępny (read-only — bez zapisywania fixture'ów).""",
     "solve": """Is there a test that would have caught the original bug?
-    If not, ITEM: missing-test. Run existing tests, list which pass/fail.
-    Check coverage delta if tooling available."""
+    If not, ITEM: missing-test. A test "catches" it ONLY if RED without the fix and GREEN
+    with it (counterfactual); green BOTH ways = tautology -> ITEM: tautological-test.
+    Run existing tests, list which pass/fail. Check coverage delta if tooling available."""
   },
   "types": {
     "verify": """Plan → typy/schematy/kontrakty danych. Zgodność definicji z planem:
