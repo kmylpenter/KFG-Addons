@@ -20,3 +20,9 @@ test-*/
 thoughts/shared/petla/smoke-tests/
 thoughts/shared/petla/.smoke-server.pid
 addons/czytaj/files/hooks/czytaj/__pycache__/
+
+# petla/petla-noc runtime artifacts (session-local, never versioned)
+thoughts/shared/petla/.tree-guard-baseline-*
+thoughts/shared/petla/*.lock
+.claude/scheduled_tasks.lock
+.claude/tsc-cache/
