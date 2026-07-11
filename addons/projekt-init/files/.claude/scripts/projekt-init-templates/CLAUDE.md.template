@@ -1,0 +1,12 @@
+# CLAUDE.md — {{NAZWA}} (reguły projektu)
+
+> Globalne zasady są w `~/.claude/CLAUDE.md` i NIE są tu powtarzane. Tu tylko specyfika projektu.
+
+## Testy
+- Runner: (uzupełnij przy pierwszym harnessie — bramka Stop-gate wykryje go sama: harness petla-noc / `run-tests.sh` / vitest / `gradlew test`; niestandardową komendę wpisz do `.claude/test-command`)
+
+## Deploy / Build
+- (uzupełnij: komenda + bramka przed wypchnięciem)
+
+## Przepływy krytyczne
+- (uzupełnij: co w tym projekcie NIE MOŻE się zepsuć)

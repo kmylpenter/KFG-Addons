@@ -1,0 +1,15 @@
+{
+  "name": "projekt-init",
+  "displayName": "Projekt Init (bramki od dnia zero)",
+  "description": "Szkielet zgodnosci nowego projektu z globalnym CLAUDE.md (red-test-first / Verification Gate): uniwersalny Stop-gate (sonduje petla-noc harness / run-tests.sh / vitest / gradlew, cichy dopoki nie ma testow), sentinel edycji, settings.json z hookami i szablon projektowego CLAUDE.md. Wpina sie w komende np (Termux .bashrc).",
+  "version": "1.0.0",
+  "platform": "any",
+  "author": "kmylpenter",
+  "dependencies": {},
+  "targets": {
+    "files/.claude/scripts/projekt-init.sh": "~/.claude/scripts/",
+    "files/.claude/scripts/projekt-init-templates/": "~/.claude/scripts/projekt-init-templates/"
+  },
+  "scripts": {},
+  "notes": "Wpiecie w np (recznie, raz na urzadzenie): w Termux ~/.bashrc, w np() po utworzeniu katalogu projektu dodaj linie:  [ -f \"$HOME/.claude/scripts/projekt-init.sh\" ] && bash \"$HOME/.claude/scripts/projekt-init.sh\" \"$PWD\" \"$1\"  . Scaffold jest idempotentny (ADD-IF-ABSENT) i mozna go tez odpalic recznie na istniejacym projekcie. Override runnera: plik .claude/test-command (jedna linia z komenda testow)."
+}
