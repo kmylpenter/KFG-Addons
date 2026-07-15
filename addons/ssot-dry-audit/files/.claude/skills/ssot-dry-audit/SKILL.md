@@ -1,6 +1,6 @@
 ---
 name: ssot-dry-audit
-description: Audyt kodu pod katem Single Source of Truth (SSOT) i Don't Repeat Yourself (DRY). PURE AUDIT — generuje raport (markdown + machine-readable YAML) i konczy. Sam NIE naprawia kodu — naprawe deleguje do /petla solve. Wywoluj gdy user prosi o "audyt SSOT", "audyt DRY", "znajdz duplikaty w kodzie", "shotgun surgery", "magic numbers", "redundancja w kodzie", "kod sie powtarza", "duplikacja", "zlamanie DRY", "sprawdz spojnosc kodu".
+description: Audyt kodu pod katem Single Source of Truth (SSOT) i Don't Repeat Yourself (DRY). PURE AUDIT — generuje raport (markdown + machine-readable YAML) i konczy. Sam NIE naprawia kodu — naprawe deleguje do /petla solve. Wywoluj gdy user prosi o "audyt SSOT", "audyt DRY", "znajdz duplikaty w kodzie", "shotgun surgery", "magic numbers", "redundancja w kodzie", "kod sie powtarza", "duplikacja", "zlamanie DRY", "sprawdz spojnosc kodu". Ma tez TRYB NOCNY (unattended) wolany przez petla-noc modul S — bez AUQ, wynik = kolejka zatwierdzen w .petla-noc/ssot/.
 allowed-tools: [Bash, Read, Write, Grep, Glob, AskUserQuestion]
 ---
 
@@ -15,6 +15,8 @@ Skill audytujacy projekt pod katem SSOT/DRY. Generuje **dwa pliki**:
 2. `.ssot-findings.yaml` — maszynowy handoff dla `/petla solve`
 
 Skill NIE naprawia kodu. Naprawa = osobny krok przez `/petla solve .ssot-findings.yaml` lub recznie z markdown.
+
+Tryb bezobslugowy dla petla-noc (modul S): sekcja **TRYB NOCNY** na koncu pliku.
 
 ## Output
 
@@ -432,6 +434,88 @@ Naprawa: /petla solve .ssot-findings.yaml
 confidence+decyzje), a solve w tym samym oknie placi za caly transkrypt audytu
 przy kazdej turze dajac ten sam rezultat. Przypomnienie, nie blokada.
 ```
+
+## TRYB NOCNY (unattended — dla petla-noc, modul S)
+
+> Wolany WYLACZNIE przez petla-noc (modul S; kontrakt: `petla-noc/modules/S.md` —
+> kadencja >=7 dni i plik stanu `.petla-noc/ssot-last-run` sa po stronie modulu S,
+> nie tutaj). ZERO interakcji: zadnego AskUserQuestion, zadnych pytan o zakres.
+> Nadal PURE AUDIT — zero naprawiania. Bramka zaleznosci modulu S wykrywa ten tryb
+> po istnieniu tej sekcji ("TRYB NOCNY") — nie zmieniaj naglowka bez zmiany w S.md.
+
+**Zakres nocny = wylacznie "wyswietlana dana":** SSOT danych pokazywanych userowi
+w >=2 miejscach UI (zakladki/ekrany/aplikacje). Generyczna duplikacje kodu (stale,
+bloki, nazwy) robi w nocy modul J petli — NIE dubluj jej w tym trybie.
+
+**Delta wzgledem trybu interaktywnego (per faza):**
+
+1. **Faza 1:** zakres podaje wolajacy (modul S); brak → caly projekt. Zadnych pytan
+   o zawezenie niezaleznie od rozmiaru. Dirty tree → odnotuj, kontynuuj.
+2. **Faza 2:** helper jak zwykle, ale `--output .petla-noc/ssot/scan.json`. Wynik
+   sluzy jako SEED kandydatow (duplicate_strings/numbers czesto wskazuja te sama
+   dana renderowana w wielu miejscach) — nie jako findingi same w sobie.
+3. **Faza 3-noc (discovery kandydatow, zamiast pelnej 3b):**
+   a. wczytaj katalog modulu Z: `.petla-noc/zoho-catalog.yaml` (mapa pol Zoho→store) —
+      kotwice lineage; nie wywodz zrodel od zera, gdy katalog je zna;
+   b. znajdz render-sites: HTML/klient (bindingi, innerHTML/textContent/innerText,
+      kolumny tabel, szablony) + backend (pola zwracane do UI w handlerach);
+   c. grupuj lokalizacje po ZRODLE — notacja: `zoho:<API-name>` /
+      `sheet:<arkusz>!<kolumna>` / `store:<klucz>`;
+   d. dla grup >=2 lokalizacji przesledz sciezki odczytu (lineage) → klasa wg rubryki.
+4. **Faza 3.5-noc — rubryka lineage** (specjalizacja Fazy 3.5 dla wyswietlanej danej;
+   "100% ta sama dana" wynika z dowodu lineage, nie z nazwy zmiennej/etykiety):
+
+   | Klasa | Dowod | Los |
+   |---|---|---|
+   | PEWNE (must-equal) | lineage obu lokalizacji schodzi do TEGO SAMEGO zrodla, a po drodze jest kopia/cache/osobna transformacja mogaca sie rozjechac (lub juz rozjechana) | kolejka zatwierdzen (hurtem) |
+   | PRAWDOPODOBNE | ta sama etykieta/semantyka w UI, lineage niedomkniety (dynamiczne wywolania, sklejane klucze, dwa fetche) | kolejka zatwierdzen (pytanie, pojedynczo) |
+   | RACZEJ_NIE | udokumentowane rozne zrodla | POMIJANE — zero pytan (zero babysittingu) |
+
+   **Umiejscowienie frontendowe OBOWIAZKOWE** dla PEWNE/PRAWDOPODOBNE:
+   `{aplikacja, ekran/zakladka (nazwa jak widzi ja user), etykieta pola}` + >=2
+   lokalizacje z file:line. Kamil zna frontend, nie backend — pytanie bez
+   umiejscowienia jest bezuzyteczne. Brak kompletu → DEGRADACJA o klase
+   (PEWNE→PRAWDOPODOBNE; PRAWDOPODOBNE→odpada) — wymusza mechanicznie helper.
+5. **Faza 4-noc:** kandydatow zapisz do `.petla-noc/ssot/candidates.json`
+   (`{"candidates": [...]}`; pola per kandydat: `id?`, `klasa`, `zrodlo`, `lineage`,
+   `umiejscowienie{aplikacja,ekran,etykieta}`, `co_z_czym?`,
+   `locations[{file,line,evidence}]`, `description`, `user_question?`) i przepusc
+   przez mechaniczny rdzen:
+   ```bash
+   python3 ~/.claude/skills/ssot-dry-audit/scripts/noc_ssot.py \
+     --candidates .petla-noc/ssot/candidates.json --ssot-dir .petla-noc/ssot \
+     --limit 12 --scope "<zakres>"
+   ```
+   Helper robi DETERMINISTYCZNIE: degradacje przy brakach umiejscowienia, odrzucenie
+   RACZEJ_NIE, fingerprint `sha1(zrodlo|posortowane PLIKI lokalizacji)` (poziom
+   plikow — stabilny na dryf numerow linii), dedup wzgledem `ledger.yaml`
+   (reported-niezmienione → stlumione; approved/rejected/wontfix → TERMINALNE),
+   limit per bieg (PEWNE przodem; ponad limit NIE wchodzi do ledgera → wraca w
+   nastepnym cyklu), atomic zapis `findings-<data>.yaml` + `ledger.yaml` (JSON ==
+   poprawny YAML; edycje TYLKO helperem / narzedziami JSON-aware) oraz gotowa
+   sekcje raportu porannego na STDOUT — wklej ja VERBATIM do raportu modulu S.
+   Samotest rdzenia: `noc_ssot.py --selftest` (kontrfaktyki: degradacja, dedup,
+   terminal, limit).
+6. **Faza 5: POMINIETA.** Kolejke zatwierdzen rozstrzyga sesja DZIENNA (nizej) — noc nie pyta.
+7. **Pliki nocne zyja w `.petla-noc/ssot/`** — w tym trybie NIE tworz root-plikow
+   `SSOT_DRY_AUDIT_REPORT.md`/`.ssot-findings.yaml` i NIE dopisuj niczego do
+   `.gitignore` projektu (polityka wersjonowania `.petla-noc/` nalezy do petla-noc).
+
+**BEZPIECZNIK KOLEJKI (LOAD-BEARING):** kazdy wpis `findings-<data>.yaml` ma
+`confidence: LOW` + `user_question` + `night_queue: awaiting_kamil` → `/petla solve`
+takie wpisy POMIJA (gating po wartosci confidence — Zasada 3). Noc NIGDY nie
+produkuje auto-fixowalnego YAML: approval-first (decyzja Kamila 2026-07-14).
+
+**Poranne domkniecie (sesja dzienna, nie noc):** AUQ nad kolejka (PEWNE hurtem,
+PRAWDOPODOBNE pojedynczo; w tresci pytania umiejscowienie frontendowe + `co_z_czym`):
+- "tak, scal" → we wpisie: `confidence: HIGH` + `user_decision` + data + `refactor{}`
+  (decyzja usera = najwyzsza pewnosc, jak w Fazie 5) oraz
+  `noc_ssot.py --ssot-dir <proj>/.petla-noc/ssot --set-status <fp> approved`;
+- "nie, osobne dane" → `--set-status <fp> rejected` (TERMINALNE — noc nie zapyta znowu);
+- "wontfix" → `--set-status <fp> wontfix` + wpis do wontfix-ledgera petli (kanon Fazy 5).
+Zatwierdzone naprawia `/petla solve <sciezka findings-....yaml>` — najlepiej w nowym
+oknie. Docelowy kanal decyzji = okno feedback Terminatora (komponent C planu
+SSOT-noc); do tego czasu kolejka + AUQ w sesji dziennej.
 
 ## Zasady
 
