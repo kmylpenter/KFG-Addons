@@ -25,6 +25,11 @@
 #   wieku nikt nie robi pobrania z internetu. 300 = 5 minut.
 CACHE_TTL_S="${CACHE_TTL_S:-300}"
 #
+# API_TTL_S — jak czesto wolno realnie siegnac do api/oauth/usage. Osobny od
+#   CACHE_TTL_S, bo tamten pilnuje swiezosci danych ze stdin paska, a ten —
+#   ruchu sieciowego. Kubelki per-model (limits[] weekly_scoped) plyna WYLACZNIE stad.
+API_TTL_S="${API_TTL_S:-600}"
+#
 # GRACE_HOURS — ile godzin PO RESECIE okna tygodniowego status jest zawsze OK
 #   (za malo danych, by oceniac tempo). 12 = pierwsze pol doby wolne od alarmow.
 GRACE_HOURS="${GRACE_HOURS:-12}"
@@ -129,7 +134,8 @@ fi
 # ============================================================================
 PY_OUT="$(
 MODE="$MODE" CACHE_FILE="$CACHE_FILE" HISTORY_FILE="$HISTORY_FILE" \
-CREDS_FILE="$CREDS_FILE" CACHE_TTL_S="$CACHE_TTL_S" GRACE_HOURS="$GRACE_HOURS" \
+CREDS_FILE="$CREDS_FILE" CACHE_TTL_S="$CACHE_TTL_S" API_TTL_S="$API_TTL_S" \
+GRACE_HOURS="$GRACE_HOURS" \
 EARLY_LOW_PROJECTION_PCT="$EARLY_LOW_PROJECTION_PCT" ENDGAME_HOURS="$ENDGAME_HOURS" \
 ENDGAME_REMAINING_PCT="$ENDGAME_REMAINING_PCT" NOTIFY_COOLDOWN_H="$NOTIFY_COOLDOWN_H" \
 STALE_HOURS="$STALE_HOURS" UA_VERSION_FALLBACK="$UA_VERSION_FALLBACK" \
@@ -143,6 +149,7 @@ CACHE_FILE = os.environ["CACHE_FILE"]
 HISTORY_FILE = os.environ["HISTORY_FILE"]
 CREDS_FILE = os.environ["CREDS_FILE"]
 TTL = float(os.environ["CACHE_TTL_S"])
+API_TTL = float(os.environ["API_TTL_S"])
 GRACE_H = float(os.environ["GRACE_HOURS"])
 EARLY_LOW = float(os.environ["EARLY_LOW_PROJECTION_PCT"])
 ENDGAME_H = float(os.environ["ENDGAME_HOURS"])
@@ -197,8 +204,13 @@ cache = load_json(CACHE_FILE)
 
 # ---------- FETCH (tylko --scheduled i tylko gdy cache stary) ----------
 fetch_err = None
-age = now - float(cache.get("fetched_at_epoch") or 0)
-if MODE == "--scheduled" and age >= TTL:
+# Gate na WLASNYM znaczniku last_api_fetch_epoch, nie na fetched_at_epoch:
+# pasek statusu nadpisuje fetched_at_epoch danymi ze stdin co ~300 s, wiec gate
+# na nim praktycznie nigdy nie przepuszczal fetchu w trakcie pracy (a wtedy
+# wlasnie patrzysz na pasek). Kubelki per-model sa TYLKO z API — bez tego
+# rozdzielenia bylyby martwe. --refresh = fetch bez powiadomien (wola pasek).
+api_age = now - float(cache.get("last_api_fetch_epoch") or 0)
+if MODE in ("--scheduled", "--refresh") and api_age >= API_TTL:
     try:
         creds = load_json(CREDS_FILE).get("claudeAiOauth", {})
         token = creds.get("accessToken")
@@ -228,6 +240,27 @@ if MODE == "--scheduled" and age >= TTL:
             else:
                 cache["five_hour"] = fh
                 cache["seven_day"] = sd
+                # ---- kubelki per-model (2026-07-16) ----
+                # Pole seven_day_sonnet swiadomie NIE jest czytane: serwer zwraca
+                # null nawet po realnym zuzyciu Sonneta, a /usage w CC potwierdza
+                # brak linii "Current week (Sonnet only)" — kubelek nie istnieje
+                # dla tego konta. Gdyby kiedys ozyl, przyjdzie w limits[] nizej.
+                # limits[] kind=weekly_scoped niesie cap per model
+                # (dzis: "Fable" = wspolny kubelek premium Opus+Fable — potwierdzone
+                # empirycznie: rosnie przy pracy na Opusie). Trzymamy WSZYSTKIE
+                # scoped, bez allowlisty — CC filtruje je statsigiem
+                # (tengu_usage_overage_included_models), ktory tu bywa pusty.
+                scoped = []
+                for lim in (body.get("limits") or []):
+                    if not isinstance(lim, dict) or lim.get("kind") != "weekly_scoped":
+                        continue
+                    name = (((lim.get("scope") or {}).get("model") or {}).get("display_name"))
+                    b = norm_bucket({"utilization": lim.get("percent"),
+                                     "resets_at": lim.get("resets_at")})
+                    if name and b:
+                        b["display_name"] = name
+                        scoped.append(b)
+                cache["model_scoped"] = scoped
                 # extra usage = spill-over PONAD limit planu (kredyty/pieniadze).
                 # Anthropic kontynuuje prace po wyczerpaniu okna, jesli wlaczone.
                 # used_credits jest w setnych jednostki waluty (6040 = 60.40 EUR).
@@ -246,6 +279,7 @@ if MODE == "--scheduled" and age >= TTL:
                         "monthly_limit": eu.get("monthly_limit") if eu.get("monthly_limit") is not None else prev_eu.get("monthly_limit"),
                     }
                 cache["fetched_at_epoch"] = now
+                cache["last_api_fetch_epoch"] = now
                 cache["source"] = "api"
     except Exception as e:
         fetch_err = type(e).__name__ + ": " + str(e)[:160]

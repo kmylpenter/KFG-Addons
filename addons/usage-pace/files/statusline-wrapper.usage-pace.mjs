@@ -1,10 +1,13 @@
 #!/usr/bin/env node
-// KFG Statusline v8.1 - ctx% │ model/ctx │ EFFORT │ project + changed files
+// KFG Statusline v9.0 - ctx% │ model/ctx │ EFFORT │ project + linia limitow
 // Effort detection: transcript JSONL > settings.json (same approach as ccstatusline)
+// v9.0 (2026-07-16): lista zmienionych plikow USUNIETA (nieuzywana), w jej
+//   miejsce kubelki 7d per-model z cache (serwer raportuje dzis jeden: "Fable"
+//   = wspolny cap premium Opus+Fable). Linia limitow rozbita na dwa wiersze.
 
 import { readFileSync, existsSync, writeFileSync, renameSync } from 'fs';
-import { basename, join, relative, isAbsolute } from 'path';
-import { tmpdir, homedir } from 'os';
+import { basename, join } from 'path';
+import { homedir } from 'os';
 import { spawn } from 'child_process';
 
 const ESC = '\x1b';
@@ -19,6 +22,10 @@ const c_pink = `${ESC}[38;5;205m`;   // project (tozsamosc, nie alarm)
 const c_slate = `${ESC}[38;5;109m`;  // reset (czas do resetu)
 const c_amber = `${ESC}[38;5;214m`;  // E: extra usage
 const c_gold2 = `${ESC}[38;5;178m`;  // etykieta 7d (wartosc zostaje c_yellow 220)
+// Kubelki 7d per-model. Kolor dobrany tak, by nie kolidowac z zadnym uzytym
+// wyzej (39 model, 135 effort, 205 projekt, 44/51 5h, 178/220 7d, 109 reset,
+// 214 extra) ani z gradientem ctx (46/154/226/208/202/196).
+const c_orchid = `${ESC}[38;5;170m`; // cap per-model (dzis: wspolny premium Opus+Fable)
 
 const SEP = `${c_dim} │ ${reset}`;
 
@@ -116,39 +123,6 @@ function resolveEffort(transcriptPath) {
     || 'high';
 }
 
-// Smart display names: basename if unique, parent/basename if duplicated
-function smartDisplayNames(fullPaths, cwd) {
-  const valid = fullPaths.filter(f => f.includes('/') || f.includes('\\'));
-
-  const deduped = [];
-  const pathSet = new Set();
-  for (let i = valid.length - 1; i >= 0; i--) {
-    if (!pathSet.has(valid[i])) {
-      pathSet.add(valid[i]);
-      deduped.unshift(valid[i]);
-    }
-  }
-
-  const baseCount = {};
-  for (const f of deduped) {
-    const b = basename(f);
-    baseCount[b] = (baseCount[b] || 0) + 1;
-  }
-
-  return deduped.map(f => {
-    const b = basename(f);
-    if (baseCount[b] <= 1) return b;
-
-    const rel = relative(cwd, f).replace(/\\/g, '/');
-    if (!rel.startsWith('..') && !isAbsolute(rel)) {
-      const parts = rel.split('/');
-      if (parts.length >= 2) return parts.slice(-2).join('/');
-      return rel;
-    }
-    return '~/' + b;
-  });
-}
-
 try {
   let input = readFileSync(0, 'utf8');
   if (input.charCodeAt(0) === 0xFEFF) input = input.substring(1);
@@ -196,7 +170,10 @@ try {
         cache = upd;
         const paceSh = join(homedir(), '.claude', 'usage', 'pace.sh');
         if (existsSync(paceSh)) {
-          spawn('bash', [paceSh, '--compute-only'], { detached: true, stdio: 'ignore' }).unref();
+          // --refresh (nie --compute-only): pace.sh sam decyduje o ruchu do sieci
+          // wg API_TTL_S i NIE wysyla powiadomien (te zostaja przy --scheduled).
+          // Proces odczepiony — pasek nigdy na niego nie czeka.
+          spawn('bash', [paceSh, '--refresh'], { detached: true, stdio: 'ignore' }).unref();
         }
       }
     }
@@ -281,6 +258,20 @@ try {
       else if (proj != null && (st === 'STALE' || fromCache)) s7 = `${c_gold2}7d ${c_yellow}${v7}${c_dim}→?%${reset}`;
       else s7 = `${c_gold2}7d ${c_yellow}${v7}%${reset}`;
 
+      // Kubelki 7d per-model — WYLACZNIE z cache (pasek nie chodzi do sieci;
+      // odswieza je pace.sh --refresh spawnowany nizej).
+      // Renderujemy KAZDY kubelek przyslany przez serwer, etykieta z jego
+      // display_name — zamiast listy zaszytej w kodzie. Dzis przychodzi jeden:
+      // "Fable" = wspolny cap premium (rosnie tez przy pracy na Opusie —
+      // potwierdzone empirycznie 2026-07-16). Sonnet NIE jest raportowany
+      // (serwer zwraca null nawet po realnym zuzyciu; potwierdzone w /usage),
+      // dlatego nie ma dla niego wskaznika. Gdy Anthropic go kiedys wystawi,
+      // pojawi sie tu sam — bez zmiany kodu.
+      const scoped = (cache && Array.isArray(cache.model_scoped)) ? cache.model_scoped : [];
+      const scopedSegs = scoped
+        .filter(x => x && x.used_pct != null && x.display_name)
+        .map(x => `${c_orchid}${x.display_name} ${Math.round(x.used_pct)}%${reset}`);
+
       // resety zgrupowane na końcu: "↺ 2h10m / 1d4h"
       const r5 = (rl && rl.five_hour && rl.five_hour.resets_at) || (cache && cache.five_hour && cache.five_hour.resets_at_epoch);
       const r7 = (rl && rl.seven_day && rl.seven_day.resets_at) || (cache && cache.seven_day && cache.seven_day.resets_at_epoch);
@@ -288,7 +279,12 @@ try {
       const resetSeg = (d5 || d7) ? `${c_slate}↺ ${d5 || '?'} / ${d7 || '?'}${reset}` : '';
 
       // separatory jak w linii 1 (SEP = " │ ") zamiast potrojnych spacji
-      usageSegment = [s5, s7, resetSeg, extraInfo].filter(Boolean).join(SEP);
+      // Dwie linie zamiast jednej — na waskim ekranie (telefon/tablet w tmux)
+      // wszystko w jednym wierszu sie nie miescilo i zawijalo sie brzydko.
+      // Podzial wg sensu: ile zuzyto (okna + kubelki) | kiedy reset + kredyty.
+      const usageRow1 = [s5, s7, ...scopedSegs].filter(Boolean).join(SEP);
+      const usageRow2 = [resetSeg, extraInfo].filter(Boolean).join(SEP);
+      usageSegment = [usageRow1, usageRow2].filter(Boolean).join('\n');
     }
   } catch {}
   // ===== koniec usage-pace =====
@@ -311,22 +307,11 @@ try {
   const ctxStr = ctxPct > 100 ? '100%+' : `${ctxPct}%`;
   const modelName = shortModel(data.model, ctxWindowSize);
   const projectName = basename(data.cwd || data.workspace?.project_dir || '');
-  const cwd = data.cwd || data.workspace?.project_dir || '';
 
   // Effort level: transcript (per-session) > settings.json (global)
   const effort = resolveEffort(data.transcript_path);
   const effortColor = getEffortColor(effort);
   const effortIcon = `\x1b[1m${effort.toUpperCase()}\x1b[22m`;
-
-  // Changed files (from PostToolUse hook)
-  const sessionId = data.session_id || 'default';
-  const trackFile = join(tmpdir(), `claude-changed-files-${sessionId}.json`);
-  let rawFiles = [];
-  if (existsSync(trackFile)) {
-    try { rawFiles = JSON.parse(readFileSync(trackFile, 'utf8')); } catch {}
-  }
-
-  const fileNames = smartDisplayNames(rawFiles, cwd);
 
   // Line 1: ctx% │ model │ EFFORT │ project
   const parts = [
@@ -340,29 +325,6 @@ try {
   // usage-pace: osobna linijka (pod glowna, nad lista plikow) — waski ekran
   if (usageSegment) output += `\n${usageSegment}`;
   if (spilloverAlert) output += `\n${spilloverAlert}`;
-
-  // Lines 2+: changed files (cyan names, dim dot separators)
-  if (fileNames.length > 0) {
-    const maxW = 50;
-    const recent = fileNames.slice(-10);
-    const lines = [''];
-    for (const f of recent) {
-      const cur = lines[lines.length - 1];
-      const nextVis = cur ? `${cur} · ${f}` : f;
-      if (nextVis.length > maxW && cur) {
-        if (lines.length >= 4) break;
-        lines.push(f);
-      } else {
-        lines[lines.length - 1] = nextVis;
-      }
-    }
-    for (const line of lines) {
-      if (line) {
-        const colored = line.split(' · ').join(`${reset}${c_dim} · ${c_cyan}`);
-        output += `\n${c_cyan}${colored}${reset}`;
-      }
-    }
-  }
 
   process.stdout.write(output + '\n');
 } catch {
