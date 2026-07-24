@@ -285,57 +285,70 @@ if MODE in ("--scheduled", "--refresh") and api_age >= API_TTL:
         fetch_err = type(e).__name__ + ": " + str(e)[:160]
 
 # ---------- COMPUTE ----------
+def eval_window(used, resets, fetched_at, prev_hwm=None):
+    """Ocena okna tygodniowego — JEDNA matematyka dla glownego 7d i dla kubelkow
+    per-model (limits[] weekly_scoped), zeby progi i projekcja nigdy sie nie rozjechaly.
+    Zapis HWM zostaje po stronie wywolujacego (rozne miejsca w cache).
+
+    Re-base guard (rollout Anthropica) — wersja HWM (high-water-mark):
+    API bywa prze-bazowuje licznik w DOL w trakcie okna (glitch rolloutu,
+    NIEZMIENIONY resets_at). W oknie o stalym resecie uzycie tylko ROSNIE az do
+    resetu — kazdy spadek to glitch API, NIE realny spadek tempa. Dlatego:
+      * USED chronimy high-water-markiem (max w oknie) — glitch nie zbija projekcji,
+      * ELAPSED liczymy ZAWSZE od realnego startu okna (resets - 7d).
+    Stara wersja kotwiczyla elapsed do chwili glitcha (rebase_epoch=teraz) -> elapsed
+    bywal ~0 -> projekcja absurd (28%/8% = 333%) i resetowala sie przy kazdym glitchu.
+    """
+    r = {"status": "NO_DATA", "reason": "brak danych o limicie 7d", "proj": None,
+         "used_hwm": None, "elapsed_pct": None, "hours_to_reset": None, "spillover": False}
+    if used is None or not resets:
+        return r
+    if now - fetched_at > STALE_S:
+        r["status"], r["reason"] = "STALE", "dane starsze niz %.0f h" % (STALE_S / 3600)
+        return r
+    if resets < now:
+        r["status"], r["reason"] = "STALE", "okno sie zresetowalo, czekam na swieze dane"
+        return r
+    used = float(used)
+    r["spillover"] = used >= 100.0  # przekroczony limit planu -> spill-over na kredyty
+    r["hours_to_reset"] = (resets - now) / 3600.0
+    r["used_hwm"] = max(used, float(prev_hwm)) if prev_hwm is not None else used
+    elapsed_h = max(0.0, min(168.0, (now - (resets - WINDOW_S)) / 3600.0))  # ZAWSZE realny elapsed okna
+    r["elapsed_pct"] = elapsed_h / 168.0 * 100.0
+    remaining = 100.0 - r["used_hwm"]
+    r["proj"] = (r["used_hwm"] / r["elapsed_pct"] * 100.0) if r["elapsed_pct"] > 0.1 else None
+    if elapsed_h < GRACE_H:
+        r["status"] = "GRACE"
+        r["reason"] = "swieze okno (%.0f h od startu) — za malo danych" % elapsed_h
+    elif r["hours_to_reset"] <= ENDGAME_H:
+        if remaining > ENDGAME_REMAIN:
+            r["status"] = "LOW"
+            r["reason"] = "koncowka okna: zostalo %.0f%% limitu, do resetu %.0f h" % (remaining, r["hours_to_reset"])
+        else:
+            r["status"] = "OK"
+            r["reason"] = "koncowka okna: zostalo tylko %.0f%% limitu" % remaining
+    elif r["proj"] is not None and r["proj"] < EARLY_LOW:
+        r["status"] = "LOW"
+        r["reason"] = "projekcja %.0f%% < prog %.0f%%" % (r["proj"], EARLY_LOW)
+    else:
+        r["status"] = "OK"
+        r["reason"] = "projekcja %.0f%%" % (r["proj"] if r["proj"] is not None else -1)
+    return r
+
 sd = cache.get("seven_day") or {}
 used = sd.get("used_pct")
 resets = sd.get("resets_at_epoch")
 fetched = float(cache.get("fetched_at_epoch") or 0)
-status, proj, reason = "NO_DATA", None, "brak danych o limicie 7d"
-hours_to_reset = elapsed_pct = used_hwm = None
-spillover = False  # True = jestes PONAD 100% limitu planu -> leci extra usage (kredyty)
 
-if used is not None and resets:
-    if now - fetched > STALE_S:
-        status, reason = "STALE", "dane starsze niz %.0f h" % (STALE_S / 3600)
-    elif resets < now:
-        status, reason = "STALE", "okno sie zresetowalo, czekam na swieze dane"
-    else:
-        spillover = float(used) >= 100.0  # przekroczony limit planu -> spill-over na kredyty
-        hours_to_reset = (resets - now) / 3600.0
-        # --- Re-base guard (rollout Anthropica) — wersja HWM (high-water-mark) ---
-        # API bywa prze-bazowuje licznik 7d w DOL w trakcie okna (glitch rolloutu,
-        # NIEZMIENIONY resets_at). W oknie o stalym resecie uzycie tylko ROSNIE az do
-        # resetu — kazdy spadek to glitch API, NIE realny spadek tempa. Dlatego:
-        #   * USED chronimy high-water-markiem (max w oknie) — glitch nie zbija projekcji,
-        #   * ELAPSED liczymy ZAWSZE od realnego startu okna (resets - 7d).
-        # Stara wersja kotwiczyla elapsed do chwili glitcha (rebase_epoch=teraz) -> elapsed
-        # bywal ~0 -> projekcja absurd (28%/8% = 333%) i resetowala sie przy kazdym glitchu.
-        window_start = resets - WINDOW_S
-        wkey = round(resets / 3600.0)              # klucz okna zaokr. do godziny (API jitteruje resets sub-sek.)
-        hwm = cache.get("seven_day_hwm") or {}
-        prev_hwm = hwm.get("used_hwm") if hwm.get("reset_key") == wkey else None
-        used_hwm = max(float(used), float(prev_hwm)) if prev_hwm is not None else float(used)
-        cache["seven_day_hwm"] = {"reset_key": wkey, "used_hwm": used_hwm}
-        elapsed_h = max(0.0, min(168.0, (now - window_start) / 3600.0))  # ZAWSZE realny elapsed okna
-        elapsed_pct = elapsed_h / 168.0 * 100.0
-        remaining = 100.0 - used_hwm
-        proj = (used_hwm / elapsed_pct * 100.0) if elapsed_pct > 0.1 else None
-        if elapsed_h < GRACE_H:
-            status = "GRACE"
-            reason = "swieze okno (%.0f h od startu) — za malo danych" % elapsed_h
-        elif hours_to_reset <= ENDGAME_H:
-            if remaining > ENDGAME_REMAIN:
-                status = "LOW"
-                reason = "koncowka okna: zostalo %.0f%% limitu, do resetu %.0f h" % (remaining, hours_to_reset)
-            else:
-                status = "OK"
-                reason = "koncowka okna: zostalo tylko %.0f%% limitu" % remaining
-        else:
-            if proj is not None and proj < EARLY_LOW:
-                status = "LOW"
-                reason = "projekcja %.0f%% < prog %.0f%%" % (proj, EARLY_LOW)
-            else:
-                status = "OK"
-                reason = "projekcja %.0f%%" % (proj if proj is not None else -1)
+wkey = round(resets / 3600.0) if resets else None   # klucz okna zaokr. do godziny (API jitteruje resets sub-sek.)
+hwm = cache.get("seven_day_hwm") or {}
+prev_hwm = hwm.get("used_hwm") if (wkey is not None and hwm.get("reset_key") == wkey) else None
+w7 = eval_window(used, resets, fetched, prev_hwm)
+status, proj, reason = w7["status"], w7["proj"], w7["reason"]
+used_hwm, elapsed_pct, hours_to_reset = w7["used_hwm"], w7["elapsed_pct"], w7["hours_to_reset"]
+spillover = w7["spillover"]  # True = jestes PONAD 100% limitu planu -> leci extra usage (kredyty)
+if used_hwm is not None and wkey is not None:
+    cache["seven_day_hwm"] = {"reset_key": wkey, "used_hwm": used_hwm}
 
 # ---------- okno 5h: projekcja TYLKO informacyjna (zero alarmow) ----------
 proj5 = None
@@ -349,6 +362,30 @@ if (fh_used is not None and fh_resets and fh_resets > now
     el5_pct = el5 / W5 * 100.0
     if el5 >= GRACE5_S and el5_pct > 0.1:
         proj5 = float(fh_used) / el5_pct * 100.0
+
+# ---------- kubelki per-model: TA SAMA projekcja co dla glownego okna 7d ----------
+# Kubelek weekly_scoped ma wlasny licznik i wlasny resets_at, ale to takie samo okno
+# tygodniowe -> liczymy go eval_window (jedna matematyka, te same progi, ten sam HWM).
+# Swiezosc mierzymy last_api_fetch_epoch, a NIE fetched_at_epoch: kubelki plyna
+# wylacznie z API, a fetched_at_epoch nadpisuje pasek ze stdin co ~300 s (kubelki by
+# wtedy udawaly swieze, gdy fetch od godzin nie przechodzi).
+api_fetched = float(cache.get("last_api_fetch_epoch") or 0)
+scoped_list = [b for b in (cache.get("model_scoped") or []) if isinstance(b, dict)]
+scoped_names = set(b.get("display_name") for b in scoped_list if b.get("display_name"))
+prev_scoped_hwm = cache.get("model_scoped_hwm") or {}
+scoped_hwm = dict((k, v) for k, v in prev_scoped_hwm.items() if k in scoped_names)  # bez sierot po znikniętych kubelkach
+for b in scoped_list:
+    name, b_resets = b.get("display_name"), b.get("resets_at_epoch")
+    b_key = round(b_resets / 3600.0) if b_resets else None
+    prev_b = scoped_hwm.get(name) or {}
+    prev_b_hwm = prev_b.get("used_hwm") if (b_key is not None and prev_b.get("reset_key") == b_key) else None
+    wb = eval_window(b.get("used_pct"), b_resets, api_fetched, prev_b_hwm)
+    b["used_hwm"] = round(wb["used_hwm"], 1) if wb["used_hwm"] is not None else None
+    b["projection_pct"] = round(wb["proj"], 1) if wb["proj"] is not None else None
+    b["status"] = wb["status"]
+    if name and b_key is not None and wb["used_hwm"] is not None:
+        scoped_hwm[name] = {"reset_key": b_key, "used_hwm": wb["used_hwm"]}
+cache["model_scoped_hwm"] = scoped_hwm
 
 eu = cache.get("extra_usage") or {}
 cache["pace"] = {
@@ -453,6 +490,15 @@ p = c.get("pace") or {}
 age = time.time() - float(c.get("fetched_at_epoch") or 0)
 print("Dane sprzed: %.0f min (zrodlo: %s)" % (age / 60, c.get("source", "?")))
 print("Powod: %s" % p.get("reason"))
+for b in (c.get("model_scoped") or []):
+    if isinstance(b, dict) and b.get("display_name"):
+        u = b.get("used_hwm") if b.get("used_hwm") is not None else b.get("used_pct")
+        pr = b.get("projection_pct")
+        print("Kubelek %s: %s%% -> projekcja %s [%s]" % (
+            b["display_name"],
+            "?" if u is None else "%.0f" % float(u),
+            "?" if pr is None else "%.0f%%" % pr,
+            b.get("status", "?")))
 if p.get("spillover"):
     print(">>> SPILL-OVER AKTYWNY: jestes PONAD limit planu — leca extra usage (kredyty)")
 uc = p.get("extra_used_credits")

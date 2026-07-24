@@ -23,6 +23,9 @@ f, used, off_h, f_off = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), flo
 now = time.time()
 json.dump({
   "fetched_at_epoch": now - f_off,
+  # swiezy znacznik fetchu API: bez niego --scheduled otwiera bramke i realnie
+  # idzie do api/oauth/usage prawdziwym tokenem, nadpisujac scenariusz testu.
+  "last_api_fetch_epoch": now - 10,
   "source": "test",
   "cc_version": "2.1.170",
   "five_hour": {"used_pct": 11.0, "resets_at_epoch": now + 3600},
@@ -161,6 +164,71 @@ GLE=$(python3 -c "import json;print(round((json.load(open('$GL')).get('pace') or
 if [ "$GLP" -ge 50 ] && [ "$GLP" -le 62 ] && [ "$GLE" -ge 48 ] && [ "$GLE" -le 54 ]; then
   echo "PASS glitch-api-hwm (proj=$GLP trzyma ~55 mimo used->3; elapsed=$GLE realny)"; PASS=$((PASS+1));
 else echo "FAIL glitch-api (proj=$GLP oczek 50-62; elapsed=$GLE oczek 48-54)"; FAIL=$((FAIL+1)); fi
+
+# --- kubelki per-model (weekly_scoped): projekcja + status jak dla okna 7d ---
+# $1=plik $2=used_kubelka $3=reset_za_h $4=wiek_ostatniego_fetchu_API_s
+mkscoped() {
+  python3 - "$@" <<'PY'
+import json, sys, time
+f, used, off_h, api_off = sys.argv[1], float(sys.argv[2]), float(sys.argv[3]), float(sys.argv[4])
+now = time.time()
+json.dump({
+  "fetched_at_epoch": now - 10, "last_api_fetch_epoch": now - api_off,
+  "source": "test", "cc_version": "2.1.170",
+  "five_hour": {"used_pct": 11.0, "resets_at_epoch": now + 3600},
+  "seven_day": {"used_pct": 45.0, "resets_at_epoch": now + 100 * 3600},
+  "model_scoped": [{"display_name": "Fable", "used_pct": used,
+                    "resets_at_epoch": now + off_h * 3600}],
+}, open(f, "w"))
+PY
+}
+scoped_run() { # $1=nazwa $2=oczekiwany_status $3=oczekiwana_proj|- $4=used $5=reset_za_h $6=wiek_api_s
+  local name="$1" want="$2" wproj="$3" cache="$T/c-$1.json"
+  mkscoped "$cache" "$4" "$5" "${6:-10}"
+  CLAUDE_USAGE_CACHE_FILE="$cache" CLAUDE_USAGE_HISTORY_FILE="$T/h-$1.csv" bash "$PACE" --compute-only
+  if python3 -c "
+import json,sys
+b=(json.load(open('$cache')).get('model_scoped') or [{}])[0]
+ok = b.get('status')=='$want'
+if '$wproj' != '-':
+    p=b.get('projection_pct')
+    ok = ok and p is not None and abs(p-float('$wproj'))<1.0
+sys.exit(0 if ok else 1)
+"; then echo "PASS $name -> $want proj=$wproj"; PASS=$((PASS+1));
+  else echo "FAIL $name (jest: $(python3 -c "
+import json;b=(json.load(open('$cache')).get('model_scoped') or [{}])[0]
+print(b.get('status'), b.get('projection_pct'))"))"; FAIL=$((FAIL+1)); fi
+}
+
+# elapsed 68h/168h = 40.5% -> proj 45/40.5*100 = 111%
+scoped_run scoped-ok    OK    111 45  100
+# elapsed 40.5%, used 15 -> proj 37% < 50 -> LOW (kubelek moze byc LOW gdy glowne 7d jest OK)
+scoped_run scoped-low   LOW   37  15  100
+# 8h od startu okna (<12h GRACE) -> brak oceny tempa
+scoped_run scoped-grace GRACE -   5   160
+# fetch API sprzed >2h -> kubelek STALE, mimo swiezego fetched_at_epoch ze stdin paska
+scoped_run scoped-stale STALE -   45  100  10900
+
+# glitch API na kubelku: licznik spada w trakcie okna -> HWM trzyma projekcje
+GLS="$T/c-scoped-glitch.json"; mkscoped "$GLS" 28 82 10   # elapsed ~51% -> proj ~55%
+CLAUDE_USAGE_CACHE_FILE="$GLS" CLAUDE_USAGE_HISTORY_FILE="$T/h-sglitch.csv" bash "$PACE" --compute-only
+python3 -c "import json; d=json.load(open('$GLS')); d['model_scoped'][0]['used_pct']=3.0; json.dump(d,open('$GLS','w'))"
+CLAUDE_USAGE_CACHE_FILE="$GLS" CLAUDE_USAGE_HISTORY_FILE="$T/h-sglitch.csv" bash "$PACE" --compute-only
+SGP=$(python3 -c "import json;print(round((json.load(open('$GLS'))['model_scoped'][0]).get('projection_pct') or 0))")
+SGU=$(python3 -c "import json;print(round((json.load(open('$GLS'))['model_scoped'][0]).get('used_hwm') or 0))")
+if [ "$SGP" -ge 50 ] && [ "$SGP" -le 62 ] && [ "$SGU" = "28" ]; then
+  echo "PASS scoped-glitch-hwm (proj=$SGP, used_hwm=$SGU mimo used->3)"; PASS=$((PASS+1));
+else echo "FAIL scoped-glitch (proj=$SGP oczek 50-62; used_hwm=$SGU oczek 28)"; FAIL=$((FAIL+1)); fi
+
+# brak kubelkow w cache -> zero wysypki, glowne 7d liczy sie normalnie
+NS="$T/c-noscoped.json"; mkcache "$NS" 45 100 10
+CLAUDE_USAGE_CACHE_FILE="$NS" CLAUDE_USAGE_HISTORY_FILE="$T/h-noscoped.csv" bash "$PACE" --compute-only
+if python3 -c "
+import json,sys
+c=json.load(open('$NS'))
+sys.exit(0 if (c.get('pace') or {}).get('status')=='OK' and c.get('model_scoped_hwm')=={} else 1)
+"; then echo "PASS scoped-brak-kubelkow (7d liczy sie normalnie)"; PASS=$((PASS+1));
+else echo "FAIL scoped-brak-kubelkow"; FAIL=$((FAIL+1)); fi
 
 echo "=============================="
 echo "WYNIK: PASS=$PASS FAIL=$FAIL"

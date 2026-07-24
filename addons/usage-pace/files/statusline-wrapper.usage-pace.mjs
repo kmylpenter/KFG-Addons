@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// KFG Statusline v9.0 - ctx% │ model/ctx │ EFFORT │ project + linia limitow
+// KFG Statusline v9.1 - ctx% │ model/ctx │ EFFORT │ project + linia limitow
 // Effort detection: transcript JSONL > settings.json (same approach as ccstatusline)
 // v9.0 (2026-07-16): lista zmienionych plikow USUNIETA (nieuzywana), w jej
 //   miejsce kubelki 7d per-model z cache (serwer raportuje dzis jeden: "Fable"
 //   = wspolny cap premium Opus+Fable). Linia limitow rozbita na dwa wiersze.
+// v9.1 (2026-07-24): kubelek per-model dostaje projekcje "uzyto→proj%" na tych
+//   samych zasadach co okno 7d (kolor strzalki wg statusu, GRACE '…', STALE '?').
+//   Cala matematyka w pace.sh (eval_window) — pasek tylko renderuje cache.
 
 import { readFileSync, existsSync, writeFileSync, renameSync } from 'fs';
 import { basename, join } from 'path';
@@ -267,10 +270,23 @@ try {
       // (serwer zwraca null nawet po realnym zuzyciu; potwierdzone w /usage),
       // dlatego nie ma dla niego wskaznika. Gdy Anthropic go kiedys wystawi,
       // pojawi sie tu sam — bez zmiany kodu.
+      // v9.1: kubelek pokazuje "uzyto→projekcja%" jak okno 7d. Wartosc/etykieta
+      // orchid (tozsamosc kubelka), strzalka w kolorze statusu (progi = te same
+      // co 7d, liczone w pace.sh). Projekcja i status sa z cache — pasek liczy zero.
       const scoped = (cache && Array.isArray(cache.model_scoped)) ? cache.model_scoped : [];
       const scopedSegs = scoped
         .filter(x => x && x.used_pct != null && x.display_name)
-        .map(x => `${c_orchid}${x.display_name} ${Math.round(x.used_pct)}%${reset}`);
+        .map(x => {
+          const v = Math.round(x.used_hwm != null ? x.used_hwm : x.used_pct);  // HWM = wartosc chroniona, spojna z projekcja
+          const p = x.projection_pct;
+          const head = `${c_orchid}${x.display_name} ${v}`;
+          if (v >= 100) return `${c_orchid}${x.display_name} ${bold}${c_red}${v}%${reset}`;  // cap wyczerpany: projekcja nic juz nie wnosi
+          if (x.status === 'LOW' && p != null) return `${head}${bold}${c_red}→${Math.round(p)}%⚠${reset}`;
+          if (x.status === 'OK' && p != null) return `${head}${bold}${c_green}→${Math.min(999, Math.round(p))}%${reset}`;
+          if (x.status === 'GRACE') return `${head}${ESC}[38;5;250m→…${reset}`;  // swieze okno: projekcja niemiarodajna
+          if (x.status === 'STALE') return `${head}${c_dim}→?%${reset}`;         // API nie odpowiada od >2h
+          return `${c_orchid}${x.display_name} ${v}%${reset}`;
+        });
 
       // resety zgrupowane na końcu: "↺ 2h10m / 1d4h"
       const r5 = (rl && rl.five_hour && rl.five_hour.resets_at) || (cache && cache.five_hour && cache.five_hour.resets_at_epoch);
