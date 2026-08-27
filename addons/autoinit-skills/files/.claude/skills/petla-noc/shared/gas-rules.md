@@ -34,6 +34,16 @@ case-sensitive, całe słowo) → funkcja NIE kwalifikuje się jako martwa.
 
 ## 3. KWALIFIKACJA DO KWARANTANNY (moduł E — warunki ŁĄCZNE)
 
+0. **SIATKA TESTÓW PINUJE KONTRAKT — warunek 0, sprawdzaj PIERWSZY.** Zero trafień
+   word-boundary (`grep -rnw`) po plikach testów: `.petla-noc/tests/` **oraz** wszystkie
+   `*_smoke.js` (także `.<tab>*_smoke.js`). Trafienie = **DISQUALIFIED**, nie DOUBT — funkcja
+   zostaje, koniec analizy, żadnej kwarantanny. Powód (NOC-INFRA-QUAR, 2026-08-26):
+   `workDriveFolderUrl_` przeszedł warunki 1–3 (zero referencji w `.gs`, `.html`, stringach),
+   noc wsadziła go do kwarantanny i bramka poszła na czerwono na
+   `AktualizacjaWyceny.folder-eksplorator.test.js:57` (asercja parytetu
+   `workDriveFolderUrl_('F1') === ref.url`). Koszt wykrycia: 33-minutowy przebieg pełnej suity
+   + rollback. Test, który pinuje funkcję, JEST jej referencją — warunki 1–3 patrzą tylko na
+   `.gs`/`.html`/stringi i takiej referencji nie widzą.
 1. Zero referencji statycznych w `.gs` (poza własną definicją).
 2. Zero referencji w `.html` (w tym wzorce z sekcji 2).
 3. Nazwa nieobecna w żadnym stringu (`callback-string` powyżej).

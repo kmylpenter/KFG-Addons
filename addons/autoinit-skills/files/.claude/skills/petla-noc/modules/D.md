@@ -20,15 +20,15 @@ NIE wymyślaj własnego protokołu — WYKONUJESZ tryb audit skilla petla.
 | gas-config | hardkodowane ID arkuszy/maile/URL-e/klucze (gas-rules 9) — per wystąpienie jako issue |
 | gas-errors | puste catch, catch-tylko-log, UrlFetchApp/MailApp/SpreadsheetApp/CalendarApp/GmailApp bez try (gas-rules 8) |
 | gas-structure | funkcje >200 linii, duplikacja logiki SSOT/DRY (możesz uruchomić helper `python3 ~/.claude/skills/ssot-dry-audit/scripts/detect_duplicates.py <projekt> --allow-outside-cwd --output ...` — ścieżka jest argumentem POZYCYJNYM, a flaga --allow-outside-cwd konieczna, gdy CWD nie jest przodkiem projektu — i skonsumować findings), top-level code z side-effectami |
-| gas-deadcode | weryfikacja dead_candidate z map.json: per kandydat sprawdź WSZYSTKIE warunki gas-rules 3 (greps word-boundary po .gs i .html); wynik per kandydat: QUALIFIED / DISQUALIFIED(powód) / DOUBT(powód) |
+| gas-deadcode | weryfikacja dead_candidate z map.json: per kandydat sprawdź WSZYSTKIE warunki gas-rules 3 — NAJPIERW warunek 0 (greps word-boundary po `.petla-noc/tests/` + `*_smoke.js`; hit = DISQUALIFIED od razu), potem greps po .gs i .html; wynik per kandydat: QUALIFIED / DISQUALIFIED(powód) / DOUBT(powód) |
 
 3. Per projekt audyt = osobny przebieg (fan-out lensów per petla); projekty
    sekwencyjnie albo (małe) równolegle — limit MAX_AGENTS petli obowiązuje.
 4. Wynik: audit YAML zgodny ze schematem petli (issues z id/severity/lens/item/
    location/suggestion/found_in_iteration/status) + dodatkowe pole per issue:
    `gas_category: batch|config|errors|structure|deadcode` i dla deadcode:
-   `quarantine_check: {refs_gs: 0, refs_html: 0, string_refs: 0, handler: false,
-   runtime_30d: unknown|0|N}` — to wejście modułu E.
+   `quarantine_check: {refs_tests: 0, refs_gs: 0, refs_html: 0, string_refs: 0, handler: false,
+   runtime_30d: unknown|0|N}` — to wejście modułu E (`refs_tests > 0` ⇒ DISQUALIFIED, gas-rules 3 warunek 0).
 5. Merge z fresh_debt (moduł F2 dopisuje do tego samego pliku — dedup po
    file:line+item). Criticale → priority_queue w progress.json.
 6. Audit YAML żyje w `.petla-noc/reports/` poza gitem (SKILL.md STAN) — bez
