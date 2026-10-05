@@ -29,7 +29,8 @@ martwego kodu. Obie wymagają: brak RED, branch sesji, BRAMKA TESTOWA per plik
    re-weryfikacją z kroku 2. Funkcje już w `_deprecated.gs` (prefiks DEPRECATED_)
    POMIJAJ — nie re-kwarantannuj kwarantanny.
 2. RE-WERYFIKACJA tuż przed ruchem (stan mógł się zmienić): ponów wszystkie
-   greps z gas-rules 3 (word-boundary, .gs + .html + stringi) + handler-check +
+   greps z gas-rules 3 (word-boundary: warunek 0 — `.petla-noc/tests/` + `*_smoke.js`,
+   dalej .gs + .html + stringi) + handler-check +
    (jeśli jest runtime-log.json) zero wykonań 30 dni. Jakikolwiek hit → DOUBT
    → raport. Projekt z sygnałem biblioteki (gas-rules 6) → cała E2 wyłączona.
 3. Mechanika kwarantanny (per funkcja; batch max 10 funkcji na commit):
