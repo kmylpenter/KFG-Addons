@@ -143,6 +143,8 @@ FG_CACHE_TTL_S = 30.0  # foreground changes slowly; cache long so back-to-back p
 FG_FALSE_TTL_S = 4.0   # but cache a NEGATIVE (not-foreground) only briefly: on the lock-screen
                        # gate a stale False is the HARMFUL direction — it would suppress a legit
                        # in-Termux read-back for up to 30s right after unlocking — so self-heal fast.
+FG_PROBE_DEAD_S = 300.0  # privileged probe FAILED (Shizuku gone → rish "Request timeout" after ~7s,
+                         # 2026-10-05): don't re-pay that per press; re-try it after 5 min.
 
 # Local pause state for a FAST VolumeDown toggle — avoids a slow `termux-media-player
 # info` round-trip on every press. Self-correcting: after one press it matches reality.
@@ -184,7 +186,13 @@ def _shizuku_ready() -> bool:
     return os.path.isfile(SHIZUKU_FLAG)
 
 
-_fg_cache = {"t": 0.0, "v": False}
+_fg_cache = {"t": 0.0, "v": False, "dead_t": None}
+
+
+def _fg_probe_dead() -> bool:
+    """True while the last foreground probe could not run at all (no Shizuku/ADB, or it timed out)."""
+    t = _fg_cache["dead_t"]
+    return t is not None and time.monotonic() - t < FG_PROBE_DEAD_S
 
 
 def _termux_foreground() -> bool:
@@ -199,12 +207,15 @@ def _termux_foreground() -> bool:
     ttl = FG_CACHE_TTL_S if _fg_cache["v"] else FG_FALSE_TTL_S
     if now - _fg_cache["t"] < ttl:
         return _fg_cache["v"]
+    if _fg_probe_dead():
+        return False
     # M14 (audit 2026-06-15): route the privileged probe through _speak._run_shell (Shizuku-
     # preferred, ADB fallback, one privileged-shell path for the whole addon) instead of a bare
     # rish call. timeout_s=8: rish runs ~4s under PRoot's Android-14 writable-dex check, so a 4s
     # timeout fired ~2/3 of the time → false "not foreground" → read-back wrongly skipped. _run_shell
     # returns "" on ANY failure, so TERMUX_PKG-not-in-"" fails CLOSED exactly as the old try did.
-    _ok, out = _run_shell("dumpsys window 2>/dev/null | grep -m1 mCurrentFocus", timeout_s=8.0)
+    ok, out = _run_shell("dumpsys window 2>/dev/null | grep -m1 mCurrentFocus", timeout_s=8.0)
+    _fg_cache["dead_t"] = None if ok else now
     val = TERMUX_PKG in out
     _fg_cache["t"] = now
     _fg_cache["v"] = val
@@ -429,8 +440,10 @@ def _gated_action(code: int) -> None:
     (b) Termux is genuinely the foreground app (dumpsys mCurrentFocus DOES distinguish it from
     the keyguard). Otherwise the press was meant only to change the volume; don't fire a spurious
     read-back of the last message. Runs in the dispatch thread so a cold _termux_foreground
-    (~1.8s) never blocks key detection."""
-    if not (_czytaj_audio_playing() or _termux_foreground()):
+    (~1.8s) never blocks key detection.
+    No probe available (Shizuku withdrawn, 2026-10-05) → trust the accessibility flag: the
+    service itself only writes it while Termux is foreground AND the keyguard is unlocked."""
+    if not (_czytaj_audio_playing() or _termux_foreground() or _fg_probe_dead()):
         _log("VOLKEY", "skip", "locked/other-app + no audio (volume-only)")
         return
     if code == KEY_VOLUMEDOWN:

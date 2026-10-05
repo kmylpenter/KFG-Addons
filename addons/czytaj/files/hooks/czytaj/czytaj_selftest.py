@@ -131,6 +131,30 @@ for sh in ("czytaj-env.sh", "toggle.sh", "user-prompt-submit.sh", "stop.sh", "pr
         r = subprocess.run(["bash", "-n", p], capture_output=True, text=True)
         check(f"bash -n {sh}", r.returncode == 0, r.stderr.strip()[:120])
 
+# 6. volume-key gate (2026-10-05) ---------------------------------------------
+# Regression: with Shizuku gone, rish times out (~7s) → the foreground probe failed CLOSED and
+# EVERY accessibility key press was dropped as "locked/other-app". A DEAD probe must now trust the
+# a11y flag (the service gates Termux-foreground + unlocked itself); a WORKING probe still gates.
+vw = volume_watcher
+_orig = (vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause)
+fired = []
+vw._czytaj_audio_playing = lambda: False
+vw._read_back = lambda: fired.append("up")
+vw._toggle_pause = lambda: fired.append("down")
+try:
+    for label, probe, want in (
+        ("dead probe (Shizuku gone) → act", (False, ""), ["up"]),
+        ("probe says other app → skip", (True, "mCurrentFocus=Window{1 u0 com.android.systemui}"), []),
+        ("probe says Termux → act", (True, "mCurrentFocus=Window{1 u0 com.termux/.app.TermuxActivity}"), ["up"]),
+    ):
+        fired.clear()
+        vw._fg_cache.update({"t": 0.0, "v": False, "dead_t": None})
+        vw._run_shell = lambda *a, _p=probe, **k: _p
+        vw._gated_action(vw.KEY_VOLUMEUP)
+        check(f"volume gate: {label}", fired == want, f"fired={fired}")
+finally:
+    vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause = _orig
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
