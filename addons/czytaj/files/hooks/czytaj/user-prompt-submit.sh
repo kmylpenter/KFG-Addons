@@ -24,6 +24,20 @@ fi
 # output downstream.
 HOOK_INPUT=$(cat)
 
+# /czytaj WITHOUT a model turn (2026-10-06): toggle here and BLOCK the prompt, so Claude never
+# answers. Matches only the bare command (typed, or its <command-name> expansion) — prose that
+# merely mentions /czytaj passes through. The command file itself no longer runs toggle.sh.
+_CZ_PROMPT=$(printf '%s' "$HOOK_INPUT" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("prompt","").strip())
+except Exception: pass' 2>/dev/null)
+case "$_CZ_PROMPT" in
+  "/czytaj"|*"<command-name>/czytaj</command-name>"*)
+    _CZ_STATE=$(timeout 7 bash "$HOME/.claude/hooks/czytaj/toggle.sh" 2>/dev/null)   # under the 10s hook timeout
+    echo "$(date +%H:%M:%S) pid=$$ UPS-TOGGLE ${_CZ_STATE:-ERR}" >> "$LOG" 2>/dev/null
+    printf '{"decision":"block","reason":"Czytanie: %s"}\n' "${_CZ_STATE:-BLAD}"
+    exit 0 ;;
+esac
+
 # F1/F18: per-project gate — ONE key derivation (czytaj_project_key in czytaj-env.sh).
 _CZYTAJ_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 _CZYTAJ_KEY=$(czytaj_project_key "$_CZYTAJ_DIR")

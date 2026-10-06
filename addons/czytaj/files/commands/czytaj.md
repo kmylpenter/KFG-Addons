@@ -1,6 +1,6 @@
 ---
 name: czytaj
-description: Toggle voice reading mode (TTS hands-free). Delegates to toggle.sh — single source of truth shared with the czytaj skill.
+description: Toggle voice reading mode (TTS hands-free). Handled entirely by the czytaj UserPromptSubmit hook (toggle.sh + block) — no model turn.
 ---
 
-!`bash $HOME/.claude/hooks/czytaj/toggle.sh`
+Przełącznik /czytaj powinien zostać obsłużony przez hook czytaj (user-prompt-submit.sh) bez udziału modelu. Jeśli to widzisz, hook nie zadziałał — odpowiedz jednym zdaniem: „Przełącznik czytaj nie zadziałał, sprawdź hook user-prompt-submit.”

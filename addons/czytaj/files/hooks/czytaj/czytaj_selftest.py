@@ -167,6 +167,70 @@ finally:
     shutil.rmtree(vw.FLAG_DIR, ignore_errors=True)   # our own mkdtemp dir
     vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause, vw.FLAG_DIR = _orig
 
+# 7. /czytaj toggles WITHOUT a model turn (2026-10-06) ------------------------
+# The UserPromptSubmit hook intercepts the /czytaj prompt, runs toggle.sh and BLOCKS the prompt
+# (decision:block) so Claude never answers. A message merely mentioning /czytaj must pass through.
+import tempfile as _tf
+_proj = _tf.mkdtemp(prefix="czytaj-selftest-proj-")
+# key from the temp dir itself (NOT cz.project_key(): that prefers $CLAUDE_PROJECT_DIR, i.e. the
+# REAL session project — the first draft of this test toggled the user's own flag).
+_flag = os.path.join(cz.FLAG_DIR, hashlib.sha1(os.path.realpath(_proj).encode()).hexdigest() + ".flag")
+_ups = os.path.join(HOOK_DIR, "user-prompt-submit.sh")
+
+
+def _ups_run(prompt):
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": _proj}
+    return subprocess.run(["bash", _ups], input=json.dumps({"prompt": prompt, "transcript_path": ""}),
+                          capture_output=True, text=True, timeout=30, env=env, cwd=_proj).stdout
+
+
+try:
+    out = _ups_run("/czytaj")
+    check("/czytaj ON: blocked + flag set", '"decision": "block"' in out.replace('":"', '": "')
+          and os.path.isfile(_flag), out.strip()[:120])
+    out = _ups_run("<command-message>czytaj</command-message>\n<command-name>/czytaj</command-name>")
+    check("/czytaj OFF (expanded form): blocked + flag cleared", '"decision": "block"' in out.replace('":"', '": "')
+          and not os.path.isfile(_flag), out.strip()[:120])
+    out = _ups_run("czy /czytaj da sie zrobic bez modelu?")
+    check("prose mentioning /czytaj passes through", "block" not in out and not os.path.isfile(_flag),
+          out.strip()[:120])
+finally:
+    if os.path.isfile(_flag):
+        os.remove(_flag)   # our own temp project's flag
+    os.rmdir(_proj)
+
+# 8. /czytaj OFF of the LAST reading project stays under the hook timeout (2026-10-06) ----------
+# Live bug: toggle.sh's teardown ran `termux-media-player stop` in the FOREGROUND; Termux:API took
+# >10s, Claude Code killed the hook, the block never arrived and the prompt reached the model.
+# Isolated HOME (hooks symlinked) so FLAG_DIR holds ONLY our flag → the teardown path runs;
+# a PATH shim makes termux-media-player hang like the real one.
+import time as _t
+_home = _tf.mkdtemp(prefix="czytaj-selftest-home-")
+os.makedirs(os.path.join(_home, ".claude", "czytaj-flags"))
+os.symlink(os.path.dirname(HOOK_DIR), os.path.join(_home, ".claude", "hooks"))
+_bin = os.path.join(_home, "bin")
+os.makedirs(_bin)
+with open(os.path.join(_bin, "termux-media-player"), "w") as f:
+    f.write("#!/bin/sh\nsleep 20\n")
+os.chmod(os.path.join(_bin, "termux-media-player"), 0o755)
+_p2 = _tf.mkdtemp(prefix="czytaj-selftest-proj2-")
+open(os.path.join(_home, ".claude", "czytaj-flags",
+                  hashlib.sha1(os.path.realpath(_p2).encode()).hexdigest() + ".flag"), "w").close()
+_env = {**os.environ, "HOME": _home, "CLAUDE_PROJECT_DIR": _p2, "PATH": _bin + os.pathsep + os.environ["PATH"]}
+_t0 = _t.monotonic()
+try:
+    _out = subprocess.run(["bash", _ups], input=json.dumps({"prompt": "/czytaj", "transcript_path": ""}),
+                          capture_output=True, text=True, timeout=30, env=_env, cwd=_p2).stdout
+except subprocess.TimeoutExpired:
+    _out = ""
+_dt = _t.monotonic() - _t0
+check("/czytaj OFF (last project) answers < 8s with a block", _dt < 8 and '"decision":"block"' in _out,
+      f"{_dt:.1f}s out={_out.strip()[:80]}")
+subprocess.run(["pkill", "-f", _bin], capture_output=True)   # reap our own sleeping shim
+import shutil as _sh
+_sh.rmtree(_home, ignore_errors=True)
+os.rmdir(_p2)
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")

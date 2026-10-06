@@ -22,7 +22,6 @@ if [ -f "$FLAG" ]; then
   # this whole block was DEAD CODE — leftover playback + a stale pause flag were never cleared
   # on OFF.
   if ! compgen -G "$FLAG_DIR/*.flag" >/dev/null 2>&1; then
-    termux-media-player stop >/dev/null 2>&1
     # F21: anchor the python scripts so the pattern can't match an editor/grep whose argv
     # contains these names. M11+keepwarm: kill ONLY the in-turn auto-read CLIENTS — NOT
     # piper_server/piper-daemon and NOT `rm -rf RUN_DIR`: the warm daemon is kept alive on
@@ -32,6 +31,9 @@ if [ -f "$FLAG" ]; then
       pkill -9 -f "$pat" >/dev/null 2>&1               # (termux-media-player too — redundant with the stop above, harmless)
     done
     rm -f "$CZYTAJ_PAUSE_FLAG"   # F40: clear a stale global pause
+    # Termux:API stop can take >10s; foreground it blew the UserPromptSubmit hook timeout (2026-10-06).
+    # Backgrounded AFTER the pkill loop (whose set includes termux-media-player) so it survives.
+    termux-media-player stop >/dev/null 2>&1 &
   fi
 else
   mkdir -p "$FLAG_DIR"
