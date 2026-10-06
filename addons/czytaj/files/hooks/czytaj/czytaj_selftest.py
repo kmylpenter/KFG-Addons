@@ -136,12 +136,22 @@ for sh in ("czytaj-env.sh", "toggle.sh", "user-prompt-submit.sh", "stop.sh", "pr
 # EVERY accessibility key press was dropped as "locked/other-app". A DEAD probe must now trust the
 # a11y flag (the service gates Termux-foreground + unlocked itself); a WORKING probe still gates.
 vw = volume_watcher
-_orig = (vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause)
+import tempfile
+_orig = (vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause, vw.FLAG_DIR)
+vw.FLAG_DIR = tempfile.mkdtemp(prefix="czytaj-selftest-flags-")
+open(os.path.join(vw.FLAG_DIR, ".keepwarm-readback"), "w").close()   # dotfile ≠ reading on
 fired = []
 vw._czytaj_audio_playing = lambda: False
 vw._read_back = lambda: fired.append("up")
 vw._toggle_pause = lambda: fired.append("down")
 try:
+    # 2026-10-06: keys are a remote for READING MODE — with /czytaj OFF everywhere they only change volume.
+    fired.clear()
+    vw._fg_cache.update({"t": 0.0, "v": False, "dead_t": None})
+    vw._run_shell = lambda *a, **k: (False, "")
+    vw._gated_action(vw.KEY_VOLUMEUP)
+    check("volume gate: /czytaj OFF everywhere → skip", fired == [], f"fired={fired}")
+    open(os.path.join(vw.FLAG_DIR, "selftestproject.flag"), "w").close()   # /czytaj ON in one project
     for label, probe, want in (
         ("dead probe (Shizuku gone) → act", (False, ""), ["up"]),
         ("probe says other app → skip", (True, "mCurrentFocus=Window{1 u0 com.android.systemui}"), []),
@@ -153,7 +163,9 @@ try:
         vw._gated_action(vw.KEY_VOLUMEUP)
         check(f"volume gate: {label}", fired == want, f"fired={fired}")
 finally:
-    vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause = _orig
+    import shutil
+    shutil.rmtree(vw.FLAG_DIR, ignore_errors=True)   # our own mkdtemp dir
+    vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause, vw.FLAG_DIR = _orig
 
 print()
 if FAILS:

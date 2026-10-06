@@ -23,6 +23,7 @@ Lifecycle: spawned by toggle.sh on the first project ON; killed on the last OFF.
 from __future__ import annotations
 
 import fcntl
+import glob
 import os
 import select
 import signal
@@ -432,6 +433,12 @@ def _czytaj_audio_playing() -> bool:
         return False
 
 
+def _reading_on() -> bool:
+    """True iff /czytaj is ON in at least one project (a real <key>.flag; the watcher's own
+    .keepwarm-readback dotfile in FLAG_DIR doesn't count — glob skips dotfiles)."""
+    return bool(glob.glob(os.path.join(FLAG_DIR, "*.flag")))
+
+
 def _gated_action(code: int) -> None:
     """Lock-screen GATE + the action. The accessibility service passes the volume key THROUGH
     (volume always changes) and writes the trigger flag even on the keyguard, because it can't
@@ -443,6 +450,11 @@ def _gated_action(code: int) -> None:
     (~1.8s) never blocks key detection.
     No probe available (Shizuku withdrawn, 2026-10-05) → trust the accessibility flag: the
     service itself only writes it while Termux is foreground AND the keyguard is unlocked."""
+    if not _reading_on():
+        # 2026-10-06 (Kamil): the keys are a remote for READING MODE — with /czytaj OFF everywhere
+        # they only change the volume, never start a read-back.
+        _log("VOLKEY", "skip", "/czytaj OFF (volume-only)")
+        return
     if not (_czytaj_audio_playing() or _termux_foreground() or _fg_probe_dead()):
         _log("VOLKEY", "skip", "locked/other-app + no audio (volume-only)")
         return
