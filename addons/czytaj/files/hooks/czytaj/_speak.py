@@ -21,7 +21,7 @@ from czytaj_paths import (  # noqa: E402  — SSOT for paths/config/key (audit 2
     SCREEN_CACHE, ACTIVE_SESSION_FILE, SPOKEN_LEDGER, LAST_FOLDER_FILE,
     MIC_CACHE, MEDIA_CACHE, VOL_CACHE, PIPER_BIN, VOICE_TYPER_FLAG, VOICE_TYPER_STALE_S,
     TERMUX_HOME, TERMUX_PREFIX, TERMUX_FLAGS_DIR, READBACK_CACHE_DIRS, first_writable_dir,
-    AUDIO_CLIENT_PATS,
+    AUDIO_CLIENT_PATS, load_settings, length_scale_for,
     project_dir as _project_dir, project_flag as _project_flag,
 )
 # FLAG_DIR holds per-project flags: <sha1(realpath)>.flag (F15: legacy global flag removed).
@@ -1507,12 +1507,19 @@ def _readback_session_dir(session: str) -> str:
     return os.path.join(base, safe)
 
 
+def _readback_key(text: str, settings: dict) -> str:
+    """Cache key = text + voice + tempo, so changing either in the Czytanie tab never replays
+    a wav synthesised with the old voice/speed (stale entries just age out via eviction)."""
+    synth = f"{settings['voice']}|{length_scale_for(settings['speed'])}"
+    return hashlib.sha1(((text or "") + "\0" + synth).encode("utf-8", "replace")).hexdigest()
+
+
 def _readback_cache_path(session: str, text: str) -> str:
     d = _readback_session_dir(session)
     if not d:
         return ""
-    key = hashlib.sha1((text or "").encode("utf-8", "replace")).hexdigest()
-    return os.path.join(d, key + ".wav")
+    # settings read per call: the long-lived watcher must see a voice change made after it started
+    return os.path.join(d, _readback_key(text, load_settings()) + ".wav")
 
 
 def _readback_cache_get(session: str, text: str) -> str:
@@ -1700,6 +1707,37 @@ def read_message_back(n: int = 1) -> bool:
                         save_wav=_readback_cache_path(session, text))  # RC2: miss synth fills the cache
     _spawn_precache(path, n)   # also warm look-back turns in the background (no-ops n if already saved)
     return ok
+
+
+def readback_cached_wav(n: int = 1) -> str:
+    """Cached wav of the n-th assistant turn back in the active session, or '' (no session /
+    not cached yet). For the in-app playback bridge: the Voice Keyboard plays it itself."""
+    path = _resolve_active_transcript()
+    turns = _turn_texts(path) if path else []
+    if not turns:
+        return ""
+    n = max(1, min(int(n), len(turns)))
+    return _readback_cache_get(os.path.basename(path), turns[-n])
+
+
+def active_project_dir() -> str:
+    """Project dir of the session on top (the read-back target): the transcript's last "cwd"."""
+    path = _resolve_active_transcript()
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().decode("utf-8", "replace").splitlines()
+    except (OSError, TypeError):
+        return ""
+    for line in reversed(tail):
+        try:
+            cwd = json.loads(line).get("cwd")
+        except ValueError:
+            continue
+        if cwd:
+            return cwd
+    return ""
 
 
 def read_last_message() -> bool:

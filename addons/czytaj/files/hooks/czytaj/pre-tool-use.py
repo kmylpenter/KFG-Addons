@@ -5,7 +5,6 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import is_active, is_recording, is_in_call, speak_new_text  # noqa: E402
 
 
 def main() -> int:
@@ -13,15 +12,8 @@ def main() -> int:
         data = json.load(sys.stdin)
     except Exception:
         return 0
-    # F2: gate on the per-project flag keyed by the hook's project dir (data['cwd']
-    # / CLAUDE_PROJECT_DIR), not os.getcwd() — read data BEFORE the is_active check.
-    if not is_active(data.get("cwd", "")) or is_recording() or is_in_call():
-        return 0
-    return speak_new_text(
-        data.get("transcript_path", ""),
-        kill_previous=True,
-        cwd=data.get("cwd", ""),
-    )
+    # No streaming read-aloud before tool calls (Kamil 2026-10-07): reading is on demand only.
+    return 0
 
 
 if __name__ == "__main__":

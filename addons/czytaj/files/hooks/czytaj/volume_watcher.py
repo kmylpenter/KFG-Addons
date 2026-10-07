@@ -23,7 +23,9 @@ Lifecycle: spawned by toggle.sh on the first project ON; killed on the last OFF.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import glob
+import json
 import os
 import select
 import signal
@@ -34,10 +36,13 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import _log, read_message_back, is_readback_playing, _run_shell  # noqa: E402
+from _speak import (  # noqa: E402
+    _log, read_message_back, readback_cached_wav, is_readback_playing, _run_shell, _stop_previous_readback,
+    active_project_dir,
+)
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
     FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER,
-    TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE,
+    TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE, load_settings, save_settings, PIPER_VOICES,
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
 
@@ -172,15 +177,6 @@ READBACK_WINDOW_S = 5.0   # rapid-tap window for scrubbing further back. Short n
                           # the slow ~10-40s relay and made SEPARATE presses chain into a scrub,
                           # so a single press read the 3rd-from-last). Scrub ALSO triggers while a
                           # read is still playing (is_readback_playing). Reset to 1 on VolumeDown.
-
-
-def _reading_on() -> bool:
-    """True iff at least one project currently has reading mode ON."""
-    try:
-        with os.scandir(FLAG_DIR) as it:
-            return any(True for _ in it)
-    except OSError:
-        return False
 
 
 def _shizuku_ready() -> bool:
@@ -360,24 +356,30 @@ def _toggle_pause() -> None:
     _log("VOLKEY", "resume" if action == "play" else "pause")
 
 
-def _read_back() -> None:
-    """VolumeUp: read the LAST message. Step one further back (scrub) only when the user
-    is clearly continuing — either a read-back is still PLAYING (pressed while listening)
-    OR this press follows the last within READBACK_WINDOW_S (rapid taps). Otherwise reset
-    to the last message. is_readback_playing() polls our own child (no slow media query)."""
+def _next_readback_n(playing: bool) -> "tuple[int, bool]":
+    """Advance the VolumeUp scrub state: one further back while a read-back is playing or the
+    press follows the last within READBACK_WINDOW_S, else back to the last message (n=1)."""
     global _paused, _readback_n, _last_read_ts
     now = time.monotonic()
-    # M2: compute scrub + mutate the shared state atomically; capture n for the slow read.
+    # M2: compute scrub + mutate the shared state atomically.
     with _action_lock:
         _paused = False
         try:
             os.unlink(KEYPAUSE_STATE)   # FS3: reading clears the pause-state marker (no longer paused)
         except OSError:
             pass
-        scrub = is_readback_playing() or (now - _last_read_ts) < READBACK_WINDOW_S
+        scrub = playing or (now - _last_read_ts) < float(load_settings()["scrub_s"])
         _readback_n = _readback_n + 1 if scrub else 1
         _last_read_ts = now
-        n = _readback_n
+        return _readback_n, scrub
+
+
+def _read_back() -> None:
+    """VolumeUp: read the LAST message. Step one further back (scrub) only when the user
+    is clearly continuing — either a read-back is still PLAYING (pressed while listening)
+    OR this press follows the last within READBACK_WINDOW_S (rapid taps). Otherwise reset
+    to the last message. is_readback_playing() polls our own child (no slow media query)."""
+    n, scrub = _next_readback_n(is_readback_playing())
     _log("VOLKEY", "VolumeUp -> read-back", n, "scrub" if scrub else "fresh")
     try:
         read_message_back(n)   # slow (synth/playback) — runs with the captured n, outside the lock
@@ -455,6 +457,12 @@ def _gated_action(code: int) -> None:
         # they only change the volume, never start a read-back.
         _log("VOLKEY", "skip", "/czytaj OFF (volume-only)")
         return
+    st = load_settings()
+    if not st["keys"]:
+        _log("VOLKEY", "skip", "keys OFF in settings")
+        return
+    if st["swap"]:
+        code = KEY_VOLUMEUP if code == KEY_VOLUMEDOWN else KEY_VOLUMEDOWN
     if not (_czytaj_audio_playing() or _termux_foreground() or _fg_probe_dead()):
         _log("VOLKEY", "skip", "locked/other-app + no audio (volume-only)")
         return
@@ -462,6 +470,133 @@ def _gated_action(code: int) -> None:
         _toggle_pause()
     else:
         _read_back()
+
+
+def _stop_termux_audio() -> None:
+    """Silence czytaj's Termux-side audio (auto-read or an old read-back) before the keyboard
+    plays a read-back itself. termux-media-player stop costs ~2.4s from PRoot → detached thread."""
+    _stop_previous_readback(stop_player=False)
+    if _czytaj_audio_playing():
+        threading.Thread(target=_media, args=("stop",), daemon=True).start()
+
+
+def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
+    """In-app playback bridge (2026-10-06): the Voice Keyboard got a volume key and asks what to
+    do. fg = termux | locked | other (as the keyboard sees it); app_playing = its own player is
+    on. Returns (200, wav) → keyboard plays it; 202 → cache miss, Termux synthesises+plays it;
+    204 → nothing for the keyboard to play (volume-only, or handled here, e.g. a pause)."""
+    if not _reading_on() or not load_settings()["keys"]:
+        return 204, b""
+    if fg != "termux" and not (app_playing or _czytaj_audio_playing()):
+        return 204, b""   # locked / other app and nothing reading → the press was only for volume
+    if key == "down":
+        if _czytaj_audio_playing():
+            _toggle_pause()   # Termux-side audio; the keyboard pauses its OWN player locally
+        return 204, b""
+    n, scrub = _next_readback_n(app_playing or is_readback_playing())   # either player still reading
+    wav = readback_cached_wav(n)
+    if not wav:
+        _log("VOLKEY", "bridge read-back", n, "MISS → termux synth")
+        threading.Thread(target=read_message_back, args=(n,), daemon=True).start()
+        return 202, b""
+    _stop_termux_audio()
+    with open(wav, "rb") as f:
+        data = f.read()
+    _log("VOLKEY", "bridge read-back", n, "scrub" if scrub else "fresh", "HIT bytes=", len(data))
+    return 200, data
+
+
+BRIDGE_PORT = int(os.environ.get("CZYTAJ_BRIDGE_PORT", "47321"))
+_HOOK_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _voices() -> "list[str]":
+    return sorted(f[:-5] for f in os.listdir(PIPER_VOICES) if f.endswith(".onnx"))
+
+
+def _status() -> dict:
+    """What the keyboard's Czytanie tab shows: settings + reading state of the project on top."""
+    proj = active_project_dir()
+    flag = os.path.join(FLAG_DIR, hashlib.sha1(os.path.realpath(proj).encode()).hexdigest() + ".flag") if proj else ""
+    return {**load_settings(), "voices": _voices(), "project": os.path.basename(proj),
+            "reading": bool(flag) and os.path.isfile(flag), "anyReading": _reading_on()}
+
+
+def _toggle_active_project() -> dict:
+    proj = active_project_dir()
+    if proj:
+        subprocess.run(["bash", os.path.join(_HOOK_DIR, "toggle.sh")], env={**os.environ, "CLAUDE_PROJECT_DIR": proj},
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+        _log("VOLKEY", "bridge toggle", proj)
+    return _status()
+
+
+def _restart_synth_daemon() -> None:
+    """The warm daemon loaded the old voice/tempo at start → stop it and start a fresh one."""
+    import piper_server
+    try:
+        with open(piper_server.PID_FILE) as f:
+            os.kill(int(f.read().strip()), signal.SIGTERM)
+    except (OSError, ValueError):
+        pass
+    subprocess.run(["pkill", "-f", "piper-daemon -m"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1.0)
+    _keep_daemon_warm(force=True)
+    _log("VOLKEY", "bridge synth daemon restarted for", load_settings()["voice"])
+
+
+def _set(q: dict) -> dict:
+    before = load_settings()
+    changes = {}
+    for k in ("voice", "speed", "scrub_s"):
+        if k in q:
+            changes[k] = q[k]
+    for k in ("keys", "swap"):
+        if k in q:
+            changes[k] = q[k] == "1"
+    if "voice" in changes and changes["voice"] not in _voices():
+        changes.pop("voice")
+    after = save_settings(changes)
+    if (after["voice"], after["speed"]) != (before["voice"], before["speed"]):
+        threading.Thread(target=_restart_synth_daemon, daemon=True).start()
+    return _status()
+
+
+def _serve_bridge() -> None:
+    """127.0.0.1-only HTTP endpoint for the keyboard: GET /press?key=up|down&fg=…&playing=0|1."""
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, urlparse
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            u = urlparse(self.path)
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            ctype = "audio/wav"
+            try:
+                if u.path == "/press":
+                    st, body = _press(q.get("key", ""), q.get("fg", "other"), q.get("playing") == "1")
+                elif u.path in ("/status", "/toggle", "/set"):
+                    fn = {"/status": lambda: _status(), "/toggle": _toggle_active_project, "/set": lambda: _set(q)}
+                    st, body, ctype = 200, json.dumps(fn[u.path]()).encode(), "application/json"
+                else:
+                    st, body = 404, b""
+            except Exception as e:  # never let one bad request kill the bridge
+                _log("VOLKEY", "bridge-error", repr(e))
+                st, body = 500, b""
+            self.send_response(st)
+            self.send_header("Content-Type", ctype if body else "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def log_message(self, *a):   # keep czytaj.log clean
+            pass
+
+    try:
+        ThreadingHTTPServer(("127.0.0.1", BRIDGE_PORT), H).serve_forever()
+    except OSError as e:
+        _log("VOLKEY", "bridge-bind-fail", repr(e))
 
 
 def _dispatch_key(code: int, *, trusted_fg: bool) -> None:
@@ -770,6 +905,7 @@ def main() -> int:
     # service delivers presses here at ~0ms (verified screen-on AND screen-off), so this is
     # the sole key path by default. Daemon so teardown (SIGTERM/lock release) isn't blocked.
     threading.Thread(target=_poll_keytrigger, name="keytrigger", daemon=True).start()
+    threading.Thread(target=_serve_bridge, name="bridge", daemon=True).start()
     if not EVDEV_FALLBACK:
         _log("VOLKEY", "evdev reader DISABLED — accessibility is the sole key path")
     # Clear a wakelock a previously-crashed watcher may have left held (SIGKILL skips finally).

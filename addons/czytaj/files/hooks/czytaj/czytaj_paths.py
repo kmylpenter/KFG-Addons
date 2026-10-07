@@ -22,6 +22,7 @@ Only stdlib; safe to import from any czytaj hook.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 
 # ── Base dirs ───────────────────────────────────────────────────────────────
@@ -115,13 +116,64 @@ SOCKET_PATH = os.path.join(RUN_DIR, "server.sock")
 PID_FILE = os.path.join(RUN_DIR, "server.pid")
 SERVER_LOCK = os.path.join(RUN_DIR, "server.lock")
 
+# ── User settings — the Voice Keyboard's "Czytanie" tab, via the watcher bridge (2026-10-06) ──
+SETTINGS_FILE = _claude("czytaj-settings.json")
+SETTINGS_DEFAULTS = {
+    "voice": "pl_PL-gosia-medium",
+    "speed": round(1 / 0.6, 4),   # 0.6 length_scale = the tempo czytaj always had
+    "keys": True,                  # volume keys drive czytaj (while /czytaj is ON)
+    "swap": False,                 # swap Vol+ (read/scrub) and Vol- (pause)
+    "scrub_s": 5.0,                # presses this close together scrub one message further back
+}
+
+
+def length_scale_for(speed: float) -> str:
+    """Piper length_scale (str, env passthrough) for a playback speed multiplier."""
+    return f"{1 / float(speed):.3f}"
+
+
+def load_settings(path: str = "") -> dict:
+    d = dict(SETTINGS_DEFAULTS)
+    try:
+        with open(path or SETTINGS_FILE) as f:
+            d.update({k: v for k, v in json.load(f).items() if k in SETTINGS_DEFAULTS})
+    except (OSError, ValueError, AttributeError):
+        pass
+    return d
+
+
+def save_settings(changes: dict, path: str = "") -> dict:
+    """Merge validated `changes` into the settings file (atomic) and return the result.
+    Unknown voices are ignored (a name is a file under PIPER_VOICES, never a path)."""
+    d = load_settings(path)
+    v = changes.get("voice")
+    if isinstance(v, str) and os.path.basename(v) == v and v.startswith("pl_PL-"):
+        d["voice"] = v
+    for k, lo, hi in (("speed", 0.8, 3.0), ("scrub_s", 1.0, 30.0)):
+        try:
+            d[k] = min(hi, max(lo, float(changes[k])))
+        except (KeyError, TypeError, ValueError):
+            pass
+    for k in ("keys", "swap"):
+        if isinstance(changes.get(k), bool):
+            d[k] = changes[k]
+    tmp = (path or SETTINGS_FILE) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f)
+    os.replace(tmp, path or SETTINGS_FILE)
+    return d
+
+
 # ── Synth config defaults (S5 — were duplicated server↔stream) ──────────────
-PIPER_VOICE = os.environ.get("PIPER_VOICE", "pl_PL-gosia-medium")
+# Env still wins (tests/overrides); otherwise the user's settings. Read at import: every synth
+# process is short-lived and the warm daemon is restarted by the bridge when they change.
+_SETTINGS = load_settings()
+PIPER_VOICE = os.environ.get("PIPER_VOICE") or _SETTINGS["voice"]
 try:
     PIPER_SAMPLE_RATE = int(os.environ.get("PIPER_SAMPLE_RATE", "22050"))
 except ValueError:
     PIPER_SAMPLE_RATE = 22050
-PIPER_LENGTH_SCALE = os.environ.get("PIPER_LENGTH_SCALE", "0.6")  # str (env passthrough)
+PIPER_LENGTH_SCALE = os.environ.get("PIPER_LENGTH_SCALE") or length_scale_for(_SETTINGS["speed"])
 VOICE_TYPER_STALE_S = 3.0  # keyboard heartbeats ≤1s; ignore a flag older than this (crashed)
 
 

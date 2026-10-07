@@ -11,5 +11,6 @@ source "$HOME/.claude/hooks/czytaj/czytaj-env.sh" 2>/dev/null || exit 0   # SSOT
 # precache — so skipping when no project reads is a pure win. stop.sh is intentionally NOT
 # changed: it must reach stop.py for keepwarm precache regardless of mode.)
 compgen -G "$CZYTAJ_FLAG_DIR"/*.flag >/dev/null 2>&1 || exit 0
+exit 0   # reading is on demand only (2026-10-07) — pre-tool-use.py no longer speaks; skip the python start
 
 exec python3 "$(dirname "$0")/pre-tool-use.py"
