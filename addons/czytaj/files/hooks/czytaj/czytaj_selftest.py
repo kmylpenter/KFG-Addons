@@ -354,6 +354,48 @@ _said, _pre = _run_hooks(False)
 check("auto-read: reading OFF → no hook speaks by itself", _said == [], f"spoke from {_said}")
 check("auto-read: Stop hook pre-renders for Vol+ (reading OFF)", _pre == ["/tmp/t.jsonl"], str(_pre))
 
+# 12. Vol+ reads the tmux window ON SCREEN, not another session's (Kamil 2026-10-10) -------------
+# Regression: a DETACHED background session (auto-wznow) has its own active window, so the
+# "11" (pane_active+window_active) match hit it first → Termux home → wrong window read back.
+# Also: a stale tmux-0 socket (plain `tmux` run from PRoot, no server) was picked as the newest
+# socket → empty answer → fallback to an old session marker → another window read back.
+import re as _re
+
+_panes12 = [  # as list-panes -a prints them: sessions alphabetical, auto-wznow before main
+    {"session_name": "auto-wznow", "session_attached": "0", "session_activity": "1790912580",
+     "pane_active": "1", "window_active": "1", "pane_current_path": _speak.TERMUX_HOME},
+    {"session_name": "main", "session_attached": "1", "session_activity": "1791620491",
+     "pane_active": "1", "window_active": "0", "pane_current_path": _speak.TERMUX_HOME + "/projekty/UtilityHub"},
+    {"session_name": "main", "session_attached": "1", "session_activity": "1791620491",
+     "pane_active": "1", "window_active": "1", "pane_current_path": _speak.TERMUX_HOME + "/projekty/StairsForYou"},
+]
+
+
+def _fake_tmux12(argv, **k):
+    if "/tmux-0/" in argv[argv.index("-S") + 1]:   # stale PRoot-uid socket: no server behind it
+        return subprocess.CompletedProcess(argv, 1, stdout="", stderr="no server running")
+    fmt = argv[argv.index("-F") + 1]
+    out = "\n".join(_re.sub(r"#\{(\w+)\}", lambda m, _p=p: _p.get(m.group(1), ""), fmt) for p in _panes12)
+    return subprocess.CompletedProcess(argv, 0, stdout=out + "\n", stderr="")
+
+
+_o12 = (_speak.subprocess.run, _speak._transcript_for_project)
+_speak.subprocess.run = _fake_tmux12
+_speak._transcript_for_project = lambda p: p
+_real_isfile = os.path.isfile
+_speak.os.path.isfile = lambda p: p.endswith("/bin/tmux") or _real_isfile(p)
+import glob as _glob12
+_real_glob = _glob12.glob
+_glob12.glob = lambda pat, *a, **k: ["/fake/tmux-0/default", "/fake/tmux-10387/default"] if "tmux-" in pat else _real_glob(pat, *a, **k)
+try:
+    _got12 = _speak._tmux_active_transcript_raw()
+finally:
+    _speak.subprocess.run, _speak._transcript_for_project = _o12[0], _o12[1]
+    _speak.os.path.isfile = _real_isfile
+    _glob12.glob = _real_glob
+check("Vol+ window: live tmux socket + on-screen session win (dead socket, detached session)",
+      _got12 == "/root/projekty/StairsForYou", f"got={_got12!r}")
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")

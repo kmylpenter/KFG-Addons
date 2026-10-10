@@ -1348,23 +1348,38 @@ def _tmux_active_transcript_raw() -> str:
     socks = glob.glob(os.path.join(prefix, "var", "run", "tmux-*", "default"))
     if not socks:
         return ""
-    try:
-        sock = max(socks, key=os.path.getmtime)
-    except OSError:
-        sock = socks[0]
-    try:
-        out = subprocess.run(
-            [tmux_bin, "-S", sock, "list-panes", "-a", "-F",
-             "#{pane_active}#{window_active} #{pane_current_path}"],
-            capture_output=True, text=True, timeout=4,
-        ).stdout
-    except (subprocess.SubprocessError, OSError):
-        return ""
-    path = ""
-    for line in out.splitlines():
-        if line.startswith("11 "):  # pane_active=1 AND window_active=1 → the on-top pane
-            path = line[3:].strip()
+
+    def _mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0.0
+    # Newest socket first, but skip one with NO server behind it: a stale tmux-0 (plain `tmux` run
+    # from PRoot) is newer than the real tmux-10387 and used to blank this probe (2026-10-10).
+    out = ""
+    for sock in sorted(socks, key=_mtime, reverse=True):
+        try:
+            r = subprocess.run(
+                [tmux_bin, "-S", sock, "list-panes", "-a", "-F",
+                 "#{session_attached} #{session_activity} #{pane_active}#{window_active} #{pane_current_path}"],
+                capture_output=True, text=True, timeout=4,
+            )
+        except (subprocess.SubprocessError, OSError):
+            continue
+        if r.returncode == 0 and r.stdout.strip():
+            out = r.stdout
             break
+    # pane_active+window_active ("11") is PER SESSION — a detached background session (e.g.
+    # auto-wznow) has its own "11" pane, which used to win as the first line (2026-10-10: Vol+ in
+    # StairsForYou read another window). Only sessions shown on a client count; newest activity wins.
+    path, best = "", -1
+    for line in out.splitlines():
+        parts = line.split(" ", 3)
+        if len(parts) < 4 or parts[2] != "11" or not parts[0].isdigit() or int(parts[0]) < 1:
+            continue
+        act = int(parts[1]) if parts[1].isdigit() else 0
+        if act > best:
+            path, best = parts[3].strip(), act
     if not path:
         return ""
     if path == home or path.startswith(home + "/"):  # native Termux home → PRoot /root
