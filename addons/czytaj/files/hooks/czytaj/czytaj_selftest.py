@@ -500,6 +500,63 @@ finally:
     _t.sleep(2.5)   # let shutdown() stop each piper-daemon before the dir goes
     _sh.rmtree(_h13, ignore_errors=True)
 
+# 14. A slow-to-answer server is waited for, not cut off (2026-10-10) ---------------------------
+# Live: a fresh generation is bound + PID-written but on PRoot needs a moment to reach accept();
+# the waiting client's 0.3s ping missed it and server_alive() UNLINKED the live server's socket —
+# unreachable for good, the next client spawned another generation (588 "no pong" in one morning).
+_h14 = _tf.mkdtemp(prefix="czh14-", dir="/tmp")
+os.makedirs(os.path.join(_h14, ".claude", "czytaj-flags"))
+_r14 = subprocess.run([sys.executable or "python3", "-c", r'''
+import json, os, socket, sys, threading, time
+sys.path.insert(0, %r)
+import piper_server as ps
+ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(4)
+ps.PID_FILE.write_text(str(os.getpid()))
+def late_accept():
+    time.sleep(0.8)                       # bound + PID written, accept() not reached yet
+    while True:
+        c, _ = s.accept(); c.recv(256); c.sendall(b'{"ok":true}\n'); c.close()
+threading.Thread(target=late_accept, daemon=True).start()
+ok = False
+t0 = time.monotonic()
+while time.monotonic() - t0 < 4 and not ok:
+    ok = ps.server_alive()
+    time.sleep(0.1)
+print(json.dumps({"alive": ok, "sock": ps.SOCKET_PATH.exists()}))
+''' % HOOK_DIR], env={**os.environ, "HOME": _h14}, capture_output=True, text=True, timeout=30)
+try:
+    _o14 = json.loads(_r14.stdout.strip().splitlines()[-1])
+except (ValueError, IndexError):
+    _o14 = {"err": (_r14.stderr or _r14.stdout)[-200:]}
+check("synth server: a slow first pong is waited for, socket kept",
+      _o14.get("alive") is True and _o14.get("sock") is True, str(_o14))
+_sh.rmtree(_h14, ignore_errors=True)
+# A BUSY server (connection accepted, pong late — PRoot under a cold one-shot synth's load) is
+# alive, not dead: calling it dead spawned a rival that SIGTERMed it mid-synth (churn, 12:52-12:56).
+_h14b = _tf.mkdtemp(prefix="czh14b-", dir="/tmp")
+os.makedirs(os.path.join(_h14b, ".claude", "czytaj-flags"))
+_r14b = subprocess.run([sys.executable or "python3", "-c", r'''
+import json, os, socket, sys, threading, time
+sys.path.insert(0, %r)
+import piper_server as ps
+ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(4)
+ps.PID_FILE.write_text(str(os.getpid()))
+def slow():
+    while True:
+        c, _ = s.accept(); c.recv(256); time.sleep(3); c.sendall(b'{"ok":true}\n'); c.close()
+threading.Thread(target=slow, daemon=True).start()
+print(json.dumps({"alive": ps.server_alive(), "sock": ps.SOCKET_PATH.exists()}))
+''' % HOOK_DIR], env={**os.environ, "HOME": _h14b}, capture_output=True, text=True, timeout=30)
+try:
+    _o14b = json.loads(_r14b.stdout.strip().splitlines()[-1])
+except (ValueError, IndexError):
+    _o14b = {"err": (_r14b.stderr or _r14b.stdout)[-200:]}
+check("synth server: busy (late pong) counts as alive, not dead",
+      _o14b.get("alive") is True and _o14b.get("sock") is True, str(_o14b))
+_sh.rmtree(_h14b, ignore_errors=True)
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")

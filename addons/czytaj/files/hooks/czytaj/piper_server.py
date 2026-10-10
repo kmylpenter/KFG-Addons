@@ -69,17 +69,22 @@ def _is_alive(pid: int) -> bool:
     return True
 
 
-def _ping(timeout: float = 0.3) -> bool:
+def _ping(timeout: float = 2.0) -> str:   # 2026-10-10: was 0.3 — a healthy server pongs in ~0.05s;
+    #                                           0.3 misfired on PRoot and recycled LIVE servers
     """Connect AND round-trip a {"ping":1} → {"ok":true}. A bare socket connect (the old
     _can_connect) passed even for a daemon that was bound but WEDGED, so server_alive would
     green-light a dead daemon and every synth silently took the ~3-7s cold path (audit S6).
-    A real pong proves the accept loop is actually servicing requests."""
+    A real pong proves the accept loop is actually servicing requests.
+    Returns "ok" | "busy" (connected, no pong within timeout — PRoot under load) | "down"
+    (no socket / refused / bad reply)."""
     if not SOCKET_PATH.exists():
-        return False
+        return "down"
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
+    connected = False
     try:
         s.connect(str(SOCKET_PATH))
+        connected = True
         s.sendall(b'{"ping":1}\n\n')
         data = b""
         while b"\n" not in data:
@@ -88,9 +93,11 @@ def _ping(timeout: float = 0.3) -> bool:
                 break
             data += chunk
         resp = json.loads(data.decode("utf-8", "ignore").strip() or "{}")
-        return bool(resp.get("ok"))
+        return "ok" if resp.get("ok") else "down"
+    except socket.timeout:
+        return "busy" if connected else "down"
     except (OSError, json.JSONDecodeError):
-        return False
+        return "down"
     finally:
         try:
             s.close()
@@ -122,16 +129,18 @@ def server_alive() -> bool:
             except OSError:
                 pass
         return False
-    if not _ping():
-        _diag(f"server_alive: pid {pid} alive but no pong → unlink socket")
-        # F19/S6: PID alive but the daemon doesn't pong — socket unreachable (killed -9
-        # mid-bind / stale socket) OR bound-but-wedged. Remove the stale socket so the next
-        # ensure_running rebinds cleanly (recycling a wedged daemon) instead of a client
-        # stalling on a dead path or silently falling back to a ~3-7s cold synth every call.
-        try:
-            SOCKET_PATH.unlink()
-        except OSError:
-            pass
+    state = _ping()
+    if state == "busy":
+        # Connected but the pong is late: PRoot funnels every syscall through one tracer, so a
+        # cold one-shot synth elsewhere can delay a HEALTHY server past the timeout. Busy ≠ dead —
+        # calling it dead spawned a rival that SIGTERMed it mid-synth (churn, 2026-10-10).
+        _diag(f"server_alive: pid {pid} busy (late pong) — treated as alive")
+        return True
+    if state != "ok":
+        # F19/S6: PID alive but unreachable → report not-alive so ensure_running spawns a new
+        # generation, which rebinds the path itself and retires this one. NO unlink here
+        # (2026-10-10): a fresh server that hadn't reached accept() yet lost its socket to it.
+        _diag(f"server_alive: pid {pid} alive but unreachable")
         return False
     return True
 
