@@ -5,7 +5,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _speak import READBACK_CACHE_MAX  # noqa: E402
+from _speak import (  # noqa: E402
+    is_active, is_recording, is_in_call, speak_new_text, READBACK_CACHE_MAX,
+)
 
 
 def main() -> int:
@@ -21,9 +23,11 @@ def main() -> int:
     # watcher's keepwarm sentinel keeps FLAG_DIR non-empty (so stop.sh still reaches us) and keeps the
     # daemon warm. Fire-and-forget; precache_turn skips already-cached turns, so it only synths the new one.
     _precache_latest(transcript)
-    # No AUTO-READ (Kamil 2026-10-07): reading is on demand only — a volume key plays the
-    # pre-rendered turn. /czytaj ON just arms the keys; nothing is spoken here.
-    return 0
+    # AUTO-READ only in the window where /czytaj is ON (Kamil 2026-10-10; restores the pre-10-07
+    # behaviour) — gated on the per-project flag keyed by the hook's cwd + recording/call.
+    if not is_active(cwd) or is_recording() or is_in_call():
+        return 0
+    return speak_new_text(transcript, kill_previous=True, cwd=cwd)
 
 
 def _precache_latest(transcript_path: str) -> None:

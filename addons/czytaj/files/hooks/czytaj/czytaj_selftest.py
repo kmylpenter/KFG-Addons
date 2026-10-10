@@ -145,12 +145,13 @@ vw._czytaj_audio_playing = lambda: False
 vw._read_back = lambda: fired.append("up")
 vw._toggle_pause = lambda: fired.append("down")
 try:
-    # 2026-10-06: keys are a remote for READING MODE — with /czytaj OFF everywhere they only change volume.
+    # 2026-10-10 (Kamil): read-back ON DEMAND works with /czytaj OFF everywhere too — /czytaj only
+    # switches AUTO-reading; a volume key in Termux always reads (supersedes the 2026-10-06 OFF gate).
     fired.clear()
     vw._fg_cache.update({"t": 0.0, "v": False, "dead_t": None})
     vw._run_shell = lambda *a, **k: (False, "")
     vw._gated_action(vw.KEY_VOLUMEUP)
-    check("volume gate: /czytaj OFF everywhere → skip", fired == [], f"fired={fired}")
+    check("volume gate: /czytaj OFF everywhere → still reads on demand", fired == ["up"], f"fired={fired}")
     open(os.path.join(vw.FLAG_DIR, "selftestproject.flag"), "w").close()   # /czytaj ON in one project
     for label, probe, want in (
         ("dead probe (Shizuku gone) → act", (False, ""), ["up"]),
@@ -255,7 +256,10 @@ vw._stop_termux_audio = lambda: _calls9.append(("stop-termux",))
 try:
     vw._last_read_ts = -1e9
     st, body = vw._press("up", "termux", False)
-    check("bridge: /czytaj OFF → 204", st == 204 and not _calls9, f"{st} {_calls9}")
+    check("bridge: /czytaj OFF → Vol+ in Termux still 200 + wav", st == 200 and body == b"RIFF-test-wav",
+          f"{st} {_calls9}")
+    _calls9.clear()
+    vw._last_read_ts = -1e9
     open(os.path.join(_fd9, "proj.flag"), "w").close()
     st, body = vw._press("up", "termux", False)
     check("bridge: Vol+ in Termux → 200 + wav of n=1", st == 200 and body == b"RIFF-test-wav"
@@ -309,9 +313,9 @@ k2 = _speak._readback_key("tekst", {**cz.SETTINGS_DEFAULTS, "voice": "pl_PL-dark
 check("settings: read-back cache keyed by voice", k1 != k2, f"{k1[:8]} {k2[:8]}")
 _sh.rmtree(os.path.dirname(_sf), ignore_errors=True)
 
-# 11. Reading is ON DEMAND only (Kamil 2026-10-07) ---------------------------------------------
-# Nothing speaks by itself any more — not the Stop hook, not PreToolUse — even with /czytaj ON.
-# Read-backs come only from a volume key. The Stop hook still PRE-RENDERS (fast Vol+).
+# 11. /czytaj ON = AUTO-read in that window; OFF = silent until a volume key (Kamil 2026-10-10) ----
+# Supersedes 2026-10-07 "on demand only". The Stop + PreToolUse hooks speak by themselves only where
+# /czytaj is ON (is_active(cwd)); the Stop hook pre-renders for Vol+ regardless of mode.
 import importlib.util as _iu
 import io as _io
 
@@ -323,23 +327,32 @@ def _load_hook(name):
     return m
 
 
-_said, _pre = [], []
-for hook in ("stop.py", "pre-tool-use.py"):
-    m = _load_hook(hook)
-    m.is_active = lambda *a, **k: True
-    m.is_recording = lambda: False
-    m.is_in_call = lambda: False
-    m.speak_new_text = lambda *a, **k: _said.append(hook) or 0
-    if hasattr(m, "_precache_latest"):
-        m._precache_latest = lambda t: _pre.append(t)
-    _stdin = sys.stdin
-    sys.stdin = _io.StringIO(json.dumps({"cwd": "/root/projekty/X", "transcript_path": "/tmp/t.jsonl"}))
-    try:
-        m.main()
-    finally:
-        sys.stdin = _stdin
-check("on-demand only: no hook speaks by itself (reading ON)", _said == [], f"spoke from {_said}")
-check("on-demand only: Stop hook still pre-renders for Vol+", _pre == ["/tmp/t.jsonl"], str(_pre))
+def _run_hooks(active):
+    said, pre = [], []
+    for hook in ("stop.py", "pre-tool-use.py"):
+        m = _load_hook(hook)
+        m.is_active = lambda *a, **k: active
+        m.is_recording = lambda: False
+        m.is_in_call = lambda: False
+        m.speak_new_text = lambda *a, _h=hook, **k: said.append(_h) or 0
+        if hasattr(m, "_precache_latest"):
+            m._precache_latest = lambda t: pre.append(t)
+        _stdin = sys.stdin
+        sys.stdin = _io.StringIO(json.dumps({"cwd": "/root/projekty/X", "transcript_path": "/tmp/t.jsonl"}))
+        try:
+            m.main()
+        finally:
+            sys.stdin = _stdin
+    return said, pre
+
+
+_said, _pre = _run_hooks(True)
+check("auto-read: reading ON → Stop + PreToolUse speak", sorted(_said) == ["pre-tool-use.py", "stop.py"],
+      f"spoke from {_said}")
+check("auto-read: Stop hook pre-renders for Vol+ (reading ON)", _pre == ["/tmp/t.jsonl"], str(_pre))
+_said, _pre = _run_hooks(False)
+check("auto-read: reading OFF → no hook speaks by itself", _said == [], f"spoke from {_said}")
+check("auto-read: Stop hook pre-renders for Vol+ (reading OFF)", _pre == ["/tmp/t.jsonl"], str(_pre))
 
 print()
 if FAILS:

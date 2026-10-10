@@ -452,11 +452,8 @@ def _gated_action(code: int) -> None:
     (~1.8s) never blocks key detection.
     No probe available (Shizuku withdrawn, 2026-10-05) → trust the accessibility flag: the
     service itself only writes it while Termux is foreground AND the keyguard is unlocked."""
-    if not _reading_on():
-        # 2026-10-06 (Kamil): the keys are a remote for READING MODE — with /czytaj OFF everywhere
-        # they only change the volume, never start a read-back.
-        _log("VOLKEY", "skip", "/czytaj OFF (volume-only)")
-        return
+    # No /czytaj gate (Kamil 2026-10-10): /czytaj switches AUTO-reading only; an on-demand read-back
+    # from a volume key in Termux works with reading OFF everywhere too.
     st = load_settings()
     if not st["keys"]:
         _log("VOLKEY", "skip", "keys OFF in settings")
@@ -485,7 +482,7 @@ def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
     do. fg = termux | locked | other (as the keyboard sees it); app_playing = its own player is
     on. Returns (200, wav) → keyboard plays it; 202 → cache miss, Termux synthesises+plays it;
     204 → nothing for the keyboard to play (volume-only, or handled here, e.g. a pause)."""
-    if not _reading_on() or not load_settings()["keys"]:
+    if not load_settings()["keys"]:   # no /czytaj gate: on-demand works with reading OFF (2026-10-10)
         return 204, b""
     if fg != "termux" and not (app_playing or _czytaj_audio_playing()):
         return 204, b""   # locked / other app and nothing reading → the press was only for volume
