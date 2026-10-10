@@ -98,6 +98,15 @@ def _ping(timeout: float = 0.3) -> bool:
             pass
 
 
+def _diag(msg: str) -> None:
+    """One line in czytaj.log for each reason a client respawns the server (churn diagnosis)."""
+    try:
+        with open(cz.LOG_FILE, "a") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} SERVER {msg}\n")
+    except OSError:
+        pass
+
+
 def server_alive() -> bool:
     if not PID_FILE.exists():
         return False
@@ -106,6 +115,7 @@ def server_alive() -> bool:
     except (OSError, ValueError):
         return False
     if not _is_alive(pid):
+        _diag(f"server_alive: pid {pid} dead")
         for p in (SOCKET_PATH, PID_FILE):
             try:
                 p.unlink()
@@ -113,6 +123,7 @@ def server_alive() -> bool:
                 pass
         return False
     if not _ping():
+        _diag(f"server_alive: pid {pid} alive but no pong → unlink socket")
         # F19/S6: PID alive but the daemon doesn't pong — socket unreachable (killed -9
         # mid-bind / stale socket) OR bound-but-wedged. Remove the stale socket so the next
         # ensure_running rebinds cleanly (recycling a wedged daemon) instead of a client
@@ -150,28 +161,20 @@ def ensure_running() -> bool:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         if server_alive():
             return True
-        pid = os.fork()
-        if pid == 0:
-            os.setsid()
-            pid2 = os.fork()
-            if pid2 == 0:
-                try:
-                    with open(os.devnull, "rb") as nin, open(os.devnull, "wb") as nout:
-                        os.dup2(nin.fileno(), 0)
-                        os.dup2(nout.fileno(), 1)
-                        os.dup2(nout.fileno(), 2)
-                except OSError:
-                    pass
-                try:
-                    os.closerange(3, 1024)
-                except OSError:
-                    pass
-                run_server()
-                os._exit(0)
-            os._exit(0)
-        os.waitpid(pid, 0)
-        for _ in range(50):
-            if server_alive():
+        # A FRESH process (exec), not a fork of the caller (2026-10-10): a forked server kept the
+        # client's argv (precache.py / piper_stream.py / python -c), so the audio-client
+        # `pkill -f 'python.*piper_stream\.py'` (UPS hook every turn, /czytaj OFF) killed the warm
+        # server too → a cold re-spawn per turn. As `piper_server.py _serve` it is also identifiable.
+        try:
+            subprocess.Popen(
+                [sys.executable or "python3", os.path.abspath(__file__), "_serve"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, close_fds=True,
+            )
+        except OSError:
+            return False
+        for _ in range(150):   # ≤15s: a fresh process imports + loads the model (~6s measured on PRoot);
+            if server_alive():  # giving up early only buys the ~18-48s cold one-shot instead
                 return True
             time.sleep(0.1)
         return False
@@ -276,6 +279,27 @@ def _wav_out_safe(wav_out: str) -> bool:
     return False
 
 
+def _retire_generation(pid: int) -> bool:
+    """SIGTERM the server generation this one replaces (2026-10-10). It no longer owns the socket
+    path, and its own superseded-reap only fires after SERVER_IDLE_TIMEOUT_S idle — in practice 5
+    generations piled up, each pinning a ~86MB piper-daemon. Guarded against PID reuse: only a
+    process running piper_server.py is signalled."""
+    if pid <= 0 or pid == os.getpid() or not _is_alive(pid):
+        return False
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmd = f.read().replace(b"\0", b" ").decode("utf-8", "ignore")
+    except OSError:
+        return False
+    if "piper_server.py" not in cmd:   # only a server generation (exec'd as piper_server.py)
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    return True
+
+
 def run_server() -> None:
     try:
         RUN_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -359,7 +383,18 @@ def run_server() -> None:
         sock.listen(4)
         sock.settimeout(SERVER_IDLE_TIMEOUT_S)
 
+        try:
+            prev = int(PID_FILE.read_text().strip())
+        except (OSError, ValueError):
+            prev = 0
         PID_FILE.write_text(str(os.getpid()))
+        retired = _retire_generation(prev)   # AFTER the PID write, so its shutdown() won't unlink our paths
+        try:   # one line per generation: makes server churn visible in czytaj.log
+            with open(cz.LOG_FILE, "a") as _lf:
+                _lf.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} SERVER gen-start prev={prev} "
+                          f"retired={retired}\n")
+        except OSError:
+            pass
 
         signal.signal(signal.SIGTERM, shutdown)
         signal.signal(signal.SIGINT, shutdown)
@@ -501,6 +536,10 @@ if __name__ == "__main__":
         # daemon a client's ensure_running already started (the old `serve` path
         # bound unconditionally and stole the socket).
         ensure_running()
+        sys.exit(0)
+    if len(sys.argv) > 1 and sys.argv[1] == "_serve":
+        # Internal: the server body, exec'd ONLY by ensure_running() while it holds LOCK_FILE.
+        run_server()
         sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
         # SD2: the old bare run_server() bound the socket with NO lock, so a stray

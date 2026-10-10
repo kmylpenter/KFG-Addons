@@ -172,15 +172,36 @@ finally:
 # The UserPromptSubmit hook intercepts the /czytaj prompt, runs toggle.sh and BLOCKS the prompt
 # (decision:block) so Claude never answers. A message merely mentioning /czytaj must pass through.
 import tempfile as _tf
+
+
+def _sandbox_home(prefix):
+    """Isolated HOME (hooks symlinked) + PATH shims, so the toggle/UPS hooks under test touch
+    NOTHING live (2026-10-10: the selftest's global `pkill` of piper_stream/paplay/media-player
+    cut the user's read-back mid-play, and a real-HOME ON/OFF reset the active-session marker)."""
+    h = _tf.mkdtemp(prefix=prefix)
+    os.makedirs(os.path.join(h, ".claude", "czytaj-flags"))
+    os.symlink(os.path.dirname(HOOK_DIR), os.path.join(h, ".claude", "hooks"))
+    b = os.path.join(h, "bin")
+    os.makedirs(b)
+    for name, body in (("pkill", "exit 1"), ("nohup", "exit 0"), ("termux-media-player", "exit 0")):
+        with open(os.path.join(b, name), "w") as f:
+            f.write(f"#!/bin/sh\n{body}\n")
+        os.chmod(os.path.join(b, name), 0o755)
+    return h, b
+
+
 _proj = _tf.mkdtemp(prefix="czytaj-selftest-proj-")
+_home7, _bin7 = _sandbox_home("czytaj-selftest-home7-")
 # key from the temp dir itself (NOT cz.project_key(): that prefers $CLAUDE_PROJECT_DIR, i.e. the
 # REAL session project — the first draft of this test toggled the user's own flag).
-_flag = os.path.join(cz.FLAG_DIR, hashlib.sha1(os.path.realpath(_proj).encode()).hexdigest() + ".flag")
+_flag = os.path.join(_home7, ".claude", "czytaj-flags",
+                     hashlib.sha1(os.path.realpath(_proj).encode()).hexdigest() + ".flag")
 _ups = os.path.join(HOOK_DIR, "user-prompt-submit.sh")
 
 
 def _ups_run(prompt):
-    env = {**os.environ, "CLAUDE_PROJECT_DIR": _proj}
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": _proj, "HOME": _home7,
+           "PATH": _bin7 + os.pathsep + os.environ["PATH"]}
     return subprocess.run(["bash", _ups], input=json.dumps({"prompt": prompt, "transcript_path": ""}),
                           capture_output=True, text=True, timeout=30, env=env, cwd=_proj).stdout
 
@@ -204,6 +225,8 @@ finally:
     if os.path.isfile(_flag):
         os.remove(_flag)   # our own temp project's flag
     os.rmdir(_proj)
+    import shutil as _sh7
+    _sh7.rmtree(_home7, ignore_errors=True)   # our own mkdtemp sandbox
 
 # 8. /czytaj OFF of the LAST reading project stays under the hook timeout (2026-10-06) ----------
 # Live bug: toggle.sh's teardown ran `termux-media-player stop` in the FOREGROUND; Termux:API took
@@ -211,12 +234,8 @@ finally:
 # Isolated HOME (hooks symlinked) so FLAG_DIR holds ONLY our flag → the teardown path runs;
 # a PATH shim makes termux-media-player hang like the real one.
 import time as _t
-_home = _tf.mkdtemp(prefix="czytaj-selftest-home-")
-os.makedirs(os.path.join(_home, ".claude", "czytaj-flags"))
-os.symlink(os.path.dirname(HOOK_DIR), os.path.join(_home, ".claude", "hooks"))
-_bin = os.path.join(_home, "bin")
-os.makedirs(_bin)
-with open(os.path.join(_bin, "termux-media-player"), "w") as f:
+_home, _bin = _sandbox_home("czytaj-selftest-home-")   # + pkill/nohup shims: no live process is hit
+with open(os.path.join(_bin, "termux-media-player"), "w") as f:   # overrides the no-op shim: hangs
     f.write("#!/bin/sh\nsleep 20\n")
 os.chmod(os.path.join(_bin, "termux-media-player"), 0o755)
 _p2 = _tf.mkdtemp(prefix="czytaj-selftest-proj2-")
@@ -271,6 +290,10 @@ try:
     vw.readback_cached_wav = lambda n: (_calls9.append(("wav", n)) or "")
     vw._last_read_ts = -1e9
     st, body = vw._press("up", "termux", False)
+    for _ in range(40):   # the MISS synth is started on a THREAD — wait for it, or it lands in the next check
+        if ("synth", 1) in _calls9:
+            break
+        _t.sleep(0.05)
     check("bridge: cache MISS → 202 + Termux-side synth", st == 202 and ("synth", 1) in _calls9, f"{st} {_calls9}")
     _calls9.clear()
     st, body = vw._press("up", "locked", False)
@@ -395,6 +418,65 @@ finally:
     _glob12.glob = _real_glob
 check("Vol+ window: live tmux socket + on-screen session win (dead socket, detached session)",
       _got12 == "/root/projekty/StairsForYou", f"got={_got12!r}")
+
+# 13. A superseded synth server exits at once, not after 30 min idle (2026-10-10) ---------------
+# Live: 5 server generations piled up (one per missed ping), each pinning a ~86MB piper-daemon and
+# CPU, and the cold one-shot fallback timed out at 60s. A new generation must retire the old one.
+# Real daemon, isolated short HOME (AF_UNIX path limit is 108 chars).
+import signal as _sig
+_h13 = _tf.mkdtemp(prefix="czh13-", dir="/tmp")
+os.makedirs(os.path.join(_h13, ".claude", "czytaj-flags"))
+open(os.path.join(_h13, ".claude", "czytaj-flags", "x.flag"), "w").close()
+_env13 = {**os.environ, "HOME": _h13}
+_pidf13 = os.path.join(_h13, ".cache", "czytaj", "piper-server", "server.pid")
+_srv = os.path.join(HOOK_DIR, "piper_server.py")
+
+
+def _pid13():
+    try:
+        return int(open(_pidf13).read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def _alive13(p):
+    try:
+        os.kill(p, 0)
+        return True
+    except OSError:
+        return False
+
+
+_a13 = _b13 = 0
+try:
+    # Generation A spawned by a CLIENT (as precache/piper_stream do). It must run as its own
+    # piper_server.py process: a fork() inherited the client's argv, so the audio-client
+    # `pkill -f 'python.*piper_stream\.py'` (UPS hook every turn, /czytaj OFF) killed the server too.
+    subprocess.run([sys.executable or "python3", "-c",
+                    "import sys; sys.path.insert(0, %r); import piper_server; piper_server.ensure_running()" % HOOK_DIR],
+                   env=_env13, timeout=60)
+    _a13 = _pid13()
+    try:
+        _cmd13 = open(f"/proc/{_a13}/cmdline", "rb").read().replace(b"\0", b" ").decode()
+    except OSError:
+        _cmd13 = ""
+    check("synth server: runs as piper_server.py, not under the spawning client's argv",
+          "piper_server.py" in _cmd13 and "-c" not in _cmd13.split(), f"pid={_a13} cmd={_cmd13[:90]!r}")
+    os.unlink(os.path.join(_h13, ".cache", "czytaj", "piper-server", "server.sock"))   # = a missed ping
+    subprocess.run([sys.executable or "python3", _srv, "start"], env=_env13, timeout=60)
+    _b13 = _pid13()
+    _t13 = _t.monotonic()
+    while _a13 and _alive13(_a13) and _t.monotonic() - _t13 < 8:
+        _t.sleep(0.2)
+    check("synth server: a superseded generation exits (no orphan daemon)",
+          _a13 > 0 and _b13 > 0 and _a13 != _b13 and not _alive13(_a13),
+          f"old={_a13} alive={_alive13(_a13) if _a13 else '-'} new={_b13}")
+finally:
+    for _p in (_a13, _b13):
+        if _p and _alive13(_p):
+            os.kill(_p, _sig.SIGTERM)
+    _t.sleep(2.5)   # let shutdown() stop each piper-daemon before the dir goes
+    _sh.rmtree(_h13, ignore_errors=True)
 
 print()
 if FAILS:
