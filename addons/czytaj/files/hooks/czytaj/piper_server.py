@@ -96,6 +96,10 @@ def _ping(timeout: float = 2.0) -> str:   # 2026-10-10: was 0.3 — a healthy se
         return "ok" if resp.get("ok") else "down"
     except socket.timeout:
         return "busy" if connected else "down"
+    except BlockingIOError:
+        # EAGAIN on connect = the listen backlog is FULL: the server is alive but swamped
+        # (several clients at once while PRoot is slow) — overload, not death (2026-10-10).
+        return "busy"
     except (OSError, json.JSONDecodeError):
         return "down"
     finally:
@@ -389,7 +393,7 @@ def run_server() -> None:
             os.chmod(str(SOCKET_PATH), 0o600)
         except OSError:
             pass
-        sock.listen(4)
+        sock.listen(64)   # 2026-10-10: was 4 — precache from several windows + Vol+ overflowed it
         sock.settimeout(SERVER_IDLE_TIMEOUT_S)
 
         try:

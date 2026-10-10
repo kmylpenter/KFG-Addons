@@ -556,6 +556,38 @@ except (ValueError, IndexError):
 check("synth server: busy (late pong) counts as alive, not dead",
       _o14b.get("alive") is True and _o14b.get("sock") is True, str(_o14b))
 _sh.rmtree(_h14b, ignore_errors=True)
+# A server whose listen backlog is FULL (several clients at once while it is slow) refuses new
+# connects instantly with EAGAIN — that is overload, not death (live 2026-10-10 17:30: 405
+# "unreachable" while the server was alive → rivals spawned, synths fell to the cold one-shot).
+_h14c = _tf.mkdtemp(prefix="czh14c-", dir="/tmp")
+os.makedirs(os.path.join(_h14c, ".claude", "czytaj-flags"))
+_r14c = subprocess.run([sys.executable or "python3", "-c", r'''
+import json, os, socket, sys
+sys.path.insert(0, %r)
+import piper_server as ps
+ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(1)   # never accepts
+ps.PID_FILE.write_text(str(os.getpid()))
+held = []
+for _ in range(8):                      # fill the backlog
+    c = socket.socket(socket.AF_UNIX); c.setblocking(False)
+    try:
+        c.connect(str(ps.SOCKET_PATH)); held.append(c)
+    except OSError:
+        break
+print(json.dumps({"alive": ps.server_alive(), "sock": ps.SOCKET_PATH.exists()}))
+''' % HOOK_DIR], env={**os.environ, "HOME": _h14c}, capture_output=True, text=True, timeout=30)
+try:
+    _o14c = json.loads(_r14c.stdout.strip().splitlines()[-1])
+except (ValueError, IndexError):
+    _o14c = {"err": (_r14c.stderr or _r14c.stdout)[-200:]}
+check("synth server: full listen backlog (EAGAIN) counts as busy, not dead",
+      _o14c.get("alive") is True and _o14c.get("sock") is True, str(_o14c))
+_sh.rmtree(_h14c, ignore_errors=True)
+_ps_src = open(os.path.join(HOOK_DIR, "piper_server.py")).read()
+check("synth server: listen backlog sized for many concurrent clients (>=32)",
+      any(int(m) >= 32 for m in __import__("re").findall(r"sock\.listen\((\d+)\)", _ps_src)),
+      str(__import__("re").findall(r"sock\.listen\((\d+)\)", _ps_src)))
 
 print()
 if FAILS:
