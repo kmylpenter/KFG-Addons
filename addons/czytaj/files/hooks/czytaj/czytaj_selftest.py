@@ -183,7 +183,8 @@ def _sandbox_home(prefix):
     os.symlink(os.path.dirname(HOOK_DIR), os.path.join(h, ".claude", "hooks"))
     b = os.path.join(h, "bin")
     os.makedirs(b)
-    for name, body in (("pkill", "exit 1"), ("nohup", "exit 0"), ("termux-media-player", "exit 0")):
+    for name, body in (("pkill", 'echo "$*" >> "$HOME/pkill.log"; exit 1'), ("nohup", "exit 0"),
+                       ("termux-media-player", "exit 0")):
         with open(os.path.join(b, name), "w") as f:
             f.write(f"#!/bin/sh\n{body}\n")
         os.chmod(os.path.join(b, name), 0o755)
@@ -215,6 +216,12 @@ try:
     except (ValueError, KeyError) as e:
         _ctx = f"<invalid: {e!r}>"
     check("UPS context JSON valid when reading ON", _ctx.startswith("TRYB CZYTANIA"), _ctx[:80])
+    # 2026-10-10: ONE pkill per audio-client sweep — each pkill scans /proc (~1.1s on PRoot), and
+    # the old per-pattern loop cost ~4.5s on every prompt while reading ON (and ~10s for /czytaj OFF).
+    _pk = os.path.join(_home7, "pkill.log")
+    _calls7 = open(_pk).read().splitlines() if os.path.isfile(_pk) else []
+    check("UPS (reading ON): one pkill sweeps every audio client",
+          len(_calls7) == 1 and all(pt in _calls7[0] for pt in cz.AUDIO_CLIENT_PATS), str(_calls7))
     out = _ups_run("<command-message>czytaj</command-message>\n<command-name>/czytaj</command-name>")
     check("/czytaj OFF (expanded form): blocked + flag cleared", '"decision": "block"' in out.replace('":"', '": "')
           and not os.path.isfile(_flag), out.strip()[:120])
@@ -251,6 +258,21 @@ except subprocess.TimeoutExpired:
 _dt = _t.monotonic() - _t0
 check("/czytaj OFF (last project) answers < 8s with a block", _dt < 8 and '"decision":"block"' in _out,
       f"{_dt:.1f}s out={_out.strip()[:80]}")
+_pk8 = os.path.join(_home, "pkill.log")
+_calls8 = open(_pk8).read().splitlines() if os.path.isfile(_pk8) else []
+check("/czytaj OFF teardown: one pkill sweeps every audio client",
+      len(_calls8) == 1 and all(pt in _calls8[0] for pt in cz.AUDIO_CLIENT_PATS), str(_calls8))
+_sp_run = _speak.subprocess.run
+_calls_py = []
+_speak.subprocess.run = lambda argv, *a, **k: (_calls_py.append(argv)
+                                               or subprocess.CompletedProcess(argv, 1, stdout="", stderr=""))
+try:
+    _speak._kill_audio_chain()   # runs before EVERY Vol+ read-back
+finally:
+    _speak.subprocess.run = _sp_run
+_pk_py = [c for c in _calls_py if c and c[0] == "pkill"]
+check("Vol+ audio stop: one pkill sweeps every audio client",
+      len(_pk_py) == 1 and all(pt in _pk_py[0][-1] for pt in cz.AUDIO_CLIENT_PATS), str(_pk_py))
 subprocess.run(["pkill", "-f", _bin], capture_output=True)   # reap our own sleeping shim
 import shutil as _sh
 _sh.rmtree(_home, ignore_errors=True)

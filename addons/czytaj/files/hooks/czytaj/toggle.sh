@@ -27,9 +27,9 @@ if [ -f "$FLAG" ]; then
     # piper_server/piper-daemon and NOT `rm -rf RUN_DIR`: the warm daemon is kept alive on
     # purpose for always-on VolumeUp read-back (keepwarm intent, audit 2026-06-15). GLOBAL-KEYS:
     # the volume_watcher + its readers are likewise DELIBERATELY left running (always-on remote).
-    for pat in "${CZYTAJ_AUDIO_CLIENT_PATS[@]}"; do   # M13: SSOT — defined in czytaj-env.sh
-      pkill -9 -f "$pat" >/dev/null 2>&1               # (termux-media-player too — redundant with the stop above, harmless)
-    done
+    # M13: SSOT — CZYTAJ_AUDIO_CLIENT_PATS in czytaj-env.sh. ONE pkill with the patterns as an ERE
+    # alternation (2026-10-10): each pkill scans /proc, ~1.1s on PRoot — the per-pattern loop cost ~4.5s.
+    pkill -9 -f "$(IFS='|'; printf '%s' "${CZYTAJ_AUDIO_CLIENT_PATS[*]}")" >/dev/null 2>&1
     rm -f "$CZYTAJ_PAUSE_FLAG"   # F40: clear a stale global pause
     # Termux:API stop can take >10s; foreground it blew the UserPromptSubmit hook timeout (2026-10-06).
     # Backgrounded AFTER the pkill loop (whose set includes termux-media-player) so it survives.

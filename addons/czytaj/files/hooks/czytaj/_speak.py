@@ -758,12 +758,14 @@ def _kill_audio_chain() -> None:
     # F21: anchor piper_stream to its python invocation so the pattern can't also
     # match an editor/grep whose argv contains "piper_stream" (the binaries are
     # specific enough). NEVER matches piper_server — the warm daemon must survive.
-    for pat in AUDIO_CLIENT_PATS:   # M13: SSOT — czytaj_paths.AUDIO_CLIENT_PATS (== czytaj-env.sh)
-        subprocess.run(
-            ["pkill", "-9", "-f", pat],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    # M13: SSOT — czytaj_paths.AUDIO_CLIENT_PATS (== czytaj-env.sh). ONE pkill, patterns as an ERE
+    # alternation (2026-10-10): each pkill scans /proc (~1.1s on PRoot), so the per-pattern loop
+    # delayed every Vol+ read-back by ~4.5s before any audio.
+    subprocess.run(
+        ["pkill", "-9", "-f", "|".join(AUDIO_CLIENT_PATS)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     # paplay leaves audio in PulseAudio sink-input buffer that keeps playing
     # for hundreds of ms after pkill. Forcibly drop all sink-inputs so the
     # buffer is flushed.

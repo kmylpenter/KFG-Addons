@@ -75,9 +75,9 @@ rm -f "$HOOK_TMP"
 # (the bug that made every reply slow). The synth queue flushes itself
 # because paplay is killed and the daemon-to-FIFO write fails fast.
 # F21: anchor piper_stream to its python invocation (don't match editor/grep argv).
-for pat in "${CZYTAJ_AUDIO_CLIENT_PATS[@]}"; do   # M13: SSOT — defined in czytaj-env.sh
-  pkill -9 -f "$pat" 2>/dev/null
-done
+# M13: SSOT — CZYTAJ_AUDIO_CLIENT_PATS in czytaj-env.sh. ONE pkill, patterns as an ERE alternation
+# (2026-10-10): each pkill scans /proc (~1.1s on PRoot); the per-pattern loop cost ~4.5s per prompt.
+pkill -9 -f "$(IFS='|'; printf '%s' "${CZYTAJ_AUDIO_CLIENT_PATS[*]}")" 2>/dev/null
 # Gracefully stop the Android MediaPlayer service (pkill -9 above kills the client process but does
 # NOT reach the playback inside the Termux:API APK). M10: backgrounded so it never blocks the
 # prompt→Claude path. Placed AFTER the pkill loop ON PURPOSE — the M13 client set includes
