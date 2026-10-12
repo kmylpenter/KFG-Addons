@@ -744,6 +744,11 @@ def strip_markdown(text: str) -> str:
     return t.strip()
 
 
+# Longest text spoken in one go. Was 2000 — long replies were cut (Kamil 2026-10-12); piper_stream
+# now speaks long text in chunks, so this is only a safety cap (~12 min of speech).
+SPEAK_MAX_CHARS = 12000
+
+
 def _truncate_to_sentence(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -1058,7 +1063,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
         save_state({"last_uuid": uuid, "spoken_text": full_text})
         return 0
 
-    speakable = _truncate_to_sentence(speakable, 2000)
+    speakable = _truncate_to_sentence(speakable, SPEAK_MAX_CHARS)
 
     if wait_for_recording_grace() or is_in_call() or not is_active(cwd):  # F2: per-project
         return 0
@@ -1246,7 +1251,7 @@ def speak_text_now(text: str, owner: str = "manual", priority: str = "active",
     if not speakable or not any(ch.isalnum() for ch in speakable):
         _log("ACTION", "speak_text_now", "nothing-speakable")
         return False
-    speakable = _truncate_to_sentence(speakable, 2000)
+    speakable = _truncate_to_sentence(speakable, SPEAK_MAX_CHARS)
     if not (os.path.isfile(PIPER_BIN) and os.path.isfile(PIPER_STREAM)):
         _log("ACTION", "speak_text_now", "missing-piper")
         return False
@@ -1611,7 +1616,7 @@ def precache_turn(transcript_path: str, n: int = 1) -> None:
     dst = _readback_cache_path(session, text)
     if not dst:
         return
-    speakable = _truncate_to_sentence(strip_markdown(text or ""), 2000)
+    speakable = _truncate_to_sentence(strip_markdown(text or ""), SPEAK_MAX_CHARS)
     if not speakable or not any(ch.isalnum() for ch in speakable):
         return
     try:

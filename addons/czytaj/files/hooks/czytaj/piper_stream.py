@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import re
 import struct
 import subprocess
 import sys
@@ -249,7 +251,114 @@ def synthesize_one_shot(text: str, out_wav: Path) -> bool:
             pass
 
 
+# Long replies are spoken in CHUNKS (Kamil 2026-10-12): one synth call for a whole long reply
+# delayed the first word by ~30s and hit the daemon's 40s read timeout, so speech was capped at
+# 2000 chars. A short first chunk starts fast; the rest synthesize while it plays (synth is ~4x
+# faster than speech).
+CHUNK_FIRST = 300    # first chunk: ~4s to synthesize → audio starts quickly
+CHUNK_SIZE = 900     # later chunks: well under the daemon's 40s read timeout
+CHUNK_LONG = 1200    # texts longer than this are chunked
+
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def _split_words(s: str, limit: int) -> list[str]:
+    """Split [s] on spaces into pieces ≤ [limit] (a single longer word is cut hard)."""
+    parts: list[str] = []
+    cur = ""
+    for w in s.split(" "):
+        while len(w) > limit:
+            if cur:
+                parts.append(cur)
+                cur = ""
+            parts.append(w[:limit])
+            w = w[limit:]
+        if not cur:
+            cur = w
+        elif len(cur) + 1 + len(w) <= limit:
+            cur += " " + w
+        else:
+            parts.append(cur)
+            cur = w
+    if cur:
+        parts.append(cur)
+    return parts
+
+
+def split_for_speech(text: str, first: int = CHUNK_FIRST, size: int = CHUNK_SIZE) -> list[str]:
+    """Sentence chunks: the first ≤ [first] chars, the rest ≤ [size]. Words are never cut (a
+    sentence longer than the limit splits on spaces). " ".join(chunks) == the whitespace-
+    normalized text."""
+    text = " ".join(text.split())
+    chunks: list[str] = []
+    cur = ""
+    for sentence in _SENTENCE_END.split(text):
+        if not sentence:
+            continue
+        limit = first if not chunks else size
+        if cur and len(cur) + 1 + len(sentence) <= limit:
+            cur += " " + sentence
+            continue
+        if cur:
+            chunks.append(cur)
+            cur = ""
+            limit = size
+        if len(sentence) <= limit:
+            cur = sentence
+        else:
+            parts = _split_words(sentence, limit)
+            chunks.extend(parts[:-1])
+            cur = parts[-1]
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def _join_wavs(parts: list[Path], out_wav: Path) -> bool:
+    """Concatenate same-format wavs into [out_wav]."""
+    try:
+        with wave.open(str(parts[0]), "rb") as w0:
+            params = w0.getparams()
+        with wave.open(str(out_wav), "wb") as out:
+            out.setnchannels(params.nchannels)
+            out.setsampwidth(params.sampwidth)
+            out.setframerate(params.framerate)
+            for p in parts:
+                with wave.open(str(p), "rb") as w:
+                    out.writeframes(w.readframes(w.getnframes()))
+        return True
+    except (wave.Error, OSError, IndexError) as exc:
+        _log("JOIN-FAIL", exc)
+        return False
+
+
+def synthesize_long(text: str, out_wav: Path, synth=None) -> bool:
+    """A long text → ONE wav, synthesized chunk by chunk (each well under the daemon timeout),
+    so the read-back cache holds the whole message. [synth] is injectable for the selftest."""
+    synth = synth or synthesize_warm
+    parts: list[Path] = []
+    try:
+        for i, chunk in enumerate(split_for_speech(text)):
+            part = out_wav.with_name(f"{out_wav.name}.part{i}.wav")
+            parts.append(part)
+            if not synth(chunk, part):
+                return False
+        return bool(parts) and _join_wavs(parts, out_wav)
+    finally:
+        for p in parts:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
 def synthesize_warm(text: str, out_wav: Path) -> bool:
+    if len(text) > CHUNK_LONG:   # one call would hit the 40s daemon timeout → chunk it
+        return synthesize_long(text, out_wav)
+    return _synthesize_warm_one(text, out_wav)
+
+
+def _synthesize_warm_one(text: str, out_wav: Path) -> bool:
     """Synthesise `text` to a playable 16-bit wav via the WARM piper daemon (model
     already loaded → ~0.7s, NO per-call cold start). The daemon emits raw float32, so
     convert it to wav exactly like synthesize_one_shot. Falls back to the cold one-shot
@@ -565,6 +674,106 @@ def _play_cached_wav(path: str) -> int:
     return 0
 
 
+def _save_readback(src: Path) -> None:
+    """Hard-link (or copy) a finished wav to the read-back cache path _speak precomputed
+    (CZYTAJ_SAVE_WAV), atomically — a later VolumeUp on this message is then a cache HIT."""
+    save = os.environ.get("CZYTAJ_SAVE_WAV", "")
+    if not save:
+        return
+    tmp = f"{save}.{os.getpid()}.tmp"
+    try:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        try:
+            os.link(str(src), tmp)
+        except OSError:
+            import shutil
+            shutil.copyfile(str(src), tmp)
+        os.replace(tmp, save)
+        _log("CACHED-READBACK", os.path.basename(save))
+    except OSError as e:
+        _log("CACHE-SAVE-FAIL", repr(e))
+
+
+def _play_chunked(text: str, scratch: Path) -> int:
+    """A long reply: chunk 1 plays while the rest synthesizes in a background thread; chunks play
+    back to back. If playback is cut short (VolumeDown stop, a newer read, dictation) the rest is
+    dropped. Once every chunk exists, they are joined into one wav for the read-back cache."""
+    chunks = split_for_speech(text)
+    _log("CHUNKED n=", len(chunks), "len=", len(text))
+    ready: "queue.Queue[Path | None]" = queue.Queue()
+    stop = threading.Event()
+    parts: list[Path] = []
+    t0 = time.monotonic()
+
+    def produce() -> None:
+        for i, chunk in enumerate(chunks):
+            if stop.is_set():
+                break
+            fd, name = tempfile.mkstemp(suffix=".wav", dir=str(scratch))
+            os.close(fd)
+            part = Path(name)
+            parts.append(part)
+            if not synthesize_warm(chunk, part):
+                _log("CHUNK-SYNTH-FAIL", i)
+                ready.put(None)
+                return
+            if i == 0:
+                _log(f"SYNTH-DONE +{time.monotonic() - t0:.2f}s (first chunk)")
+            ready.put(part)
+        if not stop.is_set() and len(parts) == len(chunks):
+            fd, name = tempfile.mkstemp(suffix=".wav", dir=str(scratch))
+            os.close(fd)
+            whole = Path(name)
+            try:
+                if _join_wavs(parts, whole):
+                    _save_readback(whole)
+            finally:
+                try:
+                    whole.unlink()
+                except OSError:
+                    pass
+
+    producer = threading.Thread(target=produce, daemon=True)
+    producer.start()
+    played = 0
+    try:
+        for i in range(len(chunks)):
+            try:
+                part = ready.get(timeout=120)
+            except queue.Empty:
+                _log("CHUNK-TIMEOUT", i)
+                break
+            if part is None:
+                break
+            _reserve_channel(part)   # same owner → no wait; keeps other windows queued behind us
+            if i == 0:
+                _log(f"CHANNEL-OK +{time.monotonic() - t0:.2f}s")
+                unlock_audio_routing()
+            dur = _wav_duration_s(part)
+            started = time.monotonic()
+            play_blocking(part)
+            played += 1
+            # Stopped early (VolumeDown stop / newer read / dictation) → don't start the next one.
+            # A pause freezes nothing here but only makes the play LONGER, so it never trips this.
+            if _vt_recording() or (dur > 3.0 and time.monotonic() - started < dur - 2.0):
+                _log("CHUNKED interrupted after", played, "of", len(chunks))
+                break
+        else:
+            _log("CHUNKED done", played, "of", len(chunks))
+        return 0 if played else 1
+    finally:
+        stop.set()
+        producer.join(timeout=1)
+        for p in parts:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
 def main() -> int:
     # Read-back CACHE HIT: a pre-synthesised wav path is handed in via env — skip synth
     # entirely and just play it (instant). stdin is /dev/null in this mode.
@@ -670,6 +879,8 @@ def main() -> int:
             _log("EXIT no-android-readable-scratch")  # F11: don't stage a PRoot path
             return 3
         _prune_scratch()  # F34: clear tmp*.wav leaked by a SIGKILL'd prior run
+        if len(text) > CHUNK_LONG:
+            return _play_chunked(text, scratch)
         fd, name = tempfile.mkstemp(suffix=".wav", dir=str(scratch))
         os.close(fd)
         wav = Path(name)
@@ -681,27 +892,9 @@ def main() -> int:
                 # wav to the path _speak precomputed (sha1 of the raw last turn) so a later
                 # VolumeUp on this message is an INSTANT cache HIT instead of a re-synth.
                 # Copy, not move — we still play `wav` below. Best-effort; never blocks audio.
-                _save = os.environ.get("CZYTAJ_SAVE_WAV", "")
-                if _save:
-                    # FD5: hardlink (instant, same FS — no read-into-RAM) so the populate
-                    # completes before a supersede-kill can interrupt it; the link keeps the
-                    # cached wav alive after the source `wav` is unlinked below (same inode).
-                    # Copy only as a cross-FS fallback. Atomic rename via a per-pid tmp.
-                    _tmp = f"{_save}.{os.getpid()}.tmp"
-                    try:
-                        try:
-                            os.unlink(_tmp)
-                        except OSError:
-                            pass
-                        try:
-                            os.link(str(wav), _tmp)
-                        except OSError:
-                            import shutil
-                            shutil.copyfile(str(wav), _tmp)
-                        os.replace(_tmp, _save)
-                        _log("CACHED-READBACK", os.path.basename(_save))
-                    except OSError as e:
-                        _log("CACHE-SAVE-FAIL", repr(e))
+                # FD5: hardlink (instant, same FS) so the populate completes before a
+                # supersede-kill can interrupt it — see _save_readback.
+                _save_readback(wav)
                 # Cross-window QUEUE: wait here until no OTHER window owns the shared
                 # player, then claim it. Same window / free channel → no wait.
                 _reserve_channel(wav)

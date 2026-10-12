@@ -589,6 +589,97 @@ check("synth server: listen backlog sized for many concurrent clients (>=32)",
       any(int(m) >= 32 for m in __import__("re").findall(r"sock\.listen\((\d+)\)", _ps_src)),
       str(__import__("re").findall(r"sock\.listen\((\d+)\)", _ps_src)))
 
+# 15. Long messages are read WHOLE, in chunks (Kamil 2026-10-12) -------------------------------
+# A long reply was cut: speech capped at 2000 chars, and one synth call for the whole text both
+# delays the first word and hits the daemon's 40s read timeout. Now: sentence chunks (a short
+# first one for a fast start), each synthesized separately, played in sequence / joined for cache.
+import wave as _wave
+from pathlib import Path
+_long = " ".join(f"To jest zdanie numer {i}, dosyć długie, żeby tekst był naprawdę spory." for i in range(120))
+_chunks = piper_stream.split_for_speech(_long)
+check("long text: split into sentence chunks that rebuild the text",
+      len(_chunks) > 3 and " ".join(_chunks) == _long, f"{len(_chunks)} chunks")
+check("long text: first chunk short (fast start), others bounded",
+      len(_chunks[0]) <= piper_stream.CHUNK_FIRST and all(len(c) <= piper_stream.CHUNK_SIZE for c in _chunks),
+      f"first={len(_chunks[0])} max={max(len(c) for c in _chunks)}")
+check("long text: no word is cut",
+      all(c[-1] in ".!?…" for c in _chunks[:-1]), str([c[-12:] for c in _chunks[:3]]))
+_word = "słowo " * 400   # no sentence end at all → still split, on spaces
+_wc = piper_stream.split_for_speech(_word.strip())
+check("long text without full stops still splits on word boundaries",
+      len(_wc) > 1 and " ".join(_wc) == _word.strip() and all(len(c) <= piper_stream.CHUNK_SIZE for c in _wc),
+      f"{len(_wc)} chunks")
+
+_calls15 = []
+
+
+def _fake_synth15(text, out):
+    _calls15.append(len(text))
+    with _wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * len(text))   # 1 frame per char → easy to check the join
+    return True
+
+
+_out15 = os.path.join(_tf.mkdtemp(prefix="czytaj-selftest-15-"), "long.wav")
+_ok15 = piper_stream.synthesize_long(_long, Path(_out15), synth=_fake_synth15)
+with _wave.open(_out15, "rb") as _w15:
+    _frames15 = _w15.getnframes()
+check("long text: synthesized chunk by chunk into ONE wav (cache gets the whole message)",
+      _ok15 and len(_calls15) == len(_chunks) and max(_calls15) <= piper_stream.CHUNK_SIZE
+      and _frames15 == sum(len(c) for c in _chunks), f"calls={_calls15[:4]}… frames={_frames15}")
+_sh.rmtree(os.path.dirname(_out15), ignore_errors=True)
+# Chunked PLAYBACK, with fake synth + player (no sound): chunks play in order; a play that ends
+# well before its wav's length (stopped by VolumeDown / a newer read) drops the rest; the whole
+# message lands in the read-back cache.
+_d15 = _tf.mkdtemp(prefix="czytaj-selftest-15p-")
+_played15 = []
+_dur15 = {"s": 1.0}
+
+
+def _fake_synth_p15(text, out):
+    with _wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(1000)
+        w.writeframes(b"\x00\x00" * int(1000 * _dur15["s"]))
+    return True
+
+
+_o15p = (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream.unlock_audio_routing,
+         piper_stream._reserve_channel)
+piper_stream.synthesize_warm = _fake_synth_p15
+piper_stream.play_blocking = lambda p, raw_rate=None: _played15.append(p.name)
+piper_stream.unlock_audio_routing = lambda: None
+piper_stream._reserve_channel = lambda p: None
+_save15 = os.path.join(_d15, "cached.wav")
+os.environ["CZYTAJ_SAVE_WAV"] = _save15
+try:
+    _rc15 = piper_stream._play_chunked(_long, Path(_d15))   # 1-s chunks: "finished" each time
+    _all15 = len(_played15)
+    with _wave.open(_save15, "rb") as _w:                    # a COMPLETE read caches the whole message
+        _cached15 = _w.getnframes()
+    _played15.clear()
+    _dur15["s"] = 10.0                                         # 10-s chunks returning at once = stopped
+    _rc15b = piper_stream._play_chunked(_long, Path(_d15))     # (a stopped read also stops synthesizing)
+finally:
+    (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream.unlock_audio_routing,
+     piper_stream._reserve_channel) = _o15p
+    os.environ.pop("CZYTAJ_SAVE_WAV", None)
+check("chunked playback: every chunk plays, in order",
+      _rc15 == 0 and _all15 == len(_chunks), f"played {_all15}/{len(_chunks)}")
+check("chunked playback: a stop mid-chunk drops the rest",
+      _rc15b == 0 and len(_played15) == 1, f"played {len(_played15)} after stop")
+check("chunked playback: the whole message is cached for Vol+",
+      _cached15 == len(_chunks) * 1000, f"frames={_cached15}")
+check("chunked playback: no chunk files left behind",
+      sorted(os.listdir(_d15)) == ["cached.wav"], str(sorted(os.listdir(_d15))))
+_sh.rmtree(_d15, ignore_errors=True)
+check("speech length cap raised for long replies (was 2000 chars)",
+      _speak.SPEAK_MAX_CHARS >= 10000, str(getattr(_speak, "SPEAK_MAX_CHARS", None)))
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
