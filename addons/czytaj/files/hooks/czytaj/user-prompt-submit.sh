@@ -65,7 +65,7 @@ except Exception as e:
     data = {}
     _log("UPS", "stdin-parse-fail", repr(e))
 mark_active_session(data.get("transcript_path", ""))
-reset_state_atomic()
+reset_state_atomic(data.get("transcript_path", ""))   # this window only
 _log("UPS", "marked-active", os.path.basename(data.get("transcript_path","") or "<none>"))
 PY
 rm -f "$HOOK_TMP"

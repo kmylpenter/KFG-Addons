@@ -616,10 +616,68 @@ def save_state(state: dict) -> None:
             pass
 
 
-def reset_state_atomic() -> None:
-    """Used by UserPromptSubmit hook — atomic empty state replaces non-atomic
-    rm so a still-running Stop hook from the previous turn can't read empty."""
-    save_state({"last_uuid": "", "spoken_text": ""})
+# "Already spoken" is kept PER WINDOW (transcript basename) — Kamil 2026-10-24: it was one record
+# for all windows, so a read in window B overwrote it and window A's next Stop no longer matched
+# and re-read A's whole reply (one reply read 3x in 4 min). Old flat files read as empty.
+_STATE_WINDOWS_MAX = 20
+
+
+def _windows(data: dict) -> dict:
+    w = data.get("windows")
+    return dict(w) if isinstance(w, dict) else {}
+
+
+def load_turn_state(tid: str) -> dict:
+    st = _windows(load_state()).get(tid)
+    return st if isinstance(st, dict) else {"last_uuid": "", "spoken_text": ""}
+
+
+def save_turn_state(tid: str, uuid: str, spoken: str) -> None:
+    """Callers serialize via SPEAK_LOCK (_speak_inner runs under it)."""
+    if isinstance(spoken, str) and len(spoken.encode("utf-8")) > MAX_SPOKEN_TEXT_BYTES:
+        spoken = spoken.encode("utf-8")[-MAX_SPOKEN_TEXT_BYTES:].decode("utf-8", errors="ignore")
+    windows = _windows(load_state())
+    windows[tid] = {"last_uuid": uuid, "spoken_text": spoken, "t": time.time()}
+    if len(windows) > _STATE_WINDOWS_MAX:   # keep the most recently used windows
+        keep = sorted(windows, key=lambda k: windows[k].get("t", 0) if isinstance(windows[k], dict) else 0)
+        for k in keep[:-_STATE_WINDOWS_MAX]:
+            windows.pop(k, None)
+    save_state({"windows": windows})
+
+
+def reset_state_atomic(transcript_path: str = "") -> None:
+    """Used by UserPromptSubmit hook: a new prompt in THIS window clears only its own record
+    (atomic replace, so a still-running Stop hook can't read a torn file). No path → clear all.
+    Takes SPEAK_LOCK so it can't clobber another window's concurrent save."""
+    tid = os.path.basename(transcript_path or "")
+    lock_fd = -1
+    try:
+        lock_fd = os.open(SPEAK_LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break   # best effort: reset anyway rather than block the prompt
+                time.sleep(0.05)
+    except OSError:
+        pass
+    try:
+        if tid:
+            windows = _windows(load_state())
+            windows.pop(tid, None)
+            save_state({"windows": windows})
+        else:
+            save_state({"windows": {}})
+    finally:
+        if lock_fd >= 0:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except OSError:
+                pass
 
 
 def _parse_current_turn(transcript_path: str) -> tuple[str, str, str]:
@@ -1036,7 +1094,8 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
         _log("SKIP", caller, "reason=empty-turn-text")
         return 0
 
-    state = load_state()
+    tid = os.path.basename(transcript_path or "") or "pane"
+    state = load_turn_state(tid)
     already = state.get("spoken_text", "")
     _log("STATE", caller, "uuid=", uuid[:8], "spoken_len=", len(already), "full_len=", len(full_text))
     # Compare by CONTENT, not by UUID. A single turn can emit multiple
@@ -1060,7 +1119,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     # only rules/bullets/pipes/punctuation/emoji collapses to "" or ". . ." noise.
     if not speakable or not any(ch.isalnum() for ch in speakable):
         _log("SKIP", caller, "reason=empty-after-strip")
-        save_state({"last_uuid": uuid, "spoken_text": full_text})
+        save_turn_state(tid, uuid, full_text)
         return 0
 
     speakable = _truncate_to_sentence(speakable, SPEAK_MAX_CHARS)
@@ -1078,7 +1137,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     ).hexdigest()
     if not _ledger_claim(content_hash):
         _log("SKIP", caller, "reason=already-spoken-elsewhere", content_hash[:8])
-        save_state({"last_uuid": uuid, "spoken_text": full_text})
+        save_turn_state(tid, uuid, full_text)
         return 0
 
     # Mark this suffix as "already spoken" BEFORE we kick off playback. If a
@@ -1086,7 +1145,7 @@ def _speak_inner(transcript_path: str, kill_previous: bool, caller: str = "?", c
     # is intentionally lost (the new turn is more important than re-reading
     # the previous one — the user can ask again if needed). Without this,
     # interrupted playback caused the same message to be re-spoken next turn.
-    save_state({"last_uuid": uuid, "spoken_text": full_text})
+    save_turn_state(tid, uuid, full_text)
 
     # Folder announcement: prepend the project name when the reading channel
     # switches context (different folder, or after a pause), so the user hears

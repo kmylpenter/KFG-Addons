@@ -693,6 +693,42 @@ _sh.rmtree(_d15, ignore_errors=True)
 check("speech length cap raised for long replies (was 2000 chars)",
       _speak.SPEAK_MAX_CHARS >= 10000, str(getattr(_speak, "SPEAK_MAX_CHARS", None)))
 
+# 16. "Already spoken" is remembered PER WINDOW (Kamil 2026-10-24: random repeated reads) --------
+# The spoken-text state was ONE file for all windows: window B's read overwrote it, so window A's
+# next Stop no longer matched and re-read A's whole reply (connectiq read 3× in 4 min). Simulated
+# with the real _speak_inner; the ledger claim is the "would speak" probe (returns False = no audio).
+_o16 = (_speak.STATE_FILE, _speak.current_turn_text, _speak._ledger_claim, _speak.is_active,
+        _speak.wait_for_recording_grace, _speak.is_in_call)
+_d16 = _tf.mkdtemp(prefix="czytaj-selftest-16-")
+_texts16 = {"/x/A.jsonl": ("uA", "Odpowiedź z okna A o profilu zegarka."),
+            "/x/B.jsonl": ("uB", "Zupełnie inna odpowiedź z okna B.")}
+_spoke16 = []
+_speak.STATE_FILE = os.path.join(_d16, "state.json")
+_speak.current_turn_text = lambda p: _texts16[p]
+_speak._ledger_claim = lambda h: (_spoke16.append(h) or False)
+_speak.is_active = lambda *a, **k: True
+_speak.wait_for_recording_grace = lambda *a, **k: False
+_speak.is_in_call = lambda: False
+try:
+    _speak._speak_inner("/x/A.jsonl", True, "Stop", "/x")
+    _speak._speak_inner("/x/B.jsonl", True, "Stop", "/x")
+    _n16 = len(_spoke16)
+    _speak._speak_inner("/x/A.jsonl", True, "Stop", "/x")   # A's turn ends again, same text
+    check("auto-read: another window's read does not make this window re-read its reply",
+          _n16 == 2 and len(_spoke16) == 2, f"reads={len(_spoke16)} (expected 2)")
+    _texts16["/x/A.jsonl"] = ("uA2", "Odpowiedź z okna A o profilu zegarka. I nowe zdanie.")
+    _spoke16.clear()
+    _speak._speak_inner("/x/A.jsonl", True, "Stop", "/x")
+    check("auto-read: a window still reads only what is new in its own reply", len(_spoke16) == 1, str(len(_spoke16)))
+    _speak.reset_state_atomic("/x/B.jsonl")                     # a new prompt in window B
+    check("auto-read: a new prompt clears only its own window's memory",
+          _speak.load_turn_state("A.jsonl").get("spoken_text", "").startswith("Odpowiedź z okna A")
+          and _speak.load_turn_state("B.jsonl").get("spoken_text") == "", str(_speak.load_state())[:120])
+finally:
+    (_speak.STATE_FILE, _speak.current_turn_text, _speak._ledger_claim, _speak.is_active,
+     _speak.wait_for_recording_grace, _speak.is_in_call) = _o16
+    _sh.rmtree(_d16, ignore_errors=True)
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
