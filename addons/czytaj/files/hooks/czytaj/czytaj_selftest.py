@@ -308,6 +308,19 @@ try:
     _calls9.clear()
     st, body = vw._press("up", "termux", True)
     check("bridge: Vol+ while app plays → scrub n=2", st == 200 and ("wav", 2) in _calls9, f"{st} {_calls9}")
+    # 2026-10-24 (Kamil): scrubbed one message too far back → double Vol− = one message FORWARD
+    # (the keyboard sends key=fwd); never past the newest.
+    _calls9.clear()
+    st, body = vw._press("up", "termux", True)                 # n=3
+    _calls9.clear()
+    st, body = vw._press("fwd", "termux", True)
+    check("bridge: fwd steps one message forward (3 → 2)", st == 200 and ("wav", 2) in _calls9, f"{st} {_calls9}")
+    _calls9.clear()
+    vw._press("fwd", "termux", True)
+    _calls9.clear()
+    st, body = vw._press("fwd", "termux", True)
+    check("bridge: fwd stops at the newest message (n=1)", st == 200 and ("wav", 1) in _calls9, f"{st} {_calls9}")
+    _calls9.clear()
     _calls9.clear()
     vw.readback_cached_wav = lambda n: (_calls9.append(("wav", n)) or "")
     vw._last_read_ts = -1e9

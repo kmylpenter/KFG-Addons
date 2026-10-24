@@ -374,6 +374,22 @@ def _next_readback_n(playing: bool) -> "tuple[int, bool]":
         return _readback_n, scrub
 
 
+def _prev_readback_n() -> int:
+    """Double VolumeDown (key=fwd from the keyboard, Kamil 2026-10-24): one message FORWARD —
+    undo a scrub that went one too far — never past the newest (n=1). Keeps the scrub window
+    open so a following Vol+ continues from here."""
+    global _paused, _readback_n, _last_read_ts
+    with _action_lock:
+        _paused = False
+        try:
+            os.unlink(KEYPAUSE_STATE)
+        except OSError:
+            pass
+        _readback_n = max(1, _readback_n - 1)
+        _last_read_ts = time.monotonic()
+        return _readback_n
+
+
 def _read_back() -> None:
     """VolumeUp: read the LAST message. Step one further back (scrub) only when the user
     is clearly continuing — either a read-back is still PLAYING (pressed while listening)
@@ -480,7 +496,8 @@ def _stop_termux_audio() -> None:
 def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
     """In-app playback bridge (2026-10-06): the Voice Keyboard got a volume key and asks what to
     do. fg = termux | locked | other (as the keyboard sees it); app_playing = its own player is
-    on. Returns (200, wav) → keyboard plays it; 202 → cache miss, Termux synthesises+plays it;
+    on; key = up | down | fwd (double VolumeDown: one message forward). Returns (200, wav) →
+    keyboard plays it; 202 → cache miss, Termux synthesises+plays it;
     204 → nothing for the keyboard to play (volume-only, or handled here, e.g. a pause)."""
     if not load_settings()["keys"]:   # no /czytaj gate: on-demand works with reading OFF (2026-10-10)
         return 204, b""
@@ -490,7 +507,10 @@ def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
         if _czytaj_audio_playing():
             _toggle_pause()   # Termux-side audio; the keyboard pauses its OWN player locally
         return 204, b""
-    n, scrub = _next_readback_n(app_playing or is_readback_playing())   # either player still reading
+    if key == "fwd":
+        n, scrub = _prev_readback_n(), True
+    else:
+        n, scrub = _next_readback_n(app_playing or is_readback_playing())   # either player still reading
     wav = readback_cached_wav(n)
     if not wav:
         _log("VOLKEY", "bridge read-back", n, "MISS → termux synth")
