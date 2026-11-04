@@ -53,6 +53,15 @@ check("czytaj_paths values well-formed",
            and cz.PIPER_VOICE and cz.PIPER_SAMPLE_RATE > 0 and cz.PIPER_LENGTH_SCALE),
       f"FLAG_DIR={cz.FLAG_DIR} RUN_DIR={cz.RUN_DIR} voice={cz.PIPER_VOICE} rate={cz.PIPER_SAMPLE_RATE}")
 
+# 2b. the server socket path fits AF_UNIX on the HOST (2026-11-04) -----------
+# PRoot binds a guest socket at <rootfs><path>; past the 108-byte sun_path limit it keeps the
+# socket private to ONE PRoot instance — every tmux window is its own instance, so a server
+# started from one window was "alive but unreachable" from the others and each respawned it.
+_rootfs = os.path.dirname(os.environ.get("PROOT_L2S_DIR", "")) if os.environ.get("PROOT_L2S_DIR") else ""
+check("server socket path fits AF_UNIX on the host",
+      len(_rootfs) + len(cz.SOCKET_PATH) < 108,
+      f"host path {len(_rootfs) + len(cz.SOCKET_PATH)} chars (rootfs {len(_rootfs)} + {cz.SOCKET_PATH})")
+
 # 3. shell<->python parity (the SSOT drift guard) ----------------------------
 env_sh = os.path.join(HOOK_DIR, "czytaj-env.sh")
 if os.path.isfile(env_sh):
@@ -497,7 +506,10 @@ try:
         _cmd13 = ""
     check("synth server: runs as piper_server.py, not under the spawning client's argv",
           "piper_server.py" in _cmd13 and "-c" not in _cmd13.split(), f"pid={_a13} cmd={_cmd13[:90]!r}")
-    os.unlink(os.path.join(_h13, ".cache", "czytaj", "piper-server", "server.sock"))   # = a missed ping
+    _sock13 = subprocess.run([sys.executable or "python3", "-c",
+                              "import sys; sys.path.insert(0, %r); import czytaj_paths as cz; print(cz.SOCKET_PATH)" % HOOK_DIR],
+                             env=_env13, capture_output=True, text=True, timeout=30).stdout.strip()
+    os.unlink(_sock13)   # = a missed ping
     subprocess.run([sys.executable or "python3", _srv, "start"], env=_env13, timeout=60)
     _b13 = _pid13()
     _t13 = _t.monotonic()
@@ -524,6 +536,7 @@ import json, os, socket, sys, threading, time
 sys.path.insert(0, %r)
 import piper_server as ps
 ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+ps.SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
 s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(4)
 ps.PID_FILE.write_text(str(os.getpid()))
 def late_accept():
@@ -554,6 +567,7 @@ import json, os, socket, sys, threading, time
 sys.path.insert(0, %r)
 import piper_server as ps
 ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+ps.SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
 s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(4)
 ps.PID_FILE.write_text(str(os.getpid()))
 def slow():
@@ -579,6 +593,7 @@ import json, os, socket, sys
 sys.path.insert(0, %r)
 import piper_server as ps
 ps.RUN_DIR.mkdir(parents=True, exist_ok=True)
+ps.SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
 s = socket.socket(socket.AF_UNIX); s.bind(str(ps.SOCKET_PATH)); s.listen(1)   # never accepts
 ps.PID_FILE.write_text(str(os.getpid()))
 held = []

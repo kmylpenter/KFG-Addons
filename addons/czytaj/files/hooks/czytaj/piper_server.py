@@ -383,6 +383,7 @@ def run_server() -> None:
             shutdown()
             return
 
+        SOCKET_PATH.parent.mkdir(mode=0o700, parents=True, exist_ok=True)   # short /tmp dir (czytaj_paths)
         try:
             SOCKET_PATH.unlink()
         except FileNotFoundError:

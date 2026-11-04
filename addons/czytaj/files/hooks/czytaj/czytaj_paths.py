@@ -112,7 +112,13 @@ AUDIO_CLIENT_PATS = ("termux-tts-speak", "termux-media-player", "paplay", r"pyth
 # (watcher, Stop hook, precache, piper_stream) share ONE warm daemon. czytaj-env.sh mirrors
 # this for the shell side; czytaj_selftest.py asserts they agree.
 RUN_DIR = os.path.expanduser("~/.cache/czytaj/piper-server")
-SOCKET_PATH = os.path.join(RUN_DIR, "server.sock")
+# The socket lives apart, on a SHORT path (2026-11-04): PRoot binds it at <rootfs><path> on the
+# host, and past the 108-byte AF_UNIX limit (HOME's was 121) the socket is private to one PRoot
+# instance — each tmux window is one, so the other windows saw "alive but unreachable" and kept
+# respawning the server (cold synth, long silences between chunks). Keyed by HOME so a selftest
+# sandbox HOME never meets the live server; no /tmp (raw Termux) keeps the old place.
+SOCKET_PATH = (f"/tmp/czytaj-{hashlib.sha1(os.path.expanduser('~').encode()).hexdigest()[:8]}/s.sock"
+               if os.path.isdir("/tmp") else os.path.join(RUN_DIR, "server.sock"))
 PID_FILE = os.path.join(RUN_DIR, "server.pid")
 SERVER_LOCK = os.path.join(RUN_DIR, "server.lock")
 
