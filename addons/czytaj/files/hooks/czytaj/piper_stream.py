@@ -750,8 +750,10 @@ def _play_chunked(text: str, scratch: Path) -> int:
                 break
             _reserve_channel(part)   # same owner → no wait; keeps other windows queued behind us
             if i == 0:
+                # No unlock_audio_routing() here: its fire-and-forget tone `play` reached the player
+                # AFTER this chunk's (~2 s per call, no ordering) and replaced it (2026-11-20). The
+                # chunk's own play wakes routing, as on the cache-HIT path (C1).
                 _log(f"CHANNEL-OK +{time.monotonic() - t0:.2f}s")
-                unlock_audio_routing()
             dur = _wav_duration_s(part)
             started = time.monotonic()
             play_blocking(part)
@@ -899,8 +901,7 @@ def main() -> int:
                 # player, then claim it. Same window / free channel → no wait.
                 _reserve_channel(wav)
                 _log(f"CHANNEL-OK +{time.monotonic() - _t0:.2f}s")   # + any channel-queue wait
-                unlock_audio_routing()
-                _log(f"UNLOCK-DONE +{time.monotonic() - _t0:.2f}s")   # BT/Auto routing-wake tone cost
+                # No wake tone: it raced this play on the shared player and cut the message (see _play_chunked).
                 play_blocking(wav)  # blocks until done, then we delete
                 return 0
             return 1

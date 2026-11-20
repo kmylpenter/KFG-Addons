@@ -744,6 +744,48 @@ finally:
      _speak.wait_for_recording_grace, _speak.is_in_call) = _o16
     _sh.rmtree(_d16, ignore_errors=True)
 
+# 17. No wake tone races the message on the shared player (Kamil 2026-11-20: every read cut after
+# one word / one sentence). The tone was a fire-and-forget `termux-media-player play`; each call
+# takes ~2-2.6 s to reach the player, so a tone landing AFTER the message replaced it (0.8 s tone,
+# then "No track") — reproduced on the device. Only the message itself may be sent to the player.
+_d17 = _tf.mkdtemp(prefix="czytaj-selftest-17-")
+_cmds17 = []
+
+
+class _Proc17:
+    returncode = 0
+    stdout = ""
+
+
+def _rec17(argv, *a, **k):
+    _cmds17.append(list(argv))
+    return _Proc17()
+
+
+_o17 = (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream._reserve_channel,
+        piper_stream.PREHEAT_MARKER, piper_stream._staged_tone, piper_stream.subprocess.Popen,
+        piper_stream.subprocess.run)
+_tone17 = Path(_d17) / "tone.wav"
+_tone17.write_bytes(b"RIFF")
+piper_stream.synthesize_warm = _fake_synth_p15
+piper_stream.play_blocking = lambda p, raw_rate=None: _cmds17.append(["message", p.name])
+piper_stream._reserve_channel = lambda p: None
+piper_stream.PREHEAT_MARKER = Path(_d17) / "never-touched.ts"   # stale marker = the cold first press
+piper_stream._staged_tone = lambda: _tone17
+piper_stream.subprocess.Popen = _rec17
+piper_stream.subprocess.run = _rec17
+_dur15["s"] = 1.0
+try:
+    piper_stream._play_chunked(_long, Path(_d17))
+finally:
+    (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream._reserve_channel,
+     piper_stream.PREHEAT_MARKER, piper_stream._staged_tone, piper_stream.subprocess.Popen,
+     piper_stream.subprocess.run) = _o17
+    _sh.rmtree(_d17, ignore_errors=True)
+_extra17 = [c for c in _cmds17 if c[:1] == ["termux-media-player"]]
+check("cold read: nothing but the message goes to the player (no racing wake tone)",
+      not _extra17 and _cmds17 and _cmds17[0][0] == "message", str(_cmds17[:3]))
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
