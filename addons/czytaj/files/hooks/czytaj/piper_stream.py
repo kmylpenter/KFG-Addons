@@ -767,8 +767,11 @@ def _play_chunked(text: str, scratch: Path) -> int:
             _log("CHUNKED done", played, "of", len(chunks))
         return 0 if played else 1
     finally:
-        stop.set()
-        producer.join(timeout=1)
+        # A read that played to the end lets the producer finish caching the whole message (it was
+        # stopped right after the last chunk's synth, racing its join+save: no cache, selftest §15).
+        if played < len(chunks):
+            stop.set()
+        producer.join(timeout=1 if stop.is_set() else 30)
         for p in parts:
             try:
                 p.unlink()
