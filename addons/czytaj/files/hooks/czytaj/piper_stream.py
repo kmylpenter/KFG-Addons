@@ -474,6 +474,10 @@ def _play_via_termux_blocking(audio: Path) -> None:
         PLAYING_MARKER.touch()  # signal "czytaj audio playing now" for the watcher's lock-screen gate
     except OSError:
         pass
+    try:   # the keyboard's "press heard, still synthesizing" dot goes out at this moment (/started)
+        Path(cz.AUDIO_START_STAMP).touch()
+    except OSError:
+        pass
     # Pause-aware poll. VolumeDown pauses via termux-media-player, flipping `info`
     # to "Paused" — that must NOT read as "finished" (else we'd release the channel
     # + delete the wav, and resume would break). While paused we keep holding and

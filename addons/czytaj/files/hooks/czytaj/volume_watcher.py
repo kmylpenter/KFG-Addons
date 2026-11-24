@@ -41,7 +41,7 @@ from _speak import (  # noqa: E402
     active_project_dir,
 )
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
-    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER,
+    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER, AUDIO_START_STAMP,
     TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE, load_settings, save_settings, PIPER_VOICES,
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
@@ -514,13 +514,37 @@ def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
     wav = readback_cached_wav(n)
     if not wav:
         _log("VOLKEY", "bridge read-back", n, "MISS → termux synth")
-        threading.Thread(target=read_message_back, args=(n,), daemon=True).start()
+        _miss["t"], _miss["pending"] = time.time(), True
+        threading.Thread(target=_read_back_miss, args=(n,), daemon=True).start()
         return 202, b""
     _stop_termux_audio()
     with open(wav, "rb") as f:
         data = f.read()
     _log("VOLKEY", "bridge read-back", n, "scrub" if scrub else "fresh", "HIT bytes=", len(data))
     return 200, data
+
+
+# The keyboard shows a glowing dot from a Vol+ press until the sound starts (Kamil 2026-11-24: with a
+# synth taking seconds he couldn't tell whether the press worked, so he pressed again). After a 202
+# it polls /started: started = an AUDIO-START since that press; alive = the read is still on its way
+# (the read-back thread, or its piper_stream) — not alive and not started = it failed, drop the dot.
+_miss = {"t": 0.0, "pending": False}
+
+
+def _read_back_miss(n: int) -> None:
+    try:
+        read_message_back(n)
+    finally:
+        _miss["pending"] = False
+
+
+def _started() -> dict:
+    try:
+        # file mtimes come from the kernel's coarse clock (a tick behind time.time()) → small slack
+        started = os.path.getmtime(AUDIO_START_STAMP) >= _miss["t"] - 0.2
+    except OSError:
+        started = False
+    return {"started": started, "alive": _miss["pending"] or is_readback_playing()}
 
 
 BRIDGE_PORT = int(os.environ.get("CZYTAJ_BRIDGE_PORT", "47321"))
@@ -592,8 +616,9 @@ def _serve_bridge() -> None:
             try:
                 if u.path == "/press":
                     st, body = _press(q.get("key", ""), q.get("fg", "other"), q.get("playing") == "1")
-                elif u.path in ("/status", "/toggle", "/set"):
-                    fn = {"/status": lambda: _status(), "/toggle": _toggle_active_project, "/set": lambda: _set(q)}
+                elif u.path in ("/status", "/toggle", "/set", "/started"):
+                    fn = {"/status": lambda: _status(), "/toggle": _toggle_active_project, "/set": lambda: _set(q),
+                          "/started": _started}
                     st, body, ctype = 200, json.dumps(fn[u.path]()).encode(), "application/json"
                 else:
                     st, body = 404, b""

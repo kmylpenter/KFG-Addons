@@ -863,6 +863,37 @@ _src18 = open(os.path.join(HOOK_DIR, "_speak.py")).read()
 check("precache: precache_turn asks for background synthesis",
       "synthesize_warm(speakable, Path(tmp), bg=True)" in _src18)
 
+# 19. Press dot: the keyboard knows when the sound of a Vol+ read started (Kamil 2026-11-24) ----
+# A cache-MISS read takes seconds to synthesize; the keyboard shows a dot from the press and asks
+# /started until the sound starts (AUDIO-START after the press) or the read died on its way.
+_d19 = _tf.mkdtemp(prefix="czytaj-selftest-19-")
+_o19 = (vw.AUDIO_START_STAMP, vw.is_readback_playing, vw.read_message_back, dict(vw._miss))
+vw.AUDIO_START_STAMP = os.path.join(_d19, "audio-start.ts")
+vw.is_readback_playing = lambda: False
+try:
+    open(vw.AUDIO_START_STAMP, "w").close()
+    os.utime(vw.AUDIO_START_STAMP, (_t.time() - 30, _t.time() - 30))   # an older read's start
+    vw._miss.update(t=_t.time(), pending=True)                          # the press (202)
+    _w19 = vw._started()
+    Path(vw.AUDIO_START_STAMP).touch()                                  # piper_stream AUDIO-START
+    _s19 = vw._started()
+    vw.read_message_back = lambda n: (_ for _ in ()).throw(RuntimeError("no transcript"))
+    vw._miss.update(t=_t.time() + 5, pending=True)                     # a new press that fails
+    try:
+        vw._read_back_miss(1)
+    except RuntimeError:
+        pass
+    _f19 = vw._started()
+finally:
+    vw.AUDIO_START_STAMP, vw.is_readback_playing, vw.read_message_back, _m19 = _o19
+    vw._miss.clear(); vw._miss.update(_m19)
+    _sh.rmtree(_d19, ignore_errors=True)
+check("press dot: waiting while synthesizing (an older read's start doesn't count)",
+      _w19 == {"started": False, "alive": True}, str(_w19))
+check("press dot: started once the sound of this press starts", _s19["started"] is True, str(_s19))
+check("press dot: a read that died on its way ends the wait",
+      _f19 == {"started": False, "alive": False}, str(_f19))
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
