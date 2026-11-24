@@ -292,6 +292,54 @@ def _wav_out_safe(wav_out: str) -> bool:
     return False
 
 
+BG_GRACE_S = 5.0        # a live read asks for its next chunk right after the previous one: keep that gap for it
+BG_MAX_WAIT_S = 240.0   # background never starves for good
+
+
+class _SynthGate:
+    """Who gets the one daemon next (2026-11-24). Live requests (a read Kamil is listening to) go
+    first; background ones (precache) wait while a live one is waiting/running or finished less
+    than BG_GRACE_S ago. Without it the Stop hook's precache held the daemon while the read's next
+    chunk waited: 8-14 s silences mid-read, a 39 s start. A piece already being synthesized can't
+    be interrupted, so background asks in short pieces (piper_stream.synthesize_warm bg=True)."""
+
+    def __init__(self, lock: threading.Lock):
+        self._lock = lock
+        self._cv = threading.Condition()
+        self._fg = 0            # live requests waiting or running
+        self._fg_done = 0.0     # monotonic time the last live request finished
+
+    def enter(self, bg: bool) -> None:
+        if not bg:
+            with self._cv:
+                self._fg += 1
+            self._lock.acquire()
+            return
+        deadline = time.monotonic() + BG_MAX_WAIT_S
+        while True:
+            with self._cv:
+                while True:
+                    now = time.monotonic()
+                    free_at = self._fg_done + BG_GRACE_S
+                    if now >= deadline or (self._fg == 0 and now >= free_at):
+                        break
+                    left = deadline - now if self._fg else free_at - now
+                    self._cv.wait(max(0.05, min(left, deadline - now)))
+            self._lock.acquire()
+            with self._cv:   # a live request may have come while we waited for the lock
+                if self._fg == 0 or time.monotonic() >= deadline:
+                    return
+            self._lock.release()
+
+    def leave(self, bg: bool) -> None:
+        self._lock.release()
+        if not bg:
+            with self._cv:
+                self._fg -= 1
+                self._fg_done = time.monotonic()
+                self._cv.notify_all()
+
+
 def _retire_generation(pid: int) -> bool:
     """SIGTERM the server generation this one replaces (2026-10-10). It no longer owns the socket
     path, and its own superseded-reap only fires after SERVER_IDLE_TIMEOUT_S idle — in practice 5
@@ -331,6 +379,7 @@ def run_server() -> None:
 
     sock = None
     daemon_lock = threading.Lock()
+    gate = _SynthGate(daemon_lock)
     shutdown_done = threading.Event()
 
     def get_daemon():
@@ -440,12 +489,16 @@ def run_server() -> None:
                 if not _wav_out_safe(wav_out):
                     conn.sendall(b'{"ok":false,"error":"path"}\n')
                     return
-                with daemon_lock:
+                bg = bool(req.get("bg"))
+                gate.enter(bg)
+                try:
                     d = get_daemon()
                     if d is None:
                         conn.sendall(b'{"ok":false,"error":"daemon-spawn"}\n')
                         return
                     ok = synthesize_via_daemon(d, text, Path(wav_out))
+                finally:
+                    gate.leave(bg)
                 if not ok:
                     conn.sendall(b'{"ok":false,"error":"synth"}\n')
                     return
@@ -500,20 +553,24 @@ def run_server() -> None:
         shutdown()
 
 
-def speak_raw(text: str, raw_out: Path, timeout_s: float = 45.0) -> int | None:  # 2026-06-15: was 12; must exceed DAEMON_READ_TIMEOUT_S so the server kills+responds first
+def speak_raw(text: str, raw_out: Path, timeout_s: float = 45.0, bg: bool = False) -> int | None:  # 2026-06-15: was 12; must exceed DAEMON_READ_TIMEOUT_S so the server kills+responds first
     """Synthesize text into raw float32 PCM at raw_out via the daemon.
+    bg=True: background work (precache) that yields to live reads (_SynthGate).
     Returns the sample rate on success, None on failure."""
     if not ensure_running():
         return None
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout_s)
+    s.settimeout(timeout_s + (BG_MAX_WAIT_S + BG_GRACE_S if bg else 0))   # its queue wait counts too
     try:
         try:
             s.connect(str(SOCKET_PATH))
         except OSError:
             return None
         try:
-            req = json.dumps({"text": text, "wav_out": str(raw_out)}).encode("utf-8")
+            msg = {"text": text, "wav_out": str(raw_out)}
+            if bg:
+                msg["bg"] = True
+            req = json.dumps(msg).encode("utf-8")
             s.sendall(req + b"\n\n")
             data = b""
             while True:

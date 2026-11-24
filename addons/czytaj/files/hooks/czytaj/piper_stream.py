@@ -332,13 +332,13 @@ def _join_wavs(parts: list[Path], out_wav: Path) -> bool:
         return False
 
 
-def synthesize_long(text: str, out_wav: Path, synth=None) -> bool:
+def synthesize_long(text: str, out_wav: Path, synth=None, size: int = CHUNK_SIZE) -> bool:
     """A long text → ONE wav, synthesized chunk by chunk (each well under the daemon timeout),
     so the read-back cache holds the whole message. [synth] is injectable for the selftest."""
     synth = synth or synthesize_warm
     parts: list[Path] = []
     try:
-        for i, chunk in enumerate(split_for_speech(text)):
+        for i, chunk in enumerate(split_for_speech(text, size=size)):
             part = out_wav.with_name(f"{out_wav.name}.part{i}.wav")
             parts.append(part)
             if not synth(chunk, part):
@@ -352,13 +352,19 @@ def synthesize_long(text: str, out_wav: Path, synth=None) -> bool:
                 pass
 
 
-def synthesize_warm(text: str, out_wav: Path) -> bool:
+def synthesize_warm(text: str, out_wav: Path, bg: bool = False) -> bool:
+    if bg:   # background (precache): yields to live reads, in short pieces — a piece already being
+        #      synthesized can't be interrupted, so its length is how long a live read may still wait
+        if len(text) > CHUNK_FIRST:
+            return synthesize_long(text, out_wav, size=CHUNK_FIRST,
+                                   synth=lambda c, p: _synthesize_warm_one(c, p, bg=True))
+        return _synthesize_warm_one(text, out_wav, bg=True)
     if len(text) > CHUNK_LONG:   # one call would hit the 40s daemon timeout → chunk it
         return synthesize_long(text, out_wav)
     return _synthesize_warm_one(text, out_wav)
 
 
-def _synthesize_warm_one(text: str, out_wav: Path) -> bool:
+def _synthesize_warm_one(text: str, out_wav: Path, bg: bool = False) -> bool:
     """Synthesise `text` to a playable 16-bit wav via the WARM piper daemon (model
     already loaded → ~0.7s, NO per-call cold start). The daemon emits raw float32, so
     convert it to wav exactly like synthesize_one_shot. Falls back to the cold one-shot
@@ -373,7 +379,7 @@ def _synthesize_warm_one(text: str, out_wav: Path) -> bool:
     #                                the WARM path too, else a re-downloaded voice loses the tempo fix
     raw_path = out_wav.with_suffix(".srv.raw")
     try:
-        rate = speak_raw(text, raw_path)
+        rate = speak_raw(text, raw_path, bg=bg)
     except Exception:
         rate = None
     try:

@@ -1688,7 +1688,7 @@ def precache_turn(transcript_path: str, n: int = 1) -> None:
         return
     tmp = dst + ".%d.tmp" % os.getpid()   # per-process tmp: two concurrent precache.py
     try:                                  # for the same turn must not clobber one shared tmp
-        ok = piper_stream.synthesize_warm(speakable, Path(tmp))
+        ok = piper_stream.synthesize_warm(speakable, Path(tmp), bg=True)   # yields to live reads
     except Exception as e:
         _log("PRECACHE", "synth-fail", repr(e))
         ok = False

@@ -786,6 +786,83 @@ _extra17 = [c for c in _cmds17 if c[:1] == ["termux-media-player"]]
 check("cold read: nothing but the message goes to the player (no racing wake tone)",
       not _extra17 and _cmds17 and _cmds17[0][0] == "message", str(_cmds17[:3]))
 
+# 18. A live read is never queued behind background pre-synth (Kamil 2026-11-24) ---------------
+# Live: reads paused 8-14 s between chunk 1 and chunk 2, and one start took 39 s. The one warm
+# daemon served requests in lock order, so the Stop hook's precache (often the very same reply)
+# held it while the read's next chunk waited. Measured on the device: a 900-char chunk took 8.3 s
+# alone and 28.7 s with a precache running. A background request must yield to a live one.
+_h18 = _tf.mkdtemp(prefix="czh18-", dir="/tmp")
+os.makedirs(os.path.join(_h18, ".claude", "czytaj-flags"))
+open(os.path.join(_h18, ".claude", "czytaj-flags", "x.flag"), "w").close()
+_r18 = subprocess.run([sys.executable or "python3", "-c", r'''
+import json, os, socket, sys, threading, time
+sys.path.insert(0, %r)
+import piper_server as ps
+order = []
+class _D:
+    stdin = None
+    def poll(self): return None
+    def wait(self, timeout=None): return 0
+ps._spawn_daemon = lambda: _D()
+def _fake(d, text, raw):
+    time.sleep(0.8); order.append(text); return True
+ps.synthesize_via_daemon = _fake
+def req(text, bg):
+    s = socket.socket(socket.AF_UNIX); s.settimeout(30)
+    for _ in range(100):
+        try:
+            s.connect(str(ps.SOCKET_PATH)); break
+        except OSError:
+            time.sleep(0.1)
+    msg = {"text": text, "wav_out": str(ps.RUN_DIR / "x.raw")}
+    if bg:
+        msg["bg"] = True
+    s.sendall(json.dumps(msg).encode() + b"\n\n"); s.recv(4096); s.close()
+def client():
+    req("live1", False)                                                    # chunk 1 of a read
+    t = threading.Thread(target=req, args=("precache", True)); t.start()   # precache comes first...
+    time.sleep(0.3)
+    req("live2", False)                                                    # ...then chunk 2
+    t.join()
+    print(json.dumps(order), flush=True)
+    os._exit(0)
+threading.Thread(target=client, daemon=True).start()
+ps.run_server()
+''' % HOOK_DIR], env={**os.environ, "HOME": _h18}, capture_output=True, text=True, timeout=60)
+try:
+    _o18 = json.loads(_r18.stdout.strip().splitlines()[-1])
+except (ValueError, IndexError):
+    _o18 = {"err": (_r18.stderr or _r18.stdout)[-200:]}
+check("synth server: a live read's next chunk goes before a waiting precache",
+      _o18 == ["live1", "live2", "precache"], str(_o18))
+_sh.rmtree(_h18, ignore_errors=True)
+# The precache must ask as background, in short pieces: a piece already being synthesized can't be
+# interrupted, so its length is how long a live read may still wait (300 chars ~ 3 s).
+_sent18 = []
+
+
+def _fake_raw18(text, raw_out, timeout_s=45.0, bg=False):
+    _sent18.append((len(text), bg))
+    Path(raw_out).write_bytes(b"\0\0\0\0" * 10)
+    return 22050
+
+
+_o18b = (piper_server.speak_raw, piper_server.ensure_running)
+piper_server.speak_raw, piper_server.ensure_running = _fake_raw18, (lambda: True)
+_d18 = _tf.mkdtemp(prefix="czytaj-selftest-18-")
+try:
+    piper_stream.synthesize_warm(_long[:1000], Path(_d18) / "pre.wav", bg=True)
+except TypeError as _e18:
+    _sent18.append(("no-bg", str(_e18)[:60]))
+finally:
+    piper_server.speak_raw, piper_server.ensure_running = _o18b
+    _sh.rmtree(_d18, ignore_errors=True)
+check("precache: synthesizes as background, in pieces of at most 300 chars",
+      _sent18 and all(b is True and n <= 300 for n, b in _sent18), str(_sent18[:6]))
+_src18 = open(os.path.join(HOOK_DIR, "_speak.py")).read()
+check("precache: precache_turn asks for background synthesis",
+      "synthesize_warm(speakable, Path(tmp), bg=True)" in _src18)
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
