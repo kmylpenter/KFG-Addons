@@ -878,6 +878,45 @@ _src18 = open(os.path.join(HOOK_DIR, "_speak.py")).read()
 check("precache: precache_turn asks for background synthesis",
       "synthesize_warm(speakable, Path(tmp), bg=True)" in _src18)
 
+# 18b. Background synth never falls back to the COLD one-shot (Kamil 2026-11-25) --------------
+# Live 14:44-14:49: precaches waiting behind live reads timed out at the daemon and each fell to
+# the cold one-shot piper (60 s, full CPU). Several ran at once: a read's first chunk took 49 s,
+# termux-media-player timed out, four Vol+ presses gave silence. A precache is best-effort: no
+# daemon → no cache, never a cold synth that starves the live read.
+_cold18 = []
+_o18c = (piper_server.speak_raw, piper_server.ensure_running, piper_stream.synthesize_one_shot)
+piper_server.speak_raw = lambda *a, **k: None                       # daemon busy / timed out
+piper_server.ensure_running = lambda: True
+piper_stream.synthesize_one_shot = lambda t, o: _cold18.append(len(t)) or True
+_d18c = _tf.mkdtemp(prefix="czytaj-selftest-18c-")
+try:
+    _r18c = piper_stream.synthesize_warm(_long[:1000], Path(_d18c) / "pre.wav", bg=True)
+    _r18f = piper_stream.synthesize_warm("Krótko.", Path(_d18c) / "live.wav")   # a live read still may
+finally:
+    piper_server.speak_raw, piper_server.ensure_running, piper_stream.synthesize_one_shot = _o18c
+    _sh.rmtree(_d18c, ignore_errors=True)
+check("precache: a busy daemon makes it give up, never a cold one-shot synth",
+      _r18c is False and _cold18 == [len("Krótko.")], f"result={_r18c} cold={_cold18}")
+# Live 14:30-14:40: JOIN-FAIL — a precache's finished pieces (<name>.wav.<pid>.tmp.partN.wav) end in
+# .wav, so another process's cache eviction counted them as old cached messages and deleted them.
+_d18e = _tf.mkdtemp(prefix="czytaj-selftest-18e-")
+_o18e = _speak._readback_session_dir
+_speak._readback_session_dir = lambda s: _d18e
+try:
+    _part = os.path.join(_d18e, "abc.wav.123.tmp.part0.wav")
+    open(_part, "wb").close()
+    os.utime(_part, (_t.time() - 60, _t.time() - 60))                 # the oldest file in the dir
+    for _i in range(_speak.READBACK_CACHE_MAX + 2):
+        open(os.path.join(_d18e, f"m{_i}.wav"), "wb").close()
+    _speak._readback_cache_evict("s")
+    _left18 = sorted(os.listdir(_d18e))
+finally:
+    _speak._readback_session_dir = _o18e
+    _sh.rmtree(_d18e, ignore_errors=True)
+check("cache eviction keeps a precache's pieces still being synthesized",
+      "abc.wav.123.tmp.part0.wav" in _left18 and sum(f.startswith("m") for f in _left18) == _speak.READBACK_CACHE_MAX,
+      str(_left18))
+
 # 19. Press dot: the keyboard knows when the sound of a Vol+ read started (Kamil 2026-11-24) ----
 # A cache-MISS read takes seconds to synthesize; the keyboard shows a dot from the press and asks
 # /started until the sound starts (AUDIO-START after the press) or the read died on its way.

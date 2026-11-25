@@ -368,13 +368,17 @@ def _synthesize_warm_one(text: str, out_wav: Path, bg: bool = False) -> bool:
     """Synthesise `text` to a playable 16-bit wav via the WARM piper daemon (model
     already loaded → ~0.7s, NO per-call cold start). The daemon emits raw float32, so
     convert it to wav exactly like synthesize_one_shot. Falls back to the cold one-shot
-    binary if the daemon is unavailable — so callers always get a wav."""
+    binary if the daemon is unavailable — so callers always get a wav. Background (bg, precache)
+    never does: several cold one-shots at once took the whole CPU, a live read's first chunk
+    took 49 s and its play timed out (2026-11-25) — a precache just gives up (best-effort)."""
+    def cold() -> bool:
+        return False if bg else synthesize_one_shot(text, out_wav)
     try:
         from piper_server import speak_raw, ensure_running
         if not ensure_running():
-            return synthesize_one_shot(text, out_wav)
+            return cold()
     except Exception:
-        return synthesize_one_shot(text, out_wav)
+        return cold()
     _ensure_voice_length_scale()   # F9: keep length_scale patched in the voice .onnx.json on
     #                                the WARM path too, else a re-downloaded voice loses the tempo fix
     raw_path = out_wav.with_suffix(".srv.raw")
@@ -384,12 +388,12 @@ def _synthesize_warm_one(text: str, out_wav: Path, bg: bool = False) -> bool:
         rate = None
     try:
         if not rate or not raw_path.exists():
-            return synthesize_one_shot(text, out_wav)
+            return cold()
         with open(raw_path, "rb") as f:
             raw = f.read()
         n = len(raw) // 4
         if n == 0:
-            return synthesize_one_shot(text, out_wav)
+            return cold()
         floats = struct.unpack(f"<{n}f", raw[:n * 4])   # slice: a truncated/odd tail must not raise struct.error
         shorts = struct.pack(
             f"<{n}h",
@@ -403,7 +407,7 @@ def _synthesize_warm_one(text: str, out_wav: Path, bg: bool = False) -> bool:
         return True
     except Exception as exc:
         _log("WARM-SYNTH-FAIL", exc)
-        return synthesize_one_shot(text, out_wav)
+        return cold()
     finally:
         try:
             raw_path.unlink()

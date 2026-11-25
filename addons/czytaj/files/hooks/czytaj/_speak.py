@@ -1626,14 +1626,17 @@ def _readback_cache_evict(session: str) -> None:
         return
     now = time.time()
     for f in entries:
-        if f.endswith(".tmp") or f.endswith(".raw"):   # ".raw" also matches ".srv.raw"
+        if f.endswith(".tmp") or f.endswith(".raw") or ".tmp.part" in f:   # ".raw" also matches ".srv.raw"
             fp = os.path.join(d, f)
             try:
                 if now - _safe_mtime(fp) > 120:
                     os.unlink(fp)
             except OSError:
                 pass
-    wavs = [os.path.join(d, f) for f in entries if f.endswith(".wav")]
+    # ".tmp." = a precache's pieces still being synthesized (<name>.wav.<pid>.tmp.partN.wav) — not a
+    # cached message; deleting them made its join fail (JOIN-FAIL, 2026-11-25). A killed precache's
+    # leftovers are reaped above once 120 s stale.
+    wavs = [os.path.join(d, f) for f in entries if f.endswith(".wav") and ".tmp." not in f]
     wavs.sort(key=_safe_mtime, reverse=True)
     for old in wavs[READBACK_CACHE_MAX:]:
         try:
