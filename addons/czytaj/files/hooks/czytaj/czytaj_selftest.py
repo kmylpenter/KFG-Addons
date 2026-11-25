@@ -917,6 +917,17 @@ check("cache eviction keeps a precache's pieces still being synthesized",
       "abc.wav.123.tmp.part0.wav" in _left18 and sum(f.startswith("m") for f in _left18) == _speak.READBACK_CACHE_MAX,
       str(_left18))
 
+# 18c. The warm daemon may write where czytaj keeps its audio (Kamil 2026-11-25) -----------------
+# Since 06-16 the read-back cache and the audio scratch dir live in the TERMUX home .cache, but the
+# server only allowed wav_out under ITS home (/root when a PRoot client spawned it), /tmp, RUN_DIR →
+# {"error":"path"} → every live chunk and precache fell back to the cold one-shot piper (CPU-heavy,
+# slow; several at once starved playback). Found by spying speak_raw on a live precache.
+_safe18 = {p: piper_server._wav_out_safe(os.path.join(d, "x.srv.raw"))
+           for p, d in (("readback", cz.READBACK_CACHE_DIRS[0]), ("scratch", cz.AUDIO_SCRATCH_DIRS[0]))}
+check("synth server: may write into the read-back cache and audio scratch dirs",
+      all(_safe18.values()), str(_safe18))
+check("synth server: still refuses an arbitrary path", not piper_server._wav_out_safe("/etc/czytaj-x.raw"))
+
 # 19. Press dot: the keyboard knows when the sound of a Vol+ read started (Kamil 2026-11-24) ----
 # A cache-MISS read takes seconds to synthesize; the keyboard shows a dot from the press and asks
 # /started until the sound starts (AUDIO-START after the press) or the read died on its way.

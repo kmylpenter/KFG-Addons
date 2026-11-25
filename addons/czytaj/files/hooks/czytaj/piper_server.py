@@ -283,7 +283,10 @@ def _wav_out_safe(wav_out: str) -> bool:
         return False
     home = Path.home().resolve()
     tmp = Path(tempfile.gettempdir()).resolve()
-    for base in (home, tmp, RUN_DIR.resolve()):
+    # + czytaj's own audio dirs: they live in the TERMUX home, not this server's HOME (/root when a
+    # PRoot client spawned it) — refusing them sent every synth to the cold one-shot (2026-11-25)
+    czytaj_dirs = tuple(Path(d).resolve() for d in (*cz.READBACK_CACHE_DIRS, *cz.AUDIO_SCRATCH_DIRS))
+    for base in (home, tmp, RUN_DIR.resolve(), *czytaj_dirs):
         try:
             p.relative_to(base)
             return True
