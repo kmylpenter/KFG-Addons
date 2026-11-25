@@ -493,7 +493,18 @@ def _stop_termux_audio() -> None:
         threading.Thread(target=_media, args=("stop",), daemon=True).start()
 
 
-def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
+def _newest_readback_n() -> int:
+    """Vol+ on a paused read-back (Kamil 2026-11-25): start again from the newest message. A Vol+
+    pressed before the new reply reached the transcript read the previous one, and every further
+    Vol+ only went further back (a paused player counts as playing → scrub). The scrub window
+    stays open, so the next Vol+ while this plays goes back from here."""
+    global _readback_n
+    with _action_lock:
+        _readback_n = 0
+    return _next_readback_n(True)[0]
+
+
+def _press(key: str, fg: str, app_playing: bool, paused: bool = False) -> "tuple[int, bytes]":
     """In-app playback bridge (2026-10-06): the Voice Keyboard got a volume key and asks what to
     do. fg = termux | locked | other (as the keyboard sees it); app_playing = its own player is
     on; key = up | down | fwd (double VolumeDown: one message forward). Returns (200, wav) →
@@ -509,6 +520,8 @@ def _press(key: str, fg: str, app_playing: bool) -> "tuple[int, bytes]":
         return 204, b""
     if key == "fwd":
         n, scrub = _prev_readback_n(), True
+    elif paused:   # the keyboard's own read-back is paused by the user → from the newest again
+        n, scrub = _newest_readback_n(), False
     else:
         n, scrub = _next_readback_n(app_playing or is_readback_playing())   # either player still reading
     wav = readback_cached_wav(n)
@@ -615,7 +628,8 @@ def _serve_bridge() -> None:
             ctype = "audio/wav"
             try:
                 if u.path == "/press":
-                    st, body = _press(q.get("key", ""), q.get("fg", "other"), q.get("playing") == "1")
+                    st, body = _press(q.get("key", ""), q.get("fg", "other"), q.get("playing") == "1",
+                                      paused=q.get("paused") == "1")
                 elif u.path in ("/status", "/toggle", "/set", "/started"):
                     fn = {"/status": lambda: _status(), "/toggle": _toggle_active_project, "/set": lambda: _set(q),
                           "/started": _started}

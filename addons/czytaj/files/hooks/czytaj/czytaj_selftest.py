@@ -329,6 +329,21 @@ try:
     _calls9.clear()
     st, body = vw._press("fwd", "termux", True)
     check("bridge: fwd stops at the newest message (n=1)", st == 200 and ("wav", 1) in _calls9, f"{st} {_calls9}")
+    # 2026-11-25 (Kamil): Vol+ pressed before the new reply was in the transcript read the previous
+    # one; Vol+ again went further back, and pause (Vol−, the keyboard's own player) + Vol+ still
+    # scrubbed back (a paused player counts as playing). Vol+ on a paused read = from the newest.
+    vw._press("up", "termux", True); vw._press("up", "termux", True)   # scrubbed back to n=3+
+    _calls9.clear()
+    try:
+        st, body = vw._press("up", "termux", True, paused=True)
+    except TypeError as _e9:
+        st = repr(_e9)[:60]
+    check("bridge: Vol+ on a paused read starts again from the newest (n=1)",
+          st == 200 and ("wav", 1) in _calls9, f"{st} {_calls9}")
+    _calls9.clear()
+    st, body = vw._press("up", "termux", True)
+    check("bridge: ...and the next Vol+ goes back from there (n=2)",
+          st == 200 and ("wav", 2) in _calls9, f"{st} {_calls9}")
     _calls9.clear()
     _calls9.clear()
     vw.readback_cached_wav = lambda n: (_calls9.append(("wav", n)) or "")
