@@ -513,21 +513,26 @@ def _play_via_termux_blocking(audio: Path) -> None:
             last = time.monotonic()
             time.sleep(0.3)
             continue
+        # `info` takes ~4 s idle and 6-7 s while a synth runs (2026-11-26): an unanswered or unclear
+        # poll is NOT "finished" — it dropped the rest of a read after a half / a third. Only the
+        # player saying it has no track ends the play early; otherwise the wav's length bounds it.
         try:
             r = subprocess.run(
                 ["termux-media-player", "info"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=10,
             )
+            out = r.stdout or ""
         except (OSError, subprocess.SubprocessError):
-            break
-        out = r.stdout or ""
+            out = ""
         now = time.monotonic()
         if "Paused" in out:
             last = now          # freeze the budget while paused (VolumeDown)
             time.sleep(0.3)
             continue
-        if "Playing" not in out:
+        if "No track" in out:
             break               # finished or stopped
+        if "Playing" not in out:
+            _log("PLAY-POLL unanswered", repr(out[:40]))
         play_budget -= now - last
         last = now
         if play_budget <= 0:

@@ -1013,6 +1013,51 @@ finally:
 check("chunk gap: /started says gap in the silence, not once the next chunk sounds",
       _g20.get("gap") is True and _p20.get("gap") is False and _p20.get("started") is True, f"{_g20} {_p20}")
 
+# 21. A slow `termux-media-player info` does not end the playback (Kamil 2026-11-26) -------------
+# Live: reads stopped after a half / a third ("CHUNKED interrupted after 2 of 4", no key pressed).
+# `info` takes 3.8-4.2 s idle and 6.1-6.9 s while a synth runs (measured) — past its 5 s timeout,
+# and a timeout counted as "finished": the rest of the read was dropped. Only the player saying
+# it has no track ends a play early; an unanswered poll just polls again (bounded by the wav length).
+_d21 = _tf.mkdtemp(prefix="czytaj-selftest-21-")
+_wav21 = Path(_d21) / "m.wav"
+with _wave.open(str(_wav21), "wb") as _w:
+    _w.setnchannels(1); _w.setsampwidth(2); _w.setframerate(1000); _w.writeframes(b"\x00\x00" * 1500)
+_info21 = []
+_answers21 = ["timeout", "timeout", "Status: Playing", "No track currently!"]
+
+
+class _R21:
+    def __init__(self, out):
+        self.stdout, self.returncode = out, 0
+
+
+def _run21(argv, *a, **k):
+    if argv[:2] == ["termux-media-player", "info"]:
+        _info21.append(1)
+        ans = _answers21[min(len(_info21), len(_answers21)) - 1]
+        if ans == "timeout":
+            raise subprocess.TimeoutExpired(argv, k.get("timeout", 5))
+        return _R21(ans)
+    return _R21("")
+
+
+_o21 = (piper_stream.subprocess.run, piper_stream.PLAYING_MARKER, piper_stream.PREHEAT_MARKER,
+        piper_stream.KEYPAUSE_STATE, piper_stream._vt_recording, cz.AUDIO_START_STAMP)
+piper_stream.subprocess.run = _run21
+piper_stream.PLAYING_MARKER = Path(_d21) / "playing"
+piper_stream.PREHEAT_MARKER = Path(_d21) / "preheat"
+piper_stream.KEYPAUSE_STATE = Path(_d21) / "never-paused"
+piper_stream._vt_recording = lambda: False
+cz.AUDIO_START_STAMP = os.path.join(_d21, "start.ts")
+try:
+    piper_stream._play_via_termux_blocking(_wav21)
+finally:
+    (piper_stream.subprocess.run, piper_stream.PLAYING_MARKER, piper_stream.PREHEAT_MARKER,
+     piper_stream.KEYPAUSE_STATE, piper_stream._vt_recording, cz.AUDIO_START_STAMP) = _o21
+    _sh.rmtree(_d21, ignore_errors=True)
+check("playback: an unanswered `info` poll is retried; only 'no track' ends the play",
+      len(_info21) == 4, f"info polls={len(_info21)}")
+
 print()
 if FAILS:
     print(f"SELFTEST FAILED: {len(FAILS)} check(s) — {', '.join(FAILS)}")
