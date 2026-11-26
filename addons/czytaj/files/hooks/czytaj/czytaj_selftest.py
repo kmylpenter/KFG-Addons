@@ -146,6 +146,9 @@ for sh in ("czytaj-env.sh", "toggle.sh", "user-prompt-submit.sh", "stop.sh", "pr
 # a11y flag (the service gates Termux-foreground + unlocked itself); a WORKING probe still gates.
 vw = volume_watcher
 import tempfile
+# Playback tests run _play_chunked: never let them mark the LIVE chunk-gap stamp, or a selftest during
+# a real read would light the keyboard's dot (2026-11-25).
+cz.AUDIO_GAP_STAMP = os.path.join(tempfile.mkdtemp(prefix="czytaj-selftest-gap-"), "gap.ts")
 _orig = (vw._run_shell, vw._czytaj_audio_playing, vw._read_back, vw._toggle_pause, vw.FLAG_DIR)
 vw.FLAG_DIR = tempfile.mkdtemp(prefix="czytaj-selftest-flags-")
 open(os.path.join(vw.FLAG_DIR, ".keepwarm-readback"), "w").close()   # dotfile ≠ reading on
@@ -954,10 +957,61 @@ finally:
     vw._miss.clear(); vw._miss.update(_m19)
     _sh.rmtree(_d19, ignore_errors=True)
 check("press dot: waiting while synthesizing (an older read's start doesn't count)",
-      _w19 == {"started": False, "alive": True}, str(_w19))
+      _w19 == {"started": False, "alive": True, "gap": False}, str(_w19))
 check("press dot: started once the sound of this press starts", _s19["started"] is True, str(_s19))
 check("press dot: a read that died on its way ends the wait",
-      _f19 == {"started": False, "alive": False}, str(_f19))
+      _f19 == {"started": False, "alive": False, "gap": False}, str(_f19))
+
+# 20. Dot in the silence between chunks (Kamil 2026-11-25) -------------------------------------
+# A long read plays in chunks with 2-3 s of silence between them (and longer if the next chunk is
+# still synthesizing). The dot shows in that silence: piper_stream marks a gap after every chunk
+# but the last, the next AUDIO-START ends it; the watcher reports it on /started.
+_d20 = _tf.mkdtemp(prefix="czytaj-selftest-20-")
+_gap20 = os.path.join(_d20, "gap.ts")
+_seen20 = []
+
+
+def _play20(p, raw_rate=None):
+    _seen20.append(os.path.exists(_gap20))
+    try:
+        os.unlink(_gap20)
+    except OSError:
+        pass
+
+
+_o20 = (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream._reserve_channel,
+        getattr(piper_stream.cz, "AUDIO_GAP_STAMP", None))
+piper_stream.synthesize_warm = _fake_synth_p15
+piper_stream.play_blocking = _play20
+piper_stream._reserve_channel = lambda p: None
+piper_stream.cz.AUDIO_GAP_STAMP = _gap20
+_dur15["s"] = 1.0
+try:
+    piper_stream._play_chunked(_long, Path(_d20))
+    _after20 = os.path.exists(_gap20)
+finally:
+    (piper_stream.synthesize_warm, piper_stream.play_blocking, piper_stream._reserve_channel,
+     piper_stream.cz.AUDIO_GAP_STAMP) = _o20
+check("chunk gap: marked between chunks, not before the first or after the last",
+      _seen20 == [False] + [True] * (len(_chunks) - 1) and not _after20, f"{_seen20} after={_after20}")
+_o20w = (getattr(vw, "AUDIO_START_STAMP", None), getattr(vw, "AUDIO_GAP_STAMP", None), vw.is_readback_playing, dict(vw._miss))
+vw.AUDIO_START_STAMP = os.path.join(_d20, "start.ts")
+vw.AUDIO_GAP_STAMP = _gap20
+vw.is_readback_playing = lambda: True
+try:
+    _now20 = _t.time()
+    vw._miss.update(t=_now20 - 10, pending=False)
+    for _f, _age in ((vw.AUDIO_START_STAMP, 6), (_gap20, 4)):   # chunk 1 started, then ended
+        open(_f, "w").close(); os.utime(_f, (_now20 - _age, _now20 - _age))
+    _g20 = vw._started()
+    os.utime(vw.AUDIO_START_STAMP, (_now20 - 1, _now20 - 1))   # chunk 2 sounds
+    _p20 = vw._started()
+finally:
+    vw.AUDIO_START_STAMP, vw.AUDIO_GAP_STAMP, vw.is_readback_playing, _m20 = _o20w
+    vw._miss.clear(); vw._miss.update(_m20)
+    _sh.rmtree(_d20, ignore_errors=True)
+check("chunk gap: /started says gap in the silence, not once the next chunk sounds",
+      _g20.get("gap") is True and _p20.get("gap") is False and _p20.get("started") is True, f"{_g20} {_p20}")
 
 print()
 if FAILS:

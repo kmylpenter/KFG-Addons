@@ -777,6 +777,11 @@ def _play_chunked(text: str, scratch: Path) -> int:
             if _vt_recording() or (dur > 3.0 and time.monotonic() - started < dur - 2.0):
                 _log("CHUNKED interrupted after", played, "of", len(chunks))
                 break
+            if played < len(chunks):   # silence until the next chunk sounds: the keyboard shows its dot
+                try:                   # (Kamil 2026-11-25); the next AUDIO-START ends it
+                    Path(cz.AUDIO_GAP_STAMP).touch()
+                except OSError:
+                    pass
         else:
             _log("CHUNKED done", played, "of", len(chunks))
         return 0 if played else 1

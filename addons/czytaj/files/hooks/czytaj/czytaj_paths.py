@@ -98,6 +98,7 @@ PREHEAT_MARKER = _claude("czytaj-preheat.ts")
 KEYPAUSE_STATE = _claude("czytaj-keypause.state")
 PLAYING_MARKER = _claude("czytaj-playing.flag")
 AUDIO_START_STAMP = _claude("czytaj-audio-start.ts")   # mtime = the last AUDIO-START (keyboard press dot)
+AUDIO_GAP_STAMP = _claude("czytaj-audio-gap.ts")       # mtime = a chunk ended and the next is coming (dot)
 CHANNEL_FILE = _claude("czytaj-channel")
 
 # ── In-turn audio-client kill patterns (M13 — was triplicated: toggle.sh/user-prompt-submit.sh/_speak.py) ─

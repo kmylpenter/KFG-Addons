@@ -41,7 +41,7 @@ from _speak import (  # noqa: E402
     active_project_dir,
 )
 from czytaj_paths import (  # noqa: E402  — SSOT for paths (audit 2026-06-15)
-    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER, AUDIO_START_STAMP,
+    FLAG_DIR, SHIZUKU_FLAG, KEYPAUSE_STATE, PLAYING_MARKER, PREHEAT_MARKER, AUDIO_START_STAMP, AUDIO_GAP_STAMP,
     TERMUX_FLAGS_DIR, WATCHER_LOCK as LOCK_FILE, load_settings, save_settings, PIPER_VOICES,
 )
 ADB = os.environ.get("CZYTAJ_ADB", "/data/data/com.termux/files/usr/bin/adb")
@@ -552,12 +552,20 @@ def _read_back_miss(n: int) -> None:
 
 
 def _started() -> dict:
+    """gap = this read is between two chunks (one ended, the next not sounding yet): the keyboard
+    shows its dot again for that silence (Kamil 2026-11-25)."""
     try:
-        # file mtimes come from the kernel's coarse clock (a tick behind time.time()) → small slack
-        started = os.path.getmtime(AUDIO_START_STAMP) >= _miss["t"] - 0.2
+        start_t = os.path.getmtime(AUDIO_START_STAMP)
     except OSError:
-        started = False
-    return {"started": started, "alive": _miss["pending"] or is_readback_playing()}
+        start_t = 0.0
+    try:
+        gap_t = os.path.getmtime(AUDIO_GAP_STAMP)
+    except OSError:
+        gap_t = 0.0
+    # file mtimes come from the kernel's coarse clock (a tick behind time.time()) → small slack
+    started = start_t >= _miss["t"] - 0.2
+    return {"started": started, "alive": _miss["pending"] or is_readback_playing(),
+            "gap": started and gap_t > start_t}
 
 
 BRIDGE_PORT = int(os.environ.get("CZYTAJ_BRIDGE_PORT", "47321"))
